@@ -1,0 +1,29 @@
+[Unit]
+Description=OpenClaw Email Agent (local-LLM email triage & auto-draft, no auto-send)
+Documentation=https://github.com/openclaw/openclaw-email
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Resolved at install time to the `openclaw-email serve` entrypoint (spec §10).
+ExecStart={exec_start}
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+# --- Hardening (spec §10) ---
+# Worst case stays bounded even if a detection layer is bypassed (Agents
+# Rule of Two, spec §0). The agent never needs root or write access outside
+# its own data/config dirs.
+NoNewPrivileges=yes
+ProtectSystem=full
+PrivateTmp=yes
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=default.target

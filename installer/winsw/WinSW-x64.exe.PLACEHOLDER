@@ -1,0 +1,11 @@
+This is a PLACEHOLDER, not a binary.
+
+The real WinSW-x64.exe (MIT, https://github.com/winsw/winsw) is NOT committed to
+this repository. It is a third-party binary fetched at build/package time and
+must be placed in this directory as:
+
+    WinSW-x64.exe
+
+See README.md in this directory for the download URL and verification steps.
+No binary is fabricated here on purpose — vendoring an unverified executable
+would be a supply-chain risk.

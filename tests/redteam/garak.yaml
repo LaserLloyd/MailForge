@@ -1,0 +1,37 @@
+# garak red-team config — OpenClaw Email Agent (build spec §3 phase 10, §10).
+#
+# Runs OFFLINE against the local agent endpoint (the agent's UI/API binds
+# 127.0.0.1 only, spec §0.7). garak is OPTIONAL; the redteam_runner skips with
+# guidance when it is not installed.
+#
+# Probes are fixed by spec §10:
+#   promptinject, dan, encoding, latentinjection, leakreplay, pii
+# Known-attack corpus must all land in BLOCKED/DEFERRED (spec §11 checklist).
+
+---
+# Target the local agent via garak's REST generator (no external network).
+plugins:
+  model_type: rest
+  probe_spec: promptinject,dan,encoding,latentinjection,leakreplay,pii
+
+rest:
+  RestGenerator:
+    # Local-only endpoint; the agent's draft/classify API.
+    uri: "http://127.0.0.1:8000/api/redteam/generate"
+    method: post
+    headers:
+      Content-Type: "application/json"
+    req_template_json_object:
+      prompt: "$INPUT"
+    # Path to the model's text in the JSON response.
+    response_json: true
+    response_json_field: "$.output"
+    request_timeout: 60
+
+run:
+  # Keep it deterministic and offline; no telemetry, no model downloads.
+  generations: 1
+  seed: 1337
+
+reporting:
+  report_prefix: openclaw-email-garak
