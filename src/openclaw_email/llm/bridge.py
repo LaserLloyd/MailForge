@@ -104,6 +104,9 @@ class LMStudioBridge:
         ttl_seconds: int = 1800,
         context_length: int = 8192,
         timeout: float = 120.0,
+        heavy_base_url: str = "",
+        heavy_model: str = "",
+        heavy_key: str = "",
     ) -> None:
         self.host = _normalize_host(host)
         self.model_id = model_id
@@ -111,18 +114,41 @@ class LMStudioBridge:
         self.ttl_seconds = ttl_seconds
         self.context_length = context_length
         self.timeout = timeout
+        # Optional "OpenClaw link" heavy-lift route (OpenAI-compatible). Empty
+        # base_url/model => disabled, app runs purely on the local LM Studio.
+        self.heavy_base_url = heavy_base_url.rstrip("/")
+        self.heavy_model = heavy_model
+        self.heavy_key = heavy_key
+
+    @property
+    def has_heavy(self) -> bool:
+        """True iff an OpenClaw heavy-lift endpoint is configured."""
+        return bool(self.heavy_base_url and self.heavy_model)
 
     # ----- constructors -----
     @classmethod
     def from_settings(cls, settings: "Settings") -> "LMStudioBridge":
-        """Build a bridge from :class:`~openclaw_email.config.LLMSettings`."""
+        """Build a bridge from :class:`~openclaw_email.config.LLMSettings`
+        plus the optional OpenClaw heavy-lift link."""
+        import os
+
         llm = settings.llm
+        oc = getattr(settings, "openclaw", None)
+        heavy_base = heavy_model = heavy_key = ""
+        if oc is not None and getattr(oc, "enabled", False):
+            heavy_base = oc.heavy_lift_base_url or ""
+            heavy_model = oc.heavy_lift_model or ""
+            if heavy_base and oc.heavy_lift_key_env:
+                heavy_key = os.environ.get(oc.heavy_lift_key_env, "") or ""
         return cls(
             host=llm.lm_studio_host,
             model_id=llm.chat_model,
             embed_id=llm.embedding_model,
             ttl_seconds=llm.ttl_seconds,
             context_length=llm.context_length,
+            heavy_base_url=heavy_base,
+            heavy_model=heavy_model,
+            heavy_key=heavy_key,
         )
 
     # ----- transport helpers -----
@@ -232,16 +258,44 @@ class LMStudioBridge:
         message content, or ``""`` when LM Studio is unreachable (sentinel for
         the DEFERRED_NO_LLM path).
         """
+        return await self._post_chat(
+            self.base_url,
+            self.model_id,
+            messages,
+            response_format=response_format,
+            temperature=temperature,
+        )
+
+    async def _post_chat(
+        self,
+        base_url: str,
+        model: str,
+        messages: list[dict[str, str]],
+        *,
+        response_format: dict[str, Any] | None = None,
+        temperature: float = 0.2,
+        api_key: str = "",
+    ) -> str:
+        """POST one OpenAI-compat chat completion to ``base_url``.
+
+        Shared by the local LM Studio path and the optional OpenClaw heavy-lift
+        path (which differs only in URL, model, and a Bearer key). Returns the
+        assistant content, or ``""`` on any failure (sentinel → caller defers
+        or falls back).
+        """
         payload: dict[str, Any] = {
-            "model": self.model_id,
+            "model": model,
             "messages": messages,
             "temperature": temperature,
         }
         if response_format is not None:
             payload["response_format"] = response_format
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as c:
-                r = await c.post(f"{self.base_url}/chat/completions", json=payload)
+                r = await c.post(
+                    f"{base_url}/chat/completions", json=payload, headers=headers
+                )
                 r.raise_for_status()
                 data = r.json()
             msg = data["choices"][0]["message"]
@@ -250,8 +304,25 @@ class LMStudioBridge:
             # it so downstream JSON extraction still works.
             return msg.get("content") or msg.get("reasoning_content") or ""
         except Exception as e:
-            log.warning("chat() failed (LM Studio down?): %s", e)
+            log.warning("chat POST to %s failed: %s", base_url, e)
             return ""
+
+    async def _chat_heavy(
+        self,
+        messages: list[dict[str, str]],
+        response_format: dict[str, Any] | None = None,
+        *,
+        temperature: float = 0.2,
+    ) -> str:
+        """Chat via the OpenClaw heavy-lift endpoint (caller checks has_heavy)."""
+        return await self._post_chat(
+            self.heavy_base_url,
+            self.heavy_model,
+            messages,
+            response_format=response_format,
+            temperature=temperature,
+            api_key=self.heavy_key,
+        )
 
     async def chat_structured(
         self,
@@ -260,6 +331,7 @@ class LMStudioBridge:
         *,
         schema_name: str = "structured_output",
         temperature: float = 0.1,
+        heavy: bool = False,
     ) -> dict[str, Any]:
         """Strict-JSON chat via ``response_format`` JSON schema (spec §6).
 
@@ -268,6 +340,11 @@ class LMStudioBridge:
         (json_mode) with the schema injected into the prompt — pattern copied
         from ``microsoft/local-email-agent``. Returns ``{}`` when down or
         unparseable (safe sentinel → caller defers).
+
+        ``heavy=True`` (used by the draft node) prefers the OpenClaw heavy-lift
+        endpoint when one is configured; if it is absent, unreachable, or
+        returns nothing usable, this transparently falls back to the local LM
+        Studio model — so the heavy link is purely additive.
         """
         from .structured import coerce_dict
 
@@ -276,23 +353,10 @@ class LMStudioBridge:
         # into a self-contained schema before sending, else we get HTTP 400.
         inlined = _inline_refs(json_schema)
 
-        # Attempt 1: native json_schema response_format.
         rf: dict[str, Any] = {
             "type": "json_schema",
-            "json_schema": {
-                "name": schema_name,
-                "strict": True,
-                "schema": inlined,
-            },
+            "json_schema": {"name": schema_name, "strict": True, "schema": inlined},
         }
-        raw = await self.chat(messages, response_format=rf, temperature=temperature)
-        parsed = coerce_dict(raw)
-        if parsed:
-            return parsed
-
-        # Attempt 2: json_mode fallback for weak models. Inject the schema so
-        # the model knows the shape, then constrain output to a JSON object.
-        log.info("json_schema response empty/unparseable; falling back to json_mode")
         schema_hint = {
             "role": "system",
             "content": (
@@ -301,12 +365,105 @@ class LMStudioBridge:
                 + json.dumps(inlined)
             ),
         }
+
+        # Optional heavy-lift attempt (OpenClaw, when online). Best-effort: any
+        # empty/error result falls through to the local model below.
+        if heavy and self.has_heavy:
+            raw_h = await self._chat_heavy(messages, response_format=rf, temperature=temperature)
+            parsed_h = coerce_dict(raw_h)
+            if not parsed_h:
+                raw_h = await self._chat_heavy(
+                    [schema_hint, *messages],
+                    response_format={"type": "json_object"},
+                    temperature=temperature,
+                )
+                parsed_h = coerce_dict(raw_h)
+            if parsed_h:
+                return parsed_h
+            log.info("heavy-lift endpoint gave nothing usable; falling back to local model")
+
+        # Attempt 1: native json_schema response_format (local LM Studio).
+        raw = await self.chat(messages, response_format=rf, temperature=temperature)
+        parsed = coerce_dict(raw)
+        if parsed:
+            return parsed
+
+        # Attempt 2: json_mode fallback for weak models. Inject the schema so
+        # the model knows the shape, then constrain output to a JSON object.
+        log.info("json_schema response empty/unparseable; falling back to json_mode")
         raw2 = await self.chat(
             [schema_hint, *messages],
             response_format={"type": "json_object"},
             temperature=temperature,
         )
         return coerce_dict(raw2)
+
+    # ----- standalone robustness: adapt to whatever LM Studio is serving -----
+    async def resolve_served_models(self) -> dict[str, Any]:
+        """Best-effort: if the configured chat/embedding model is not served by
+        this LM Studio instance, fall back to a served one so the app works on
+        *any* machine with LM Studio running (spec goal: free-standing client).
+
+        Mutates ``self.model_id`` / ``self.embed_id`` in place and returns a
+        report ``{"chat": ..., "embed": ..., "changed": bool, "served": [...]}``.
+        Never raises; a down server leaves the configured ids untouched.
+        """
+        report: dict[str, Any] = {
+            "chat": self.model_id,
+            "embed": self.embed_id,
+            "changed": False,
+            "served": [],
+        }
+        try:
+            models = await self.list_models()
+        except Exception:
+            return report
+        ids = [
+            (m.get("id") or m.get("model_key") or m.get("path") or "")
+            for m in models
+            if isinstance(m, dict)
+        ]
+        ids = [i for i in ids if i]
+        report["served"] = ids
+        if not ids:
+            return report  # server down / empty — keep configured ids
+
+        def _served(name: str) -> bool:
+            return any(name == i or name in i for i in ids)
+
+        def _family(name: str) -> str:
+            # First identifier token, e.g. "qwen/qwen3.6-35b" -> "qwen".
+            base = name.split("/")[0] if "/" in name else name
+            return base.split("-")[0].lower()
+
+        # Chat model: prefer the configured one; else a served model of the same
+        # family (e.g. another qwen) before any non-embedding model.
+        if not _served(self.model_id):
+            fam = _family(self.model_id)
+            non_embed = [i for i in ids if "embed" not in i.lower()]
+            cand = next(
+                (i for i in non_embed if _family(i) == fam), None
+            ) or next(iter(non_embed), None)
+            if cand:
+                log.warning(
+                    "configured chat_model %r not served; using %r", self.model_id, cand
+                )
+                self.model_id = cand
+                report["chat"] = cand
+                report["changed"] = True
+        # Embedding model: prefer configured; else first id mentioning 'embed'.
+        if not _served(self.embed_id):
+            cand = next((i for i in ids if "embed" in i.lower()), None)
+            if cand:
+                log.warning(
+                    "configured embedding_model %r not served; using %r",
+                    self.embed_id,
+                    cand,
+                )
+                self.embed_id = cand
+                report["embed"] = cand
+                report["changed"] = True
+        return report
 
     # ----- embeddings (spec §6: 768-dim) -----
     async def embed(self, texts: list[str]) -> list[list[float]]:

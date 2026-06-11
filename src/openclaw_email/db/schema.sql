@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS drafts (
   guardrail_flags TEXT,                      -- JSON: which guards fired + scores
   created_at TEXT, updated_at TEXT, approved_by TEXT, approved_at TEXT, sent_at TEXT);
 CREATE INDEX IF NOT EXISTS draft_state ON drafts(state);
+CREATE INDEX IF NOT EXISTS draft_msg     ON drafts(message_id);
+CREATE INDEX IF NOT EXISTS draft_created ON drafts(created_at);
 
 CREATE TABLE IF NOT EXISTS audit_log (
   id INTEGER PRIMARY KEY, ts TEXT NOT NULL, actor TEXT NOT NULL,   -- agent|user|guardrail

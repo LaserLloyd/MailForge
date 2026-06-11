@@ -150,6 +150,29 @@ new mail (IMAP IDLE)
   (LM Studio down? → DEFERRED_NO_LLM, resumes automatically — no mail lost)
 ```
 
+## The approval UI
+
+Localhost-only NiceGUI app in the **Dispatch** design language (the
+same dark-violet theme as the local chat app): a narrow icon sidebar, flat
+cards, one accent color. Working views:
+
+- **Inbox** — stat chips (Pending / Blocked / Deferred / Sent), state tabs,
+  live search over sender/subject/recipient/category, and card rows with
+  category + injection-risk badges. External / first-time recipients are
+  flagged red (§0.4). Updates push live over the WebSocket as mail arrives.
+- **Draft detail** — chat-style review: the original email as an inbound
+  bubble (with `[link_N]` targets resolved for *you*, never the LLM),
+  thread provenance and guardrail flags as expansions (flags auto-expand
+  only when a guard actually fired), the editable draft as an outbound
+  bubble, and the Approve / Edit-and-re-guardrail / Reject action bar.
+  New external recipients still require the exact address to be re-typed.
+- **Activity** — the chained-hash audit log, verified live on every page
+  load (green "chain verified" / red "CHAIN BROKEN" banner), filterable by
+  actor and event. Details are redacted before they are ever written.
+- **Models** — LM Studio health + configured/on-disk models, with recovery
+  guidance when the server is down.
+- A live LM-Studio health dot sits in the header of every page.
+
 ## Architecture
 
 See `src/openclaw_email/`:
@@ -159,6 +182,41 @@ output), `rag/` (chunk/embed/retrieve), `agent/` (deterministic graph, planner,
 quarantined worker, capability-restricted tools), `security/` (the guardrail
 stack), `ui/` (NiceGUI approval app), `audit/` (hash-chain log + monitor),
 `service/` (systemd + WinSW).
+
+## Free-standing app + optional OpenClaw link
+
+The agent is a **stand-alone client**: its only hard dependency is a local
+**LM Studio** API (`localhost:1234`). It adapts to whatever models LM Studio
+serves — if the configured `chat_model`/`embedding_model` aren't loaded it
+falls back to a served model of the same family at startup, so it runs on any
+machine with LM Studio running.
+
+**App-drawer launcher (Linux).** `openclaw-email service install` also installs
+a `.desktop` entry + icon. Clicking it runs `openclaw-email open`, which starts
+the service if needed and opens an *authenticated* browser session to the
+localhost approval UI via a per-user `0600` launcher key (`/launch?k=…`) — no
+copy-pasting the console token. `openclaw-email service desktop` (re)installs
+just the launcher.
+
+**OpenClaw link (optional, `[openclaw]` in config).** OpenClaw runs the overall
+system and plugs in two additive ways; with it absent/offline the app is
+fully functional on local LM Studio:
+
+- **Prompt updates** — drop updated `<name>.txt` templates (`system_planner`,
+  `system_worker`, `classify`, `draft`) into the prompt-override dir
+  (`~/.config/openclaw-email/prompts/`, or `OPENCLAW_EMAIL_PROMPT_DIR`). They
+  win over the packaged defaults with no restart. Set `openclaw.enabled=false`
+  to ignore the override dir entirely.
+- **Heavy lifting when online** — set `openclaw.heavy_lift_base_url` (any
+  OpenAI-compatible endpoint OpenClaw exposes, e.g. a cloud model it has keys
+  for) + `heavy_lift_model`; the API key is read from the env var named by
+  `heavy_lift_key_env` (default `OPENCLAW_EMAIL_HEAVY_KEY`, kept out of config).
+  When set **and reachable**, the *draft* step uses it; on any error it falls
+  back transparently to the local LM Studio model. Empty `heavy_lift_base_url`
+  ⇒ local-only. (OpenClaw's gateway is not itself an OpenAI proxy, so point
+  this at whatever online endpoint OpenClaw provides.)
+- **System/updates** — OpenClaw owns the service lifecycle, wheel updates, and
+  populating the `[openclaw]` config; the app never reaches into OpenClaw.
 
 ## License
 

@@ -1,10 +1,10 @@
 """Draft detail + human-approval page (build spec §5, §9, §11, §0.1, §0.4).
 
-Shows everything a human needs to decide on a draft:
-  * the ORIGINAL email, with symbolic ``[link_N]`` references resolved to their
-    real targets for the human (via ``store.resolve_links``) — the LLM never
-    saw these targets (spec §4), but the human must;
-  * the DRAFTED reply;
+Chat-style review screen. Shows everything a human needs to decide on a draft:
+  * the ORIGINAL email as an inbound bubble, with symbolic ``[link_N]``
+    references resolved to their real targets for the human (via
+    ``store.resolve_links``) — the LLM never saw these targets (spec §4);
+  * the DRAFTED reply as an editable outbound bubble;
   * the GUARDRAIL flags persisted on the draft (``drafts.guardrail_flags``);
   * PROVENANCE — "agent saw these emails" — the same-thread messages.
 
@@ -35,6 +35,7 @@ from typing import Any
 from nicegui import ui
 
 from ...security import run_output_guardrails
+from .. import theme
 from ..interrupt import ApprovalRecord
 
 log = logging.getLogger(__name__)
@@ -158,6 +159,29 @@ def _do_send(store: object, settings: object, draft: Any, body: str, approval: A
     )
 
 
+def _bubble_meta(text: str) -> None:
+    ui.label(text).style("font-size: 11.5px; color: var(--text-muted)")
+
+
+def _any_guard_fired(flags: Any) -> bool:
+    """True when the persisted guardrail flags show an actual firing (used to
+    auto-expand the flags panel; telemetry like injection_score is ignored)."""
+    if not isinstance(flags, dict):
+        return bool(flags)
+    if flags.get("secrets") or flags.get("pii"):
+        return True
+    urls = flags.get("urls")
+    if isinstance(urls, dict) and urls.get("blocked"):
+        return True
+    policy = flags.get("policy")
+    if isinstance(policy, dict) and policy.get("violations"):
+        return True
+    ct = flags.get("crossthread")
+    if isinstance(ct, dict) and (ct.get("leaked_thread_ids") or ct.get("ngrams")):
+        return True
+    return False
+
+
 def render(store: object, settings: object, draft_id: int) -> None:
     """Render the detail/approval page for one draft (spec §5, §9)."""
     draft = None
@@ -167,8 +191,10 @@ def render(store: object, settings: object, draft_id: int) -> None:
         log.warning("get_draft failed: %s", e)
 
     if draft is None:
-        ui.label(f"Draft {draft_id} not found.").classes("text-h6 text-red")
-        ui.button("Back to inbox", on_click=lambda: ui.navigate.to("/")).props("flat")
+        with ui.column().classes("w-full items-center q-pa-xl").style("gap: 8px"):
+            ui.icon("search_off", size="40px").style("color: var(--text-muted)")
+            ui.label(f"Draft {draft_id} not found.").classes("text-h6")
+            ui.button("Back to inbox", on_click=lambda: ui.navigate.to("/")).props("flat")
         return
 
     message_id = draft["message_id"]
@@ -181,80 +207,102 @@ def render(store: object, settings: object, draft_id: int) -> None:
     # Mutable per-render state.
     state: dict[str, Any] = {"body": draft["body"] or "", "approved": False}
 
-    ui.button("< Back to inbox", on_click=lambda: ui.navigate.to("/")).props("flat dense")
+    # --- header row -----------------------------------------------------------
+    with ui.row().classes("w-full items-center").style("gap: 10px"):
+        ui.button(icon="arrow_back", on_click=lambda: ui.navigate.to("/")).props(
+            "flat round dense"
+        ).classes("oce-nav-btn")
+        ui.label(draft["subject"] or "(no subject)").classes("text-h6").style(
+            "font-weight: 700"
+        )
+        theme.state_badge(draft["state"] or "")
+        ui.space()
+        _bubble_meta(f"draft #{draft['id']}")
 
-    with ui.row().classes("w-full items-center q-mt-sm"):
-        ui.label(f"Draft #{draft['id']}").classes("text-h5")
-        ui.badge(draft["state"]).props("color=primary")
-
-    # --- Original email + provenance -----------------------------------------
+    # --- original email (inbound bubble) --------------------------------------
     orig = None
     try:
         orig = store.get_message(message_id)  # type: ignore[attr-defined]
     except Exception:
         pass
 
-    with ui.card().classes("w-full q-mt-md"):
-        ui.label("Original email").classes("text-subtitle1 text-weight-bold")
-        if orig is not None:
-            ui.label(f"From: {orig['from_name'] or ''} <{orig['from_addr'] or ''}>")
-            ui.label(f"Subject: {orig['subject'] or ''}")
-            ui.separator()
-            resolved = _resolve_body_links(store, message_id, orig["sanitized_text"] or "")
-            ui.label("Links shown as RESOLVED targets (the human sees real URLs; "
-                     "the LLM never did).").classes("text-caption text-grey")
-            ui.markdown(f"```\n{resolved}\n```")
-        else:
-            ui.label("Original message unavailable.").classes("text-grey")
+    with ui.row().classes("w-full no-wrap").style("gap: 10px"):
+        ui.icon("mail", size="26px").style("color: var(--text-secondary); margin-top: 6px")
+        with ui.column().classes("col").style("gap: 4px; min-width: 0"):
+            if orig is not None:
+                _bubble_meta(
+                    f"{orig['from_name'] or ''} <{orig['from_addr'] or ''}>"
+                    f"  ·  {orig['received_at'] or ''}"
+                )
+                with ui.element("div").classes("oce-bubble oce-bubble--bot w-full"):
+                    resolved = _resolve_body_links(
+                        store, message_id, orig["sanitized_text"] or ""
+                    )
+                    ui.label(
+                        "Links shown as RESOLVED targets (you see real URLs; "
+                        "the LLM never did)."
+                    ).style("font-size: 11px; color: var(--text-muted)")
+                    ui.markdown(f"```\n{resolved}\n```")
+            else:
+                with ui.element("div").classes("oce-bubble oce-bubble--bot w-full"):
+                    ui.label("Original message unavailable.").style(
+                        "color: var(--text-secondary)"
+                    )
 
-    with ui.card().classes("w-full q-mt-md"):
-        ui.label("Provenance — agent saw these emails (same thread)").classes(
-            "text-subtitle1 text-weight-bold"
-        )
-        try:
-            thread = store.thread_messages(draft["thread_id"])  # type: ignore[attr-defined]
-        except Exception:
-            thread = []
+    # --- provenance (collapsed) ------------------------------------------------
+    try:
+        thread = store.thread_messages(draft["thread_id"])  # type: ignore[attr-defined]
+    except Exception:
+        thread = []
+    with ui.expansion(
+        f"Provenance — agent saw {len(thread)} email(s) in this thread", icon="visibility"
+    ).classes("w-full oce-card"):
         if thread:
             for m in thread:
-                marker = "  (this email)" if m["id"] == message_id else ""
+                marker = "  ← this email" if m["id"] == message_id else ""
                 ui.label(
-                    f"- {m['received_at'] or '?'} | {m['from_addr'] or '?'} | "
+                    f"{m['received_at'] or '?'}  ·  {m['from_addr'] or '?'}  ·  "
                     f"{m['subject'] or ''}{marker}"
-                ).classes("text-body2")
+                ).classes("oce-mono").style("font-size: 12.5px")
         else:
-            ui.label("No thread history recorded.").classes("text-grey")
+            ui.label("No thread history recorded.").style("color: var(--text-secondary)")
 
-    # --- Guardrail flags -----------------------------------------------------
-    with ui.card().classes("w-full q-mt-md"):
-        ui.label("Guardrail flags").classes("text-subtitle1 text-weight-bold")
-        flags_raw = draft["guardrail_flags"]
-        try:
-            flags = json.loads(flags_raw) if flags_raw else {}
-        except Exception:
-            flags = {"_raw": flags_raw}
+    # --- guardrail flags ---------------------------------------------------------
+    flags_raw = draft["guardrail_flags"]
+    try:
+        flags = json.loads(flags_raw) if flags_raw else {}
+    except Exception:
+        flags = {"_raw": flags_raw}
+    fired = _any_guard_fired(flags)
+    title = "Guardrail flags" + (" — ATTENTION" if fired else " — all clear")
+    with ui.expansion(title, icon="shield", value=fired).classes("w-full oce-card"):
         if flags:
             ui.code(json.dumps(flags, indent=2, default=str)).classes("w-full")
         else:
-            ui.label("No guardrail flags recorded.").classes("text-grey")
+            ui.label("No guardrail flags recorded.").style("color: var(--text-secondary)")
 
-    # --- Recipient binding (§0.4) -------------------------------------------
+    # --- recipient binding (§0.4) ----------------------------------------------
     retype_ok = {"value": not is_external}  # allowlisted => no retype needed
 
-    with ui.card().classes("w-full q-mt-md"):
-        ui.label("Recipient").classes("text-subtitle1 text-weight-bold")
-        with ui.row().classes("items-center"):
-            ui.label(recipient).classes(
-                "text-red-600 text-weight-bold" if is_external else ""
+    with ui.element("div").classes("oce-card w-full q-pa-md"):
+        with ui.row().classes("items-center").style("gap: 8px"):
+            ui.icon("person", size="20px").style("color: var(--text-secondary)")
+            ui.label("Reply goes to:").style("color: var(--text-secondary)")
+            ui.label(recipient).style(
+                "color: var(--error); font-weight: 700" if is_external else "font-weight: 600"
             )
             if is_external:
-                ui.badge("NEW EXTERNAL").props("color=red")
+                theme.badge("NEW EXTERNAL", "error")
+            else:
+                theme.badge("known recipient", "success")
         if is_external:
             ui.label(
                 "This is a new / external recipient. Re-type the exact address "
                 "to enable Approve & Send (invariant §0.4)."
-            ).classes("text-caption text-red")
-            confirm = ui.input("Re-type recipient address").classes("w-96")
+            ).style("font-size: 12px; color: var(--error); margin-top: 4px")
+            confirm = ui.input("Re-type recipient address").props("dense outlined").classes(
+                "w-96"
+            )
 
             def _check_retype() -> None:
                 retype_ok["value"] = (confirm.value or "").strip().lower() == recipient.lower()
@@ -262,14 +310,23 @@ def render(store: object, settings: object, draft_id: int) -> None:
 
             confirm.on("update:model-value", lambda _e: _check_retype())
 
-    # --- Drafted reply (editable) -------------------------------------------
-    with ui.card().classes("w-full q-mt-md"):
-        ui.label("Drafted reply").classes("text-subtitle1 text-weight-bold")
-        body_area = ui.textarea(value=state["body"]).classes("w-full").props("autogrow outlined")
-        body_area.on("update:model-value", lambda e: state.update(body=e.args or ""))
-        guard_box = ui.column().classes("w-full")
+    # --- drafted reply (outbound bubble, editable) -------------------------------
+    with ui.row().classes("w-full no-wrap justify-end").style("gap: 10px"):
+        with ui.column().classes("col items-end").style("gap: 4px; min-width: 0"):
+            _bubble_meta("drafted reply — edit freely; edits are re-guardrailed")
+            with ui.element("div").classes("oce-bubble oce-bubble--user w-full"):
+                body_area = (
+                    ui.textarea(value=state["body"])
+                    .classes("w-full")
+                    .props("autogrow borderless")
+                )
+                body_area.on("update:model-value", lambda e: state.update(body=e.args or ""))
+            guard_box = ui.column().classes("w-full")
+        ui.icon("edit_note", size="26px").style(
+            "color: var(--accent-hover); margin-top: 6px"
+        )
 
-    # --- Action buttons ------------------------------------------------------
+    # --- action handlers ----------------------------------------------------------
     def _terminal() -> bool:
         """Already in a terminal state -> no further actions."""
         return (draft["state"] or "").upper() in {"SENT", "REJECTED", "BLOCKED"}
@@ -348,11 +405,11 @@ def render(store: object, settings: object, draft_id: int) -> None:
             _audit(store, "guardrail", "block", draft["id"],
                    {"reasons": report.reasons})
             with guard_box:
-                ui.label("Edit BLOCKED by guardrails — not sent.").classes(
-                    "text-red text-weight-bold"
+                ui.label("Edit BLOCKED by guardrails — not sent.").style(
+                    "color: var(--error); font-weight: 700"
                 )
                 for r in report.reasons:
-                    ui.label(f"- {r}").classes("text-red text-body2")
+                    ui.label(f"• {r}").style("color: var(--error); font-size: 13px")
                 ui.code(json.dumps(report.flags, indent=2, default=str)).classes("w-full")
             ui.notify("Edit blocked by guardrails.", type="negative")
             return
@@ -393,9 +450,16 @@ def render(store: object, settings: object, draft_id: int) -> None:
             log.exception("reject failed")
             ui.notify(f"Reject failed: {e}", type="negative")
 
-    with ui.row().classes("q-mt-md q-gutter-sm"):
-        approve_btn = ui.button("Approve & Send", on_click=_approve_and_send).props("color=positive")
-        edit_btn = ui.button("Save edit & re-guardrail", on_click=_save_edit).props("color=primary")
-        reject_btn = ui.button("Reject", on_click=_reject).props("color=negative outline")
+    # --- action bar -----------------------------------------------------------------
+    with ui.row().classes("w-full justify-end q-mt-sm").style("gap: 10px"):
+        reject_btn = ui.button("Reject", icon="close", on_click=_reject).props(
+            "outline color=negative"
+        )
+        edit_btn = ui.button(
+            "Save edit & re-guardrail", icon="shield", on_click=_save_edit
+        ).props("color=primary")
+        approve_btn = ui.button(
+            "Approve & Send", icon="send", on_click=_approve_and_send
+        ).props("color=positive")
 
     _sync_buttons()

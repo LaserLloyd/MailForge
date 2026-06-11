@@ -79,6 +79,21 @@ def run_serve(start_ui: bool = True) -> None:
 
     async def _consumer() -> None:
         loop = asyncio.get_running_loop()
+        # Standalone robustness: adapt to whatever models this LM Studio serves
+        # so the app works on any machine, not just one with the configured ids.
+        if bridge is not None:
+            try:
+                rep = await bridge.resolve_served_models()
+                if rep.get("changed"):
+                    log.info(
+                        "Adapted to served models: chat=%s embed=%s",
+                        rep.get("chat"),
+                        rep.get("embed"),
+                    )
+            except Exception as e:
+                log.debug("model resolution skipped: %s", e)
+            if getattr(bridge, "has_heavy", False):
+                log.info("OpenClaw heavy-lift link active: %s", bridge.heavy_base_url)
         await _resume_deferred()
         while not stop_event.is_set():
             try:

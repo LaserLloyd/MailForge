@@ -11,10 +11,13 @@ email cannot change what the agent decides to do.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 from ..llm.prompts import load
 from .tools import ALLOWED_TOOLS
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -118,8 +121,8 @@ async def freeze_plan(bridge, refs: SymbolicRefs, settings) -> Plan:
             plan.notes += f" | llm_reason={out.get('reason', '')[:120]}"
             plan.decided_by = "policy+llm"
             plan.raw = out
-    except Exception:
+    except Exception as e:
         # Any planner failure → keep the conservative policy plan.
-        pass
+        log.warning("planner LLM refinement failed; keeping policy plan: %s", e)
 
     return plan

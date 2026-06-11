@@ -1,6 +1,6 @@
 [project]
 name = "openclaw-email"
-version = "0.1.0"
+version = "0.2.0"
 description = "Self-contained, cross-platform local-LLM email triage & auto-draft assistant (no auto-send)."
 readme = "README.md"
 requires-python = ">=3.12"

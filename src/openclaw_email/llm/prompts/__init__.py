@@ -23,7 +23,23 @@ PROMPT_VERSION = "1"
 def load(name: str) -> str:
     """Return the text of prompt template ``name`` (with or without ``.txt``).
 
-    Raises ``FileNotFoundError`` (via the resources API) for unknown names.
+    The "OpenClaw link" prompt-update seam: if a same-named file exists in the
+    user-writable prompt override directory (see
+    :func:`openclaw_email.paths.prompt_override_dir`), its contents win. This
+    lets OpenClaw push updated prompts without touching the installed package.
+    When no override is present the packaged default ships inside the wheel, so
+    the app is fully standalone. Loaded per call — overrides apply with no
+    restart.
+
+    Raises ``FileNotFoundError`` for unknown names with no override present.
     """
     filename = name if name.endswith(".txt") else f"{name}.txt"
+    try:
+        from ...paths import prompt_override_dir
+
+        override = prompt_override_dir() / filename
+        if override.is_file():
+            return override.read_text("utf-8")
+    except Exception:  # never let the override path break the packaged default
+        pass
     return resources.files(__package__).joinpath(filename).read_text("utf-8")

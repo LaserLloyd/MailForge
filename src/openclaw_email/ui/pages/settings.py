@@ -33,19 +33,20 @@ def _parse_csv(text: str) -> list[str]:
 
 def render(store: object, settings: object) -> None:
     """Render the settings page (spec §9). Edits write back via ``settings.save()``."""
-    ui.label("Settings").classes("text-h5 q-mb-md")
-    ui.label(
-        "Secrets (passwords / OAuth tokens) are NOT shown or editable here — "
-        "they live only in the OS keyring (invariant §0.5)."
-    ).classes("text-caption text-grey q-mb-md")
+    with ui.row().classes("items-center").style("gap: 8px"):
+        ui.icon("key_off", size="18px").style("color: var(--text-secondary)")
+        ui.label(
+            "Secrets (passwords / OAuth tokens) are NOT shown or editable here — "
+            "they live only in the OS keyring (invariant §0.5)."
+        ).style("font-size: 12px; color: var(--text-secondary)")
 
     sec = getattr(settings, "security", None)
     style = getattr(settings, "style", None)
 
     # --- IMAP accounts (display + editable host/port/username) ---------------
     imap_inputs: list[dict[str, Any]] = []
-    with ui.card().classes("w-full"):
-        ui.label("IMAP accounts").classes("text-subtitle1 text-weight-bold")
+    with ui.card().classes("oce-card w-full"):
+        ui.label("IMAP accounts").classes("text-subtitle1 text-weight-bold").style("color: var(--accent-hover)")
         accounts = list(getattr(settings, "imap_accounts", []) or [])
         if not accounts:
             ui.label("No IMAP accounts configured (run setup-wizard).").classes("text-grey")
@@ -60,8 +61,8 @@ def render(store: object, settings: object) -> None:
     # --- SMTP account --------------------------------------------------------
     smtp_inputs: dict[str, Any] = {}
     smtp = getattr(settings, "smtp", None)
-    with ui.card().classes("w-full q-mt-md"):
-        ui.label("SMTP account").classes("text-subtitle1 text-weight-bold")
+    with ui.card().classes("oce-card w-full q-mt-md"):
+        ui.label("SMTP account").classes("text-subtitle1 text-weight-bold").style("color: var(--accent-hover)")
         if smtp is None:
             ui.label("No SMTP account configured (run setup-wizard).").classes("text-grey")
         else:
@@ -75,8 +76,8 @@ def render(store: object, settings: object) -> None:
 
     # --- Style / context docs / signature / tone -----------------------------
     style_inputs: dict[str, Any] = {}
-    with ui.card().classes("w-full q-mt-md"):
-        ui.label("Style & context").classes("text-subtitle1 text-weight-bold")
+    with ui.card().classes("oce-card w-full q-mt-md"):
+        ui.label("Style & context").classes("text-subtitle1 text-weight-bold").style("color: var(--accent-hover)")
         style_inputs["style_paths"] = ui.input(
             "Style-guide paths (comma-separated)",
             value=_csv(getattr(style, "style_guide_paths", []) if style else []),
@@ -94,8 +95,8 @@ def render(store: object, settings: object) -> None:
 
     # --- Allowlists / block domains ------------------------------------------
     allow_inputs: dict[str, Any] = {}
-    with ui.card().classes("w-full q-mt-md"):
-        ui.label("Allowlists & block domains").classes("text-subtitle1 text-weight-bold")
+    with ui.card().classes("oce-card w-full q-mt-md"):
+        ui.label("Allowlists & block domains").classes("text-subtitle1 text-weight-bold").style("color: var(--accent-hover)")
         allow_inputs["recipient_allow"] = ui.input(
             "Recipient allowlist domains (comma-separated)",
             value=_csv(getattr(sec, "recipient_allowlist_domains", set()) if sec else set()),
@@ -143,4 +144,4 @@ def render(store: object, settings: object) -> None:
             log.exception("settings save failed")
             ui.notify(f"Save failed: {e}", type="negative")
 
-    ui.button("Save settings", on_click=_save).props("color=primary").classes("q-mt-md")
+    ui.button("Save settings", icon="save", on_click=_save).props("color=primary").classes("q-mt-md")

@@ -41,8 +41,12 @@ class SMTPAccount(BaseModel):
 
 
 class LLMSettings(BaseModel):
+    # Shares the local LM Studio endpoint that OpenClaw's "vllm" provider uses
+    # (127.0.0.1:1234). Defaults below are model IDs actually served there so a
+    # fresh install talks to a real model out of the box; override via the
+    # Models page or config.toml.
     lm_studio_host: str = "localhost:1234"
-    chat_model: str = "qwen/qwen3-4b-2507"
+    chat_model: str = "qwen/qwen3.6-35b-a3b"
     embedding_model: str = "text-embedding-nomic-embed-text-v1.5"
     ttl_seconds: int = 1800
     context_length: int = 8192
@@ -70,6 +74,33 @@ class StyleSettings(BaseModel):
     tone: str = "professional"
 
 
+class OpenClawSettings(BaseModel):
+    """Optional 'OpenClaw link'. The app is a free-standing LM Studio client;
+    everything here is additive and OFF/empty by default.
+
+    OpenClaw (which runs the overall system) plugs in two ways:
+
+    * **Prompt updates** — drop updated ``<name>.txt`` templates into
+      ``prompt_override_dir`` (see :func:`paths.prompt_override_dir`); they win
+      over the packaged defaults with no restart. ``enabled=False`` ignores the
+      override dir entirely.
+    * **Heavy lifting when online** — point ``heavy_lift_base_url`` at any
+      OpenAI-compatible endpoint OpenClaw exposes (a cloud model it has keys
+      for). When set AND reachable, the *draft* step uses it; on any error it
+      falls back to the local LM Studio model, so a missing/offline link never
+      breaks the app. The API key is read from the env var named by
+      ``heavy_lift_key_env`` (kept out of config/keyring so OpenClaw owns it).
+
+    Empty ``heavy_lift_base_url`` => pure standalone on local LM Studio.
+    """
+
+    enabled: bool = True
+    prompt_override_dir: str = ""  # "" => paths.prompt_override_dir() default
+    heavy_lift_base_url: str = ""  # e.g. "http://127.0.0.1:8080/v1"; "" => local only
+    heavy_lift_model: str = ""
+    heavy_lift_key_env: str = "OPENCLAW_EMAIL_HEAVY_KEY"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="OPENCLAW_EMAIL_",
@@ -84,6 +115,7 @@ class Settings(BaseSettings):
     llm: LLMSettings = Field(default_factory=LLMSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
     style: StyleSettings = Field(default_factory=StyleSettings)
+    openclaw: OpenClawSettings = Field(default_factory=OpenClawSettings)
     db_path: str = Field(default_factory=lambda: str(default_db_path()))
 
     @classmethod

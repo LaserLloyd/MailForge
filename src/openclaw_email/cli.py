@@ -46,7 +46,7 @@ def setup_wizard() -> None:
 
     # --- IMAP account ---
     name = typer.prompt("Account label (e.g. 'work')", default="primary")
-    imap_host = typer.prompt("IMAP host", default="imap.gmail.com")
+    imap_host = typer.prompt("IMAP host", default="imap.example.com")
     imap_port = typer.prompt("IMAP port", default=993, type=int)
     username = typer.prompt("Email / username")
     auth_method = typer.prompt(
@@ -57,7 +57,7 @@ def setup_wizard() -> None:
 
     # --- SMTP account ---
     typer.echo("")
-    smtp_host = typer.prompt("SMTP host", default="smtp.gmail.com")
+    smtp_host = typer.prompt("SMTP host", default="smtp.example.com")
     smtp_port = typer.prompt("SMTP port", default=587, type=int)
     smtp_user = typer.prompt("SMTP username", default=username)
     same = typer.confirm("Use the same secret for SMTP?", default=True)
@@ -103,6 +103,61 @@ def serve(
     from .runtime import run_serve
 
     run_serve(start_ui=not no_ui)
+
+
+@app.command()
+def open(  # noqa: A001 - intentional CLI verb
+    no_browser: bool = typer.Option(
+        False, "--no-browser", help="Print the URL instead of opening a browser."
+    ),
+) -> None:
+    """Open the approval UI in your browser (used by the app-drawer launcher).
+
+    Ensures the background service is running, then opens an authenticated
+    session via the local launcher key — no copy-pasting the console token.
+    """
+    import socket
+    import time
+    import webbrowser
+
+    from .ui.app import launcher_key, persistent_port
+
+    # 1) Make sure something is serving the UI. Prefer the installed service.
+    port = persistent_port()
+
+    def _up() -> bool:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.4)
+            return s.connect_ex(("127.0.0.1", port)) == 0
+
+    if not _up():
+        try:
+            from .service import start_service
+
+            start_service()
+        except Exception as e:
+            log.debug("could not start service automatically: %s", e)
+        # Wait briefly for the server to bind.
+        for _ in range(40):  # ~10s
+            if _up():
+                break
+            time.sleep(0.25)
+
+    if not _up():
+        typer.secho(
+            "UI is not running. Start it with 'openclaw-email service start' "
+            "or 'openclaw-email serve', then try again.",
+            fg="red",
+        )
+        raise typer.Exit(code=1)
+
+    url = f"http://127.0.0.1:{port}/launch?k={launcher_key()}"
+    if no_browser:
+        typer.echo(url)
+        return
+    typer.secho(f"Opening {('http://127.0.0.1:%d' % port)} …", fg="cyan")
+    if not webbrowser.open(url):
+        typer.echo(f"Could not launch a browser. Open this URL manually:\n{url}")
 
 
 @app.command()
@@ -152,6 +207,15 @@ def service_install() -> None:
 
     path = install_service()
     typer.secho(f"Service installed: {path}", fg="green")
+
+
+@service_app.command("desktop")
+def service_desktop() -> None:
+    """(Re)install just the app-drawer launcher entry + icon."""
+    from .service import install_desktop_entry
+
+    path = install_desktop_entry()
+    typer.secho(f"Desktop entry: {path}", fg="green")
 
 
 @service_app.command("start")

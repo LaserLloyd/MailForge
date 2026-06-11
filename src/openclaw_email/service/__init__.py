@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import platform
 
-from . import systemd, winsw
+from . import desktop, systemd, winsw
 
 
 def _is_windows() -> bool:
@@ -22,10 +22,25 @@ def _is_windows() -> bool:
 
 
 def install_service() -> str:
-    """Install the background service for the current OS; return its path."""
+    """Install the background service for the current OS; return its path.
+
+    On Linux this also installs the app-drawer ``.desktop`` entry + icon so the
+    user gets a clickable launcher (best-effort; failures don't block the
+    service install).
+    """
     if _is_windows():
         return winsw.install()
-    return systemd.install()
+    path = systemd.install()
+    try:
+        desktop.install()
+    except Exception:  # pragma: no cover - best-effort
+        pass
+    return path
+
+
+def install_desktop_entry() -> str:
+    """Install just the app-drawer launcher entry + icon."""
+    return desktop.install()
 
 
 def start_service() -> None:
@@ -44,4 +59,12 @@ def stop_service() -> None:
         systemd.stop()
 
 
-__all__ = ["install_service", "start_service", "stop_service", "systemd", "winsw"]
+__all__ = [
+    "install_service",
+    "install_desktop_entry",
+    "start_service",
+    "stop_service",
+    "desktop",
+    "systemd",
+    "winsw",
+]

@@ -55,10 +55,13 @@ async def draft_reply(
         .replace("{{SIGNATURE}}", getattr(style, "signature", "") or "")
     )
     schema = json_schema_for(ProposedDraft)
+    # Drafting is the "heavy" task: prefer the OpenClaw heavy-lift model when
+    # online (transparently falls back to the local model otherwise).
     raw = await bridge.chat_structured(
         [{"role": "system", "content": system}, {"role": "user", "content": user}],
         schema,
         schema_name="proposed_draft",
+        heavy=True,
     )
     return coerce(raw, ProposedDraft)
 

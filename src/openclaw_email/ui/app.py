@@ -28,6 +28,8 @@ from nicegui import app as nicegui_app
 from nicegui import ui
 
 from ..paths import runtime_file
+from . import theme
+from .pages import activity as activity_page
 from .pages import detail as detail_page
 from .pages import inbox as inbox_page
 from .pages import models as models_page
@@ -39,6 +41,7 @@ log = logging.getLogger(__name__)
 _PORT: int | None = None
 _LAUNCH_TOKEN: str | None = None
 _TOKEN_CONSUMED = False
+_LAUNCHER_KEY: str | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -62,6 +65,37 @@ def persistent_port() -> int:
     port = _random_high_port()
     f.write_text(str(port), encoding="utf-8")
     return port
+
+
+def launcher_key() -> str:
+    """Stable per-user launcher key for the desktop entry (0600 file).
+
+    The console one-shot ``?token=`` URL is for the manual/headless path. The
+    app-drawer launcher (``openclaw-email open``) instead opens
+    ``/launch?k=<this>``; the route validates the key against this 0600 file and
+    upgrades to the same signed session cookie. The file is readable only by the
+    user, so possessing it == being the local user — the same trust boundary the
+    127.0.0.1 bind + Host-header guard already assume. It is reusable (the
+    launcher runs every time you click the icon), unlike the one-shot token.
+    """
+    import os
+    import stat
+
+    f = runtime_file("ui_launcher_key")
+    if f.exists():
+        try:
+            v = f.read_text(encoding="utf-8").strip()
+            if v:
+                return v
+        except OSError:
+            pass
+    key = _pysecrets.token_urlsafe(32)
+    try:
+        f.write_text(key, encoding="utf-8")
+        os.chmod(f, stat.S_IRUSR | stat.S_IWUSR)  # 0600
+    except OSError as e:
+        log.warning("could not persist launcher key: %s", e)
+    return key
 
 
 def _load_or_create_storage_secret() -> str:
@@ -126,25 +160,15 @@ def _gate(token: str | None) -> bool:
 
 
 def _denied() -> None:
-    ui.label("Access denied").classes("text-h5 text-red")
-    ui.label(
-        "Open the URL printed to the console (it carries a one-shot launch "
-        "token). The token upgrades to a signed session cookie on first use."
-    ).classes("text-grey")
-
-
-def _nav() -> None:
-    """Top navigation bar shown on every page."""
-    with ui.header().classes("items-center justify-between"):
-        ui.label("OpenClaw Email — Human Approval").classes("text-h6")
-        with ui.row():
-            ui.button("Inbox", on_click=lambda: ui.navigate.to("/")).props("flat color=white")
-            ui.button("Settings", on_click=lambda: ui.navigate.to("/settings")).props(
-                "flat color=white"
-            )
-            ui.button("Models", on_click=lambda: ui.navigate.to("/models")).props(
-                "flat color=white"
-            )
+    theme.apply()
+    with ui.column().classes("absolute-center items-center").style("gap: 10px"):
+        ui.icon("lock", size="42px").style("color: var(--error)")
+        ui.label("Access denied").classes("text-h5").style("font-weight:700")
+        ui.label(
+            "Open the URL printed to the console (it carries a one-shot launch "
+            "token), or use the app-drawer launcher. The token upgrades to a "
+            "signed session cookie on first use."
+        ).style("color: var(--text-secondary); max-width: 420px; text-align: center")
 
 
 # --------------------------------------------------------------------------- #
@@ -180,37 +204,65 @@ def _register_pages(store: object, settings: object, bridge: object | None) -> N
         return
     _PAGES_REGISTERED = True
 
+    @ui.page("/launch")
+    def _launch(k: str | None = None) -> None:
+        """Desktop-launcher entry: validate the 0600 launcher key, upgrade to a
+        signed session cookie, then redirect to the inbox. See launcher_key()."""
+        ok = bool(
+            k
+            and _LAUNCHER_KEY is not None
+            and _pysecrets.compare_digest(k, _LAUNCHER_KEY)
+        )
+        if ok:
+            try:
+                nicegui_app.storage.user["authenticated"] = True
+            except Exception as e:
+                log.warning("launch: could not set session cookie: %s", e)
+                ok = False
+        if not ok:
+            _denied()
+            return
+        ui.navigate.to("/")
+
     @ui.page("/")
     def _inbox(token: str | None = None) -> None:
         if not _gate(token):
             _denied()
             return
-        _nav()
-        inbox_page.render(store)
+        with theme.shell("inbox", "Inbox", bridge):
+            inbox_page.render(store)
 
     @ui.page("/detail/{draft_id}")
     def _detail(draft_id: int, token: str | None = None) -> None:
         if not _gate(token):
             _denied()
             return
-        _nav()
-        detail_page.render(store, settings, draft_id)
+        with theme.shell("inbox", f"Draft #{draft_id}", bridge):
+            detail_page.render(store, settings, draft_id)
+
+    @ui.page("/activity")
+    def _activity(token: str | None = None) -> None:
+        if not _gate(token):
+            _denied()
+            return
+        with theme.shell("activity", "Activity", bridge):
+            activity_page.render(store)
 
     @ui.page("/settings")
     def _settings(token: str | None = None) -> None:
         if not _gate(token):
             _denied()
             return
-        _nav()
-        settings_page.render(store, settings)
+        with theme.shell("settings", "Settings", bridge):
+            settings_page.render(store, settings)
 
     @ui.page("/models")
     async def _models(token: str | None = None) -> None:
         if not _gate(token):
             _denied()
             return
-        _nav()
-        await models_page.render(bridge)
+        with theme.shell("models", "Models", bridge):
+            await models_page.render(bridge)
 
 
 # --------------------------------------------------------------------------- #
@@ -242,11 +294,12 @@ def build_app(
     ``storage_secret`` so :func:`run_ui` (or a test) can launch / inspect. Safe
     to call in tests; does not bind a socket beyond the one-shot port probe.
     """
-    global _PORT, _LAUNCH_TOKEN, _TOKEN_CONSUMED
+    global _PORT, _LAUNCH_TOKEN, _TOKEN_CONSUMED, _LAUNCHER_KEY
 
     _PORT = int(port) if port is not None else persistent_port()
     _LAUNCH_TOKEN = _pysecrets.token_urlsafe(32)
     _TOKEN_CONSUMED = False
+    _LAUNCHER_KEY = launcher_key()
     storage_secret = _load_or_create_storage_secret()
 
     _install_host_guard(_PORT)

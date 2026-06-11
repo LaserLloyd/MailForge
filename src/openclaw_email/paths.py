@@ -44,3 +44,29 @@ def default_db_path() -> Path:
 def runtime_file(name: str) -> Path:
     """Small runtime state files (UI port, launch token) live next to data."""
     return data_dir() / name
+
+
+def prompt_override_dir() -> Path:
+    """User-writable prompt override directory (the 'OpenClaw link' seam).
+
+    OpenClaw (or the user) may drop updated ``<name>.txt`` prompt templates
+    here; :func:`openclaw_email.llm.prompts.load` prefers them over the
+    packaged defaults. Absent/empty => packaged defaults are used, so the app
+    is fully standalone. Overridable via ``OPENCLAW_EMAIL_PROMPT_DIR``.
+    """
+    env = os.environ.get("OPENCLAW_EMAIL_PROMPT_DIR")
+    if env:
+        return _expand(env)
+    return config_dir() / "prompts"
+
+
+def desktop_entry_path() -> Path:
+    """``~/.local/share/applications/openclaw-email.desktop`` (XDG app drawer)."""
+    base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+    return Path(base) / "applications" / "openclaw-email.desktop"
+
+
+def icon_path() -> Path:
+    """Installed app icon location (hicolor scalable theme)."""
+    base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+    return Path(base) / "icons" / "hicolor" / "scalable" / "apps" / "openclaw-email.svg"

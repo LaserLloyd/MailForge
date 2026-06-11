@@ -217,6 +217,31 @@ class Store:
     def deferred_drafts(self) -> list[sqlite3.Row]:
         return self.drafts_by_state("DEFERRED_NO_LLM")
 
+    def draft_counts(self) -> dict[str, int]:
+        """Counts per draft state (for the inbox stat chips / tab badges)."""
+        rows = self.conn.execute(
+            "SELECT state, COUNT(*) AS n FROM drafts GROUP BY state"
+        ).fetchall()
+        return {r["state"]: r["n"] for r in rows}
+
+    def drafts_overview(self, state: DraftState | None = None) -> list[sqlite3.Row]:
+        """Drafts joined with their source message + classification in ONE query
+        (the inbox previously issued 2 extra queries per row). ``state=None``
+        returns all states, newest first."""
+        q = (
+            "SELECT d.*, m.from_addr, m.from_name, m.received_at, "
+            "c.category, c.priority, c.injection_risk "
+            "FROM drafts d "
+            "LEFT JOIN messages m ON m.id = d.message_id "
+            "LEFT JOIN classifications c ON c.message_id = d.message_id "
+        )
+        params: tuple[Any, ...] = ()
+        if state:
+            q += "WHERE d.state=? "
+            params = (state,)
+        q += "ORDER BY d.created_at DESC"
+        return self.conn.execute(q, params).fetchall()
+
     # ----- recipient allowlist -----
     def record_allowlist(self, addr: str, source: str) -> None:
         domain = addr.split("@")[-1].lower() if "@" in addr else ""
@@ -318,6 +343,12 @@ class Store:
 
     def iter_audit(self) -> list[sqlite3.Row]:
         return self.conn.execute("SELECT * FROM audit_log ORDER BY id").fetchall()
+
+    def recent_audit(self, limit: int = 200) -> list[sqlite3.Row]:
+        """Most recent audit events, newest first (Activity page)."""
+        return self.conn.execute(
+            "SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (int(limit),)
+        ).fetchall()
 
 
 def open_store(db_path: str | Path, init: bool = True) -> Store:
