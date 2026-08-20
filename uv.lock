@@ -3101,7 +3101,7 @@ wheels = [
 
 [[package]]
 name = "openclaw-email"
-version = "0.2.0"
+version = "0.3.1"
 source = { editable = "." }
 dependencies = [
     { name = "bleach" },
@@ -3112,6 +3112,7 @@ dependencies = [
     { name = "keyring" },
     { name = "keyrings-cryptfile" },
     { name = "lxml-html-clean" },
+    { name = "markdown2" },
     { name = "nicegui" },
     { name = "platformdirs" },
     { name = "pydantic" },
@@ -3168,6 +3169,7 @@ requires-dist = [
     { name = "llm-guard", marker = "extra == 'security-ml'", specifier = ">=0.3.15" },
     { name = "lmstudio", marker = "extra == 'llm'", specifier = ">=1.5.0" },
     { name = "lxml-html-clean", specifier = ">=0.1" },
+    { name = "markdown2", specifier = ">=2.5" },
     { name = "markitdown", marker = "extra == 'rag'", specifier = ">=0.0.1" },
     { name = "nicegui", specifier = ">=2.0" },
     { name = "platformdirs", specifier = ">=4.2" },

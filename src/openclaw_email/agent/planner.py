@@ -31,6 +31,17 @@ class SymbolicRefs:
     category_hint: str | None = None  # may be filled post-classify, never raw text
 
 
+async def _is_up(bridge) -> bool:
+    """Non-blocking LM Studio probe: the sync ``is_up()`` is a 5 s HTTP call
+    and these run inside the UI's event loop."""
+    fn = getattr(bridge, "is_up_async", None)
+    if fn is not None:
+        return bool(await fn())
+    import asyncio
+
+    return bool(await asyncio.to_thread(bridge.is_up))
+
+
 @dataclass
 class Plan:
     allowed_actions: list[str]
@@ -84,7 +95,7 @@ async def freeze_plan(bridge, refs: SymbolicRefs, settings) -> Plan:
         decided_by="policy",
     )
 
-    if bridge is None or not bridge.is_up():
+    if bridge is None or not await _is_up(bridge):
         return plan
 
     # Optional LLM refinement — policy + symbolic refs only, no raw content.

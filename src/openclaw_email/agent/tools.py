@@ -58,7 +58,7 @@ def propose_draft(
     approves it in the UI.
     """
     assert_tool_allowed("propose_draft")
-    return store.create_draft(
+    return store.upsert_message_draft(
         message_id=message_id,
         thread_id=thread_id,
         recipient=recipient,

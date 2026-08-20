@@ -150,6 +150,7 @@ def run_output_guardrails(
         ct = ctg.check(
             body, thread_id, bridge=bridge,
             draft_embedding=(context or {}).get("draft_embedding"),
+            site_id=(context or {}).get("site_id"),
         )
         report.flags["crossthread"] = {
             "leaked_thread_ids": ct.leaked_thread_ids,

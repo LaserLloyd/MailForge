@@ -1,6 +1,6 @@
 """Inbox page — triage dashboard for drafts (build spec §9).
 
-Dispatch-styled overview of every draft the agent has produced:
+Chat-styled overview of every draft the agent has produced:
 
   * stat chips (Pending / Blocked / Deferred / Sent) from one GROUP BY query;
   * state tabs + a live search box (sender / subject / recipient / category);
@@ -81,7 +81,7 @@ def rows_for_view(store: object, tab: str, q: str) -> list[dict[str, Any]]:
             "id": d["id"],
             "sender": sender,
             "from_addr": d["from_addr"] or "",
-            "subject": d["subject"] or "(no subject)",
+            "subject": theme.clean_subject(d["subject"]),
             "preview": " ".join((d["body"] or "").split())[:110],
             "category": d["category"] or "",
             "risk": d["injection_risk"],
@@ -120,13 +120,12 @@ def _render_row(row: dict[str, Any], show_state: bool) -> None:
         with ui.row().classes("w-full items-center no-wrap").style("gap: 10px"):
             with ui.column().classes("col").style("gap: 2px; min-width: 0"):
                 with ui.row().classes("items-center no-wrap").style("gap: 8px"):
-                    ui.label(row["sender"]).style(
-                        "font-weight: 700; font-size: 14px; white-space: nowrap; "
-                        "overflow: hidden; text-overflow: ellipsis"
+                    ui.label(row["sender"]).classes("oce-clip-1").style(
+                        "font-weight: 700; font-size: 14px; flex-shrink: 0; max-width: 45%"
                     )
-                    ui.label(row["subject"]).style(
-                        "color: var(--text-secondary); font-size: 13.5px; "
-                        "white-space: nowrap; overflow: hidden; text-overflow: ellipsis"
+                    theme.subject_label(
+                        row["subject"],
+                        style="color: var(--text-secondary); font-size: 13.5px",
                     )
                 with ui.row().classes("items-center no-wrap").style("gap: 6px"):
                     ui.label(f"→ {row['recipient']}").style(
@@ -137,9 +136,8 @@ def _render_row(row: dict[str, Any], show_state: bool) -> None:
                     if row["external"]:
                         theme.badge("external", "error")
                 if row["preview"]:
-                    ui.label(row["preview"]).style(
-                        "color: var(--text-muted); font-size: 12.5px; white-space: nowrap; "
-                        "overflow: hidden; text-overflow: ellipsis; max-width: 640px"
+                    ui.label(row["preview"]).classes("oce-clip-1").style(
+                        "color: var(--text-muted); font-size: 12.5px; max-width: 640px"
                     )
             with ui.column().classes("items-end").style("gap: 5px; flex-shrink: 0"):
                 ui.label(row["time"]).style("font-size: 11.5px; color: var(--text-muted)")
@@ -160,7 +158,26 @@ def _inbox_body(store: object) -> None:
         log.warning("draft_counts failed: %s", e)
         counts = {}
 
-    with ui.row().classes("w-full").style("gap: 10px"):
+    deferred = int(counts.get("DEFERRED_NO_LLM", 0) or 0)
+    with ui.element("div").classes("oce-card w-full q-pa-md"):
+        with ui.row().classes("w-full items-center oce-toolbar").style("gap: 8px"):
+            ui.icon("account_tree", size="21px").style("color: var(--accent-hover)")
+            ui.label("Receive → sanitize/classify → site context → draft/revise → approve → send").style(
+                "font-size: 12.5px; font-weight: 650"
+            )
+            ui.space()
+            theme.badge("AUTO THROUGH DRAFT", "accent")
+            theme.badge("NEVER AUTO-SEND", "success")
+        ui.label(
+            f"{deferred} deferred draft(s) are waiting for model retry or your revision."
+            if deferred
+            else "Deferred retry queue is clear. You remain the final send authority."
+        ).style(
+            "font-size: 11.5px; color: var(--warning)" if deferred
+            else "font-size: 11.5px; color: var(--text-secondary)"
+        )
+
+    with ui.row().classes("w-full oce-toolbar").style("gap: 10px"):
         _stat_chip("Pending", counts.get("PENDING", 0), "var(--accent-hover)")
         _stat_chip("Blocked", counts.get("BLOCKED", 0), "var(--error)")
         _stat_chip("Deferred", counts.get("DEFERRED_NO_LLM", 0), "var(--warning)")
@@ -188,7 +205,7 @@ def render(store: object) -> None:
     :func:`openclaw_email.ui.app.refresh_inbox` -> :func:`refresh`) preserve
     the user's current view.
     """
-    with ui.row().classes("w-full items-center no-wrap").style("gap: 12px"):
+    with ui.row().classes("w-full items-center oce-toolbar").style("gap: 12px"):
         with ui.tabs(
             value=_view["tab"],
             on_change=lambda e: (_view.update(tab=e.value), _inbox_body.refresh()),
@@ -200,7 +217,9 @@ def render(store: object) -> None:
             placeholder="Search sender, subject, recipient…",
             value=_view["q"],
             on_change=lambda e: (_view.update(q=e.value or ""), _inbox_body.refresh()),
-        ).props("dense outlined clearable debounce=300").classes("w-72").add_slot(
+        ).props("dense outlined clearable debounce=300").classes(
+            "w-72 oce-toolbar-grow"
+        ).add_slot(
             "prepend", '<i class="material-icons" style="font-size:18px">search</i>'
         )
 

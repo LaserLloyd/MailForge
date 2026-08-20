@@ -11,3 +11,14 @@ wheels/
 
 # NiceGUI runtime storage
 .nicegui/
+
+# Backups, local artifacts
+*.bak
+*.bak-*
+*.orig
+*.rej
+.env
+.env.*
+.pytest_cache/
+.ruff_cache/
+*.log

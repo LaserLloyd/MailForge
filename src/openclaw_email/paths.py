@@ -16,19 +16,32 @@ from platformdirs import user_config_dir, user_data_dir
 
 APP_NAME = "openclaw-email"
 
+#: Single env var that relocates BOTH config and data (``<home>/config`` and
+#: ``<home>/data``). Used by ``openclaw-email demo`` to run against a throwaway
+#: tree, and handy for testing a second profile without touching the real one.
+HOME_ENV = "OPENCLAW_EMAIL_HOME"
+
 
 def _expand(p: str | os.PathLike[str]) -> Path:
     return Path(os.path.expanduser(os.path.expandvars(str(p)))).resolve()
 
 
+def app_home() -> Path | None:
+    """Explicit application home from ``OPENCLAW_EMAIL_HOME``, if set."""
+    value = os.environ.get(HOME_ENV, "").strip()
+    return _expand(value) if value else None
+
+
 def config_dir() -> Path:
-    d = _expand(user_config_dir(APP_NAME, appauthor=False))
+    home = app_home()
+    d = _expand(home / "config") if home else _expand(user_config_dir(APP_NAME, appauthor=False))
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
 def data_dir() -> Path:
-    d = _expand(user_data_dir(APP_NAME, appauthor=False))
+    home = app_home()
+    d = _expand(home / "data") if home else _expand(user_data_dir(APP_NAME, appauthor=False))
     d.mkdir(parents=True, exist_ok=True)
     return d
 

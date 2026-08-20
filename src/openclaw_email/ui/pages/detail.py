@@ -2,16 +2,16 @@
 
 Chat-style review screen. Shows everything a human needs to decide on a draft:
   * the ORIGINAL email as an inbound bubble, with symbolic ``[link_N]``
-    references resolved to their real targets for the human (via
-    ``store.resolve_links``) — the LLM never saw these targets (spec §4);
+    references left inert. Account/security actions must be verified by opening
+    the provider's known site directly;
   * the DRAFTED reply as an editable outbound bubble;
   * the GUARDRAIL flags persisted on the draft (``drafts.guardrail_flags``);
   * PROVENANCE — "agent saw these emails" — the same-thread messages.
 
 Actions (spec §5):
   * Approve — write an approval record (state APPROVED, approved_by/at), then
-    send via SMTP, then mark SENT. The send call is guarded by an inline assert
-    that a human-approval record exists (invariant §0.1 / §11).
+    send via SMTP, then mark SENT. Explicit runtime checks require a human
+    approval record even when Python optimizations are enabled.
   * Edit    — edit the body in a textarea; on save RE-RUN ``run_output_guardrails``
     (spec §5 "edit: re-run output_guardrails -> send"). Pass -> send; fail ->
     show the flags and BLOCK.
@@ -32,11 +32,14 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from nicegui import ui
+from nicegui import run, ui
 
+from ...mail.markdown import markdown_to_safe_html
 from ...security import run_output_guardrails
 from .. import theme
+from .. import markdown as markdown_ui
 from ..interrupt import ApprovalRecord
+from . import assistant
 
 log = logging.getLogger(__name__)
 
@@ -64,25 +67,16 @@ def _record_approval_time() -> None:
 
 
 def _audit(store: object, actor: str, event: str, draft_id: int, detail: dict[str, Any]) -> None:
-    """Best-effort audit append (full chained-hash impl lives in audit/log.py)."""
+    """Best-effort audit append via AuditLog (chained hash + PII redaction, §7)."""
     try:
-        from ...audit import log as audit_log  # local import: optional module
+        from ...audit.log import AuditLog
 
-        if hasattr(audit_log, "record"):
-            audit_log.record(store, actor=actor, event=event, subject_table="drafts",
-                             subject_id=draft_id, detail=detail)
-            return
-    except Exception as e:
-        log.debug("audit module unavailable, writing raw audit row: %s", e)
-    # Fallback: write an unchained row so the event is not lost.
-    try:
-        import hashlib
-
-        prev = store.last_audit_hash()  # type: ignore[attr-defined]
-        payload = json.dumps(detail, sort_keys=True, default=str)
-        this = hashlib.sha256(((prev or "") + actor + event + payload).encode()).hexdigest()
-        store.append_audit(  # type: ignore[attr-defined]
-            _now_iso(), actor, event, "drafts", draft_id, payload, prev, this
+        AuditLog(store).record(
+            actor=actor,
+            event=event,
+            subject_table="drafts",
+            subject_id=draft_id,
+            detail=detail,
         )
     except Exception as e:
         log.warning("audit append failed: %s", e)
@@ -99,49 +93,103 @@ def _resolve_body_links(store: object, message_id: int | None, text: str) -> str
         return text
     out = text
     for symbol, target in mapping.items():
-        out = out.replace(f"[{symbol}]", f"[{symbol} -> {target}]")
+        token = str(symbol)
+        if not (token.startswith("[") and token.endswith("]")):
+            token = f"[{token}]"
+        resolved = f"{token[:-1]} -> {target}]"
+        out = out.replace(token, resolved)
     return out
 
 
-def _smtp_settings(settings: object) -> Any:
-    return getattr(settings, "smtp", None)
+def _value(row: Any, name: str, default: Any = None) -> Any:
+    try:
+        return row[name]
+    except (KeyError, IndexError, TypeError):
+        return getattr(row, name, default)
+
+
+def source_account_for_draft(store: object, draft: Any) -> Any:
+    """Resolve the persisted receiving account; fail closed if it is ambiguous."""
+    message_id = _value(draft, "message_id")
+    if message_id is None:
+        raise RuntimeError("This draft is not linked to a source mailbox.")
+    method = getattr(store, "get_account_for_message", None)
+    if not callable(method):
+        raise RuntimeError("Source mailbox lookup is unavailable; send is blocked.")
+    account = method(int(message_id))
+    username = str(_value(account, "username", "") or "").strip()
+    site_id = str(_value(account, "site_id", "") or "").strip().lower()
+    from ...db.store import validate_site_id
+
+    try:
+        validate_site_id(site_id)
+    except ValueError:
+        site_id = ""
+    if not username or not site_id:
+        raise RuntimeError("Source mailbox has no confirmed sending identity/site assignment.")
+    return account
 
 
 def _do_send(store: object, settings: object, draft: Any, body: str, approval: ApprovalRecord) -> None:
     """Privileged SMTP transmit — gated by an explicit human-approval record.
 
-    Mirrors invariant §0.1 / §11: assert a human-approval record exists and
+    Mirrors invariant §0.1 / §11: verify a human-approval record exists and
     autosend is NOT enabled before calling ``send_email``. This function is only
     ever reached from an explicit Approve/Edit-save click handler.
     """
     # --- INVARIANT §0.1 / §11: human-approval record must exist; no autosend ---
-    assert isinstance(approval, ApprovalRecord) and approval.approved_by, (
-        "INVARIANT VIOLATION: send attempted without a human-approval record"
-    )
+    if not isinstance(approval, ApprovalRecord) or not approval.approved_by:
+        raise PermissionError("Send blocked: no explicit human-approval record")
     sec = getattr(settings, "security", None)
-    assert not bool(getattr(sec, "autosend_allowed", False)), (
-        "INVARIANT VIOLATION: security.autosend_allowed must be False"
-    )
+    if not bool(getattr(sec, "require_human_approval", False)):
+        raise PermissionError("Send blocked: human approval is not required by configuration")
+    if bool(getattr(sec, "autosend_allowed", False)):
+        raise PermissionError("Send blocked: autosend must stay disabled")
+    if draft["message_id"] is not None:
+        is_quarantined = getattr(store, "is_quarantined", None)
+        if callable(is_quarantined) and is_quarantined(int(draft["message_id"])):
+            raise PermissionError("Send blocked: source message is quarantined")
+        get_message = getattr(store, "get_message", None)
+        source = get_message(int(draft["message_id"])) if callable(get_message) else None
+        if source is not None and str(
+            _value(source, "screening_status", "UNSCREENED") or "UNSCREENED"
+        ).upper() in {
+            "POTENTIAL_SPAM", "POTENTIAL_ISSUE", "SPAM"
+        }:
+            raise PermissionError(
+                "Send blocked: source message is withheld by inbound screening"
+            )
+    if not body.strip():
+        raise RuntimeError("Send blocked: reply body is empty")
+    if approval.recipient != str(_value(draft, "recipient", "") or ""):
+        raise PermissionError("Send blocked: approved recipient changed")
 
     from ... import secrets as secret_store
     from ...mail.smtp_sender import send_email
 
-    smtp_cfg = _smtp_settings(settings)
+    account = source_account_for_draft(store, draft)
+    from_addr = str(_value(account, "username", "") or "")
+    configured_account = next(
+        (a for a in getattr(settings, "imap_accounts", []) or [] if a.username == from_addr),
+        None,
+    )
+    if configured_account is None:
+        raise PermissionError("Send blocked: source identity is not a configured mailbox")
+    # Per-account SMTP override wins; otherwise the global relay is used with
+    # this mailbox's identity (see Settings.smtp_for_account).
+    smtp_cfg = settings.smtp_for_account(configured_account)
     if smtp_cfg is None:
         raise RuntimeError("No SMTP account configured (Settings page).")
-
-    # Account name for the keyring lookup: SMTP secrets are keyed by account
-    # name (spec §8). We use the SMTP username as the account key by convention.
-    secret = secret_store.get_smtp_secret(smtp_cfg.username)
+    secret = secret_store.get_smtp_secret(from_addr)
     if secret is None:
         raise RuntimeError(
-            f"No SMTP secret in keyring for '{smtp_cfg.username}'. Run setup-wizard."
+            f"No SMTP secret in keyring for source mailbox '{from_addr}'."
         )
 
     in_reply_to = None
     references = None
     try:
-        msg = store.get_message(draft["message_id"])  # type: ignore[attr-defined]
+        msg = store.get_message(_value(draft, "message_id"))  # type: ignore[attr-defined]
         if msg is not None:
             in_reply_to = msg["message_id"]
     except Exception:
@@ -150,10 +198,11 @@ def _do_send(store: object, settings: object, draft: Any, body: str, approval: A
     send_email(
         smtp_cfg=smtp_cfg,
         secret=secret,
-        from_addr=smtp_cfg.username,
+        from_addr=from_addr,
         to_addr=approval.recipient,
-        subject=draft["subject"] or "",
+        subject=str(_value(draft, "subject", "") or ""),
         body=body,
+        html_body=markdown_to_safe_html(body),
         in_reply_to=in_reply_to,
         references=references,
     )
@@ -161,6 +210,26 @@ def _do_send(store: object, settings: object, draft: Any, body: str, approval: A
 
 def _bubble_meta(text: str) -> None:
     ui.label(text).style("font-size: 11.5px; color: var(--text-muted)")
+
+
+def _restore_retryable_after_send_failure(
+    store: object,
+    draft_id: int,
+    body: str,
+    guardrail_flags: dict[str, Any],
+    error: Exception,
+) -> None:
+    """Return an SMTP-failed approval to PENDING with an auditable failure flag."""
+    flags = dict(guardrail_flags or {})
+    flags["send_error"] = str(error)[:200]
+    store.update_draft_state(  # type: ignore[attr-defined]
+        draft_id,
+        "PENDING",
+        approved_by=None,
+        approved_at=None,
+        body=body,
+        guardrail_flags=flags,
+    )
 
 
 def _any_guard_fired(flags: Any) -> bool:
@@ -182,7 +251,12 @@ def _any_guard_fired(flags: Any) -> bool:
     return False
 
 
-def render(store: object, settings: object, draft_id: int) -> None:
+def render(
+    store: object,
+    settings: object,
+    draft_id: int,
+    bridge: object | None = None,
+) -> None:
     """Render the detail/approval page for one draft (spec §5, §9)."""
     draft = None
     try:
@@ -194,7 +268,9 @@ def render(store: object, settings: object, draft_id: int) -> None:
         with ui.column().classes("w-full items-center q-pa-xl").style("gap: 8px"):
             ui.icon("search_off", size="40px").style("color: var(--text-muted)")
             ui.label(f"Draft {draft_id} not found.").classes("text-h6")
-            ui.button("Back to inbox", on_click=lambda: ui.navigate.to("/")).props("flat")
+            ui.button("Back to AI Review", on_click=lambda: ui.navigate.to("/drafts")).props(
+                "flat"
+            )
         return
 
     message_id = draft["message_id"]
@@ -205,15 +281,19 @@ def render(store: object, settings: object, draft_id: int) -> None:
         is_external = True
 
     # Mutable per-render state.
-    state: dict[str, Any] = {"body": draft["body"] or "", "approved": False}
+    state: dict[str, Any] = {
+        "body": draft["body"] or "",
+        "draft_state": str(draft["state"] or "").upper(),
+    }
 
     # --- header row -----------------------------------------------------------
-    with ui.row().classes("w-full items-center").style("gap: 10px"):
-        ui.button(icon="arrow_back", on_click=lambda: ui.navigate.to("/")).props(
+    with ui.row().classes("w-full items-center oce-toolbar").style("gap: 10px"):
+        ui.button(icon="arrow_back", on_click=lambda: ui.navigate.to("/drafts")).props(
             "flat round dense"
         ).classes("oce-nav-btn")
-        ui.label(draft["subject"] or "(no subject)").classes("text-h6").style(
-            "font-weight: 700"
+        theme.subject_label(
+            draft["subject"], full=True,
+            style="font-size: 1.25rem; font-weight: 700; line-height: 1.4",
         )
         theme.state_badge(draft["state"] or "")
         ui.space()
@@ -225,6 +305,23 @@ def render(store: object, settings: object, draft_id: int) -> None:
         orig = store.get_message(message_id)  # type: ignore[attr-defined]
     except Exception:
         pass
+    source_withheld = bool(
+        orig is not None
+        and (
+            bool(orig["quarantined"])
+            or str(orig["screening_status"] or "").upper()
+            in {"POTENTIAL_SPAM", "POTENTIAL_ISSUE", "SPAM"}
+        )
+    )
+
+    try:
+        source_account = source_account_for_draft(store, draft)
+        source_identity = str(_value(source_account, "username", "") or "")
+        source_site = str(_value(source_account, "site_id", "") or "")
+    except Exception as e:  # noqa: BLE001
+        source_identity = "unresolved"
+        source_site = "unassigned"
+        log.warning("draft source identity unavailable: %s", e)
 
     with ui.row().classes("w-full no-wrap").style("gap: 10px"):
         ui.icon("mail", size="26px").style("color: var(--text-secondary); margin-top: 6px")
@@ -235,14 +332,11 @@ def render(store: object, settings: object, draft_id: int) -> None:
                     f"  ·  {orig['received_at'] or ''}"
                 )
                 with ui.element("div").classes("oce-bubble oce-bubble--bot w-full"):
-                    resolved = _resolve_body_links(
-                        store, message_id, orig["sanitized_text"] or ""
-                    )
                     ui.label(
-                        "Links shown as RESOLVED targets (you see real URLs; "
-                        "the LLM never did)."
+                        "Embedded links are disabled. For account or security actions, "
+                        "open the provider's known site directly."
                     ).style("font-size: 11px; color: var(--text-muted)")
-                    ui.markdown(f"```\n{resolved}\n```")
+                    markdown_ui.plain_text(orig["sanitized_text"] or "")
             else:
                 with ui.element("div").classes("oce-bubble oce-bubble--bot w-full"):
                     ui.label("Original message unavailable.").style(
@@ -285,6 +379,20 @@ def render(store: object, settings: object, draft_id: int) -> None:
     retype_ok = {"value": not is_external}  # allowlisted => no retype needed
 
     with ui.element("div").classes("oce-card w-full q-pa-md"):
+        with ui.row().classes("items-center").style("gap: 8px; margin-bottom: 8px"):
+            ui.icon("outbox", size="20px").style("color: var(--text-secondary)")
+            ui.label("Send as:").style("color: var(--text-secondary)")
+            ui.label(source_identity).style(
+                "font-weight: 700; color: var(--error)"
+                if source_identity == "unresolved"
+                else "font-weight: 700"
+            )
+            theme.badge(
+                source_site or "unassigned",
+                "accent"
+                if source_site in (getattr(settings, "sites", None) or {})
+                else "error",
+            )
         with ui.row().classes("items-center").style("gap: 8px"):
             ui.icon("person", size="20px").style("color: var(--text-secondary)")
             ui.label("Reply goes to:").style("color: var(--text-secondary)")
@@ -315,29 +423,148 @@ def render(store: object, settings: object, draft_id: int) -> None:
         with ui.column().classes("col items-end").style("gap: 4px; min-width: 0"):
             _bubble_meta("drafted reply — edit freely; edits are re-guardrailed")
             with ui.element("div").classes("oce-bubble oce-bubble--user w-full"):
-                body_area = (
-                    ui.textarea(value=state["body"])
-                    .classes("w-full")
-                    .props("autogrow borderless")
-                )
-                body_area.on("update:model-value", lambda e: state.update(body=e.args or ""))
+                with ui.tabs(value="write").props("dense no-caps") as draft_tabs:
+                    ui.tab("write", label="Write")
+                    ui.tab("preview", label="Preview")
+                with ui.tab_panels(draft_tabs, value="write").classes(
+                    "w-full bg-transparent"
+                ):
+                    with ui.tab_panel("write").classes("q-pa-none"):
+                        body_area = (
+                            ui.textarea(value=state["body"])
+                            .classes("w-full")
+                            .props("autogrow borderless")
+                        )
+                        body_area.on(
+                            "update:model-value",
+                            lambda e: (
+                                state.update(body=e.args or ""),
+                                _sync_buttons(),
+                                _draft_preview.refresh(),
+                            ),
+                        )
+                    with ui.tab_panel("preview").classes("q-pa-sm"):
+                        @ui.refreshable
+                        def _draft_preview() -> None:
+                            markdown_ui.safe_markdown(
+                                str(body_area.value or state["body"] or "")
+                            )
+
+                        _draft_preview()
             guard_box = ui.column().classes("w-full")
         ui.icon("edit_note", size="26px").style(
             "color: var(--accent-hover); margin-top: 6px"
         )
 
+    def _apply_ai_body(body: str, _draft_id: int) -> None:
+        state["body"] = body
+        if state["draft_state"] != "PENDING":
+            state["draft_state"] = "DRAFT"
+        body_area.value = body
+        _draft_preview.refresh()
+        _sync_buttons()
+
+    ai_drawer = None
+    if orig is not None:
+        ai_drawer = assistant.render_drawer(
+            store,
+            settings,
+            bridge,
+            message=orig,
+            draft_id=int(draft["id"]),
+            current_body=lambda: str(body_area.value or state["body"] or ""),
+            apply_body=_apply_ai_body,
+        )
+
     # --- action handlers ----------------------------------------------------------
-    def _terminal() -> bool:
-        """Already in a terminal state -> no further actions."""
-        return (draft["state"] or "").upper() in {"SENT", "REJECTED", "BLOCKED"}
+    def _sendable() -> bool:
+        return state["draft_state"] in {"DRAFT", "PENDING"} and not source_withheld
+
+    def _editable() -> bool:
+        return state["draft_state"] in {"DRAFT", "PENDING", "BLOCKED", "DEFERRED_NO_LLM"}
 
     def _sync_buttons() -> None:
-        can_send = retype_ok["value"] and not _terminal()
-        approve_btn.set_enabled(can_send)
-        edit_btn.set_enabled(not _terminal())
-        reject_btn.set_enabled(not _terminal())
+        body_ok = bool(str(state["body"] or "").strip())
+        source_ok = source_identity != "unresolved"
+        approve_btn.set_enabled(retype_ok["value"] and _sendable() and body_ok and source_ok)
+        save_btn.set_enabled(_editable())
+        reject_btn.set_enabled(state["draft_state"] not in {"SENT", "REJECTED", "APPROVED"})
 
-    def _approve_and_send() -> None:
+    def _guard_current() -> Any | None:
+        body = str(state["body"] or "").strip()
+        if not body:
+            ui.notify("Draft body is empty. Draft or write a response first.", type="negative")
+            return None
+        participants: set[str] = set()
+        for msg in thread:
+            for key in ("from_addr", "to_addrs", "cc_addrs"):
+                participants |= {
+                    addr.strip().lower()
+                    for addr in str(msg[key] or "").split(",")
+                    if addr.strip()
+                }
+        edited = {
+            "recipient": recipient,
+            "body": body,
+            "thread_id": draft["thread_id"],
+            "subject": draft["subject"],
+        }
+        try:
+            report = run_output_guardrails(
+                edited,
+                {
+                    "recipient": recipient,
+                    "thread_participants": participants,
+                    "site_id": source_site,
+                },
+                store,
+                getattr(settings, "security", settings),
+                bridge,
+            )
+        except Exception as e:  # noqa: BLE001
+            log.exception("guardrail re-run failed")
+            ui.notify(f"Guardrail error (send blocked): {e}", type="negative")
+            return None
+
+        guard_box.clear()
+        store.update_draft_state(  # type: ignore[attr-defined]
+            draft["id"], state["draft_state"], body=body, guardrail_flags=report.flags
+        )
+        if not report.passed:
+            _audit(store, "guardrail", "block", draft["id"], {"reasons": report.reasons})
+            with guard_box:
+                ui.label("Guardrails blocked this version — not sent.").style(
+                    "color: var(--error); font-weight: 700"
+                )
+                for reason in report.reasons:
+                    ui.label(f"• {reason}").style("color: var(--error); font-size: 13px")
+                ui.code(json.dumps(report.flags, indent=2, default=str)).classes("w-full")
+            ui.notify("Current draft is blocked by guardrails.", type="negative")
+            return None
+        return report
+
+    def _save_changes() -> None:
+        if not _editable():
+            ui.notify("This draft is immutable in its current state.", type="warning")
+            return
+        report = _guard_current()
+        if report is None:
+            return
+        new_state = "PENDING" if state["draft_state"] == "PENDING" else "DRAFT"
+        store.update_draft_state(  # type: ignore[attr-defined]
+            draft["id"],
+            new_state,
+            body=str(state["body"] or "").strip(),
+            guardrail_flags=report.flags,
+        )
+        state["draft_state"] = new_state
+        ui.notify("Draft saved; guardrails passed. Nothing was sent.", type="positive")
+        _sync_buttons()
+
+    async def _approve_and_send() -> None:
+        if not _sendable():
+            ui.notify("This draft is not ready to send. Revise and save it first.", type="warning")
+            return
         allowed, limit = _rate_limit_ok(settings)
         if not allowed:
             ui.notify(f"Rate limit reached ({limit}/hour). Try later.", type="negative")
@@ -345,121 +572,85 @@ def render(store: object, settings: object, draft_id: int) -> None:
         if not retype_ok["value"]:
             ui.notify("Re-type the recipient address first.", type="warning")
             return
-        body = state["body"]
+        report = _guard_current()  # always scan the exact current textarea body
+        if report is None:
+            return
+        body = str(state["body"] or "").strip()
+        approved_at = _now_iso()
         try:
-            # Write the human-approval record FIRST (state APPROVED), then send.
-            approved_at = _now_iso()
             store.update_draft_state(  # type: ignore[attr-defined]
-                draft["id"], "APPROVED", approved_by="ui-user", approved_at=approved_at, body=body
+                draft["id"],
+                "APPROVED",
+                approved_by="ui-user",
+                approved_at=approved_at,
+                body=body,
+                guardrail_flags=report.flags,
             )
+            state["draft_state"] = "APPROVED"
             approval = ApprovalRecord(
                 draft_id=draft["id"],
                 approved_by="ui-user",
                 approved_at=approved_at,
-                response_type="accept",
+                response_type="edit",
                 recipient=recipient,
+                flags=report.flags,
             )
             _audit(store, "user", "approval", draft["id"], {"recipient": recipient})
-            _do_send(store, settings, draft, body, approval)
+            await run.io_bound(_do_send, store, settings, draft, body, approval)
             store.update_draft_state(  # type: ignore[attr-defined]
                 draft["id"], "SENT", sent_at=_now_iso(), body=body
             )
+            state["draft_state"] = "SENT"
             _record_approval_time()
             _audit(store, "user", "send", draft["id"], {"recipient": recipient})
             ui.notify("Approved and sent.", type="positive")
-            ui.navigate.to("/")
-        except Exception as e:
+            ui.navigate.to("/drafts")
+        except Exception as e:  # noqa: BLE001
             log.exception("send failed")
+            _restore_retryable_after_send_failure(
+                store, int(draft["id"]), body, report.flags, e
+            )
+            state["draft_state"] = "PENDING"
             _audit(store, "user", "error", draft["id"], {"error": str(e)})
-            ui.notify(f"Send failed: {e}", type="negative")
-
-    def _save_edit() -> None:
-        """Re-run output guardrails on the edited body; pass -> send (spec §5)."""
-        allowed, limit = _rate_limit_ok(settings)
-        if not allowed:
-            ui.notify(f"Rate limit reached ({limit}/hour). Try later.", type="negative")
-            return
-        if not retype_ok["value"]:
-            ui.notify("Re-type the recipient address first.", type="warning")
-            return
-        body = state["body"]
-        # Re-run guardrails on the edited content BEFORE any send (§5, §11).
-        edited = {"recipient": recipient, "body": body, "thread_id": draft["thread_id"],
-                  "subject": draft["subject"]}
-        try:
-            report = run_output_guardrails(
-                edited, {"recipient": recipient}, store,
-                getattr(settings, "security", settings),
+            ui.notify(
+                f"Send failed after approval: {e}. The draft is back in Pending for review/retry.",
+                type="negative",
+                timeout=10000,
             )
-        except Exception as e:
-            log.exception("guardrail re-run failed")
-            ui.notify(f"Guardrail error (blocked): {e}", type="negative")
-            return
-
-        guard_box.clear()
-        store.update_draft_state(  # type: ignore[attr-defined]
-            draft["id"], draft["state"], body=body, guardrail_flags=report.flags
-        )
-        if not report.passed:
-            # Block: show flags, do NOT send (§5 FAIL branch).
-            _audit(store, "guardrail", "block", draft["id"],
-                   {"reasons": report.reasons})
-            with guard_box:
-                ui.label("Edit BLOCKED by guardrails — not sent.").style(
-                    "color: var(--error); font-weight: 700"
-                )
-                for r in report.reasons:
-                    ui.label(f"• {r}").style("color: var(--error); font-size: 13px")
-                ui.code(json.dumps(report.flags, indent=2, default=str)).classes("w-full")
-            ui.notify("Edit blocked by guardrails.", type="negative")
-            return
-
-        # Pass -> approval record -> send.
-        try:
-            approved_at = _now_iso()
-            store.update_draft_state(  # type: ignore[attr-defined]
-                draft["id"], "APPROVED", approved_by="ui-user",
-                approved_at=approved_at, body=body, guardrail_flags=report.flags,
-            )
-            approval = ApprovalRecord(
-                draft_id=draft["id"], approved_by="ui-user", approved_at=approved_at,
-                response_type="edit", recipient=recipient, flags=report.flags,
-            )
-            _audit(store, "user", "approval", draft["id"],
-                   {"recipient": recipient, "edited": True})
-            _do_send(store, settings, draft, body, approval)
-            store.update_draft_state(  # type: ignore[attr-defined]
-                draft["id"], "SENT", sent_at=_now_iso(), body=body
-            )
-            _record_approval_time()
-            _audit(store, "user", "send", draft["id"], {"recipient": recipient, "edited": True})
-            ui.notify("Guardrails passed — edited draft sent.", type="positive")
-            ui.navigate.to("/")
-        except Exception as e:
-            log.exception("send after edit failed")
-            _audit(store, "user", "error", draft["id"], {"error": str(e)})
-            ui.notify(f"Send failed: {e}", type="negative")
+            _sync_buttons()
 
     def _reject() -> None:
         try:
             store.update_draft_state(draft["id"], "REJECTED")  # type: ignore[attr-defined]
             _audit(store, "user", "block", draft["id"], {"action": "reject"})
             ui.notify("Rejected (audit only).", type="info")
-            ui.navigate.to("/")
+            ui.navigate.to("/drafts")
         except Exception as e:
             log.exception("reject failed")
             ui.notify(f"Reject failed: {e}", type="negative")
 
     # --- action bar -----------------------------------------------------------------
-    with ui.row().classes("w-full justify-end q-mt-sm").style("gap: 10px"):
+    if state["draft_state"] == "DEFERRED_NO_LLM":
+        ui.label(
+            "AI drafting was deferred and this body is empty. Use AI Revise or write and Save "
+            "Changes before approval; an empty draft can never send."
+        ).style("font-size: 12px; color: var(--warning)")
+
+    with ui.row().classes(
+        "w-full justify-end q-mt-sm oce-toolbar oce-sticky-actions"
+    ).style("gap: 10px"):
+        if ai_drawer is not None:
+            ui.button("AI Revise", icon="auto_awesome", on_click=ai_drawer.show).props(
+                "outline no-caps color=primary"
+            )
         reject_btn = ui.button("Reject", icon="close", on_click=_reject).props(
             "outline color=negative"
         )
-        edit_btn = ui.button(
-            "Save edit & re-guardrail", icon="shield", on_click=_save_edit
-        ).props("color=primary")
+        save_btn = ui.button("Save Changes", icon="shield", on_click=_save_changes).props(
+            "outline no-caps color=primary"
+        )
         approve_btn = ui.button(
             "Approve & Send", icon="send", on_click=_approve_and_send
-        ).props("color=positive")
+        ).props("unelevated no-caps color=positive")
 
     _sync_buttons()

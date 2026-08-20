@@ -34,6 +34,17 @@ log = logging.getLogger(__name__)
 _REPLYABLE = {"RESPOND", "MEETING"}
 
 
+async def _is_up(bridge) -> bool:
+    """Non-blocking LM Studio probe: the sync ``is_up()`` is a 5 s HTTP call
+    and these run inside the UI's event loop."""
+    fn = getattr(bridge, "is_up_async", None)
+    if fn is not None:
+        return bool(await fn())
+    import asyncio
+
+    return bool(await asyncio.to_thread(bridge.is_up))
+
+
 class AgentGraph:
     def __init__(self, store: Store, settings: Settings, bridge=None):
         self.store = store
@@ -59,13 +70,17 @@ class AgentGraph:
         if not candidate:
             return None
         participants = self._thread_participants(thread_id)
-        if candidate in participants or self.store.is_allowlisted(candidate):
+        if candidate in participants:
+            # Persist the exact observed sender. This satisfies the downstream
+            # domain policy without weakening recipient binding: unrelated
+            # addresses at the same domain still fail rule (a), and the UI
+            # still requires retyping a first-contact address before send.
+            if not self.store.is_allowlisted(candidate):
+                self.store.record_allowlist(candidate, source="inbound_thread")
             return candidate
-        # Sender not yet bound (first contact): still allow REPLY to the sender
-        # of the inbound thread message — they are by definition a participant —
-        # but record them on the allowlist as observed.
-        self.store.record_allowlist(candidate, source="inbound_thread")
-        return candidate
+        if self.store.is_allowlisted(candidate):
+            return candidate
+        return None
 
     async def process_message(self, message_id: int) -> int | None:
         """Run the full graph for one ingested message. Returns the draft id
@@ -73,6 +88,47 @@ class AgentGraph:
         msg = self.store.get_message(message_id)
         if msg is None:
             return None
+        account = self.store.get_account_for_message(message_id)
+        if account is None or account["site_id"] not in self.settings.sites:
+            log.error("Message %s has no valid site-bound source account; refusing AI work.", message_id)
+            return None
+
+        # --- quarantine gate: contained mail never reaches any LLM ---
+        try:
+            quarantined = bool(msg["quarantined"])
+        except (IndexError, KeyError):
+            quarantined = False
+        if quarantined:
+            self.audit.block(
+                {"reason": "quarantined", "detail": str(msg["quarantine_reason"] or "")},
+                subject_table="messages", subject_id=message_id,
+            )
+            log.warning(
+                "Message %s is QUARANTINED — refusing all AI work until a human "
+                "releases it in the UI.", message_id,
+            )
+            return None
+
+        # Cynical site screening is a policy gate, separate from prompt-
+        # injection quarantine. Questionable/spam mail remains available only
+        # to the operator's sanitized local reader until it is marked content-related.
+        screening_status = str(msg["screening_status"] or "UNSCREENED").upper()
+        if screening_status in {"POTENTIAL_SPAM", "POTENTIAL_ISSUE", "SPAM"}:
+            self.audit.block(
+                {
+                    "reason": "inbound_screening",
+                    "status": screening_status,
+                    "detail": str(msg["screening_reason"] or "")[:300],
+                },
+                subject_table="messages", subject_id=message_id,
+            )
+            log.info(
+                "Message %s screened %s — refusing AI work until human review.",
+                message_id, screening_status,
+            )
+            return None
+
+        site_id = account["site_id"]
         thread_id = msg["thread_id"]
         text = msg["sanitized_text"] or ""
 
@@ -87,7 +143,7 @@ class AgentGraph:
         )
 
         # --- LLM down? defer, never lose mail (§5) ---
-        if self.bridge is None or not self.bridge.is_up():
+        if self.bridge is None or not await _is_up(self.bridge):
             recipient = self._bind_recipient(msg, thread_id) or (msg["from_addr"] or "")
             did = tools.propose_draft(
                 self.store, message_id, thread_id, recipient,
@@ -118,7 +174,12 @@ class AgentGraph:
             f"attachments={refs.has_attachments}; injection_risk={injection_risk:.2f}"
         )
         try:
-            classification = await worker.classify(self.bridge, spotlighted, meta)
+            classification = await worker.classify(
+                self.bridge,
+                spotlighted,
+                meta,
+                triage_rule=self.settings.site_triage_guidance(site_id),
+            )
             category = (
                 classification.category.value
                 if hasattr(classification.category, "value")
@@ -154,6 +215,13 @@ class AgentGraph:
 
         # --- decide whether to draft (action choice fixed by plan, not content) ---
         if not plan.should_draft or category not in _REPLYABLE:
+            existing = self.store.latest_draft_for_message(message_id)
+            if existing is not None and existing["state"] == "DEFERRED_NO_LLM":
+                self.store.update_draft_state(
+                    existing["id"],
+                    "REJECTED",
+                    guardrail_flags={"reason": "classification_no_reply", "category": category},
+                )
             log.info("Message %s classified %s — no draft (plan=%s).", message_id, category, plan.should_draft)
             return None
 
@@ -170,7 +238,7 @@ class AgentGraph:
 
             context_chunks = await retrieve(
                 self.store, self.bridge, query=msg["subject"] or text[:200],
-                k=5, thread_id=thread_id,
+                k=5, thread_id=thread_id, site_id=site_id,
             )
         except Exception as e:
             log.info("Context retrieval skipped: %s", e)
@@ -178,7 +246,13 @@ class AgentGraph:
         # --- draft (quarantined worker → body; recipient bound) ---
         try:
             proposed = await worker.draft_reply(
-                self.bridge, spotlighted, context_chunks, recipient, self.settings.style
+                self.bridge,
+                spotlighted,
+                context_chunks,
+                recipient,
+                self.settings.style,
+                site_id=site_id,
+                site_rule=self.settings.site_guidance(site_id),
             )
             body = (proposed.body or "").strip()
             subject = proposed.subject or f"Re: {msg['subject'] or ''}"
@@ -205,7 +279,12 @@ class AgentGraph:
         )
 
         # --- output guardrails (run BEFORE enqueue; re-run after edit in UI) ---
-        draft_dict = {"recipient": recipient, "subject": subject, "body": body}
+        draft_dict = {
+            "recipient": recipient,
+            "subject": subject,
+            "body": body,
+            "thread_id": thread_id,
+        }
         # Pre-compute the draft embedding here (async) so the synchronous
         # cross-thread leak guard can use it without touching the event loop.
         draft_embedding = None
@@ -219,6 +298,7 @@ class AgentGraph:
             "contacts": self.store.allowlisted_domains(),
             "last_untrusted_fetch_ts": None,
             "draft_embedding": draft_embedding,
+            "site_id": site_id,
         }
         report = run_output_guardrails(
             draft_dict, context, self.store, self.settings.security, self.bridge
