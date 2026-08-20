@@ -112,19 +112,19 @@ class AuditLog:
         ts = _now_iso()
         safe_detail = _redact_detail(detail)
         detail_json = json.dumps(safe_detail, sort_keys=True, ensure_ascii=False)
-        prev_hash = self.store.last_audit_hash()
-        this_hash = compute_hash(
-            prev_hash, ts, actor, event, subject_table, subject_id, detail_json
-        )
-        self.store.append_audit(
+        # Tail read + insert happen atomically inside the store (lock + BEGIN
+        # IMMEDIATE) so concurrent appenders from the UI worker threads, the
+        # agent loop, and the bridge CLI process cannot fork the chain.
+        _row_id, this_hash = self.store.append_audit_chained(
             ts=ts,
             actor=actor,
             event=event,
             subject_table=subject_table,
             subject_id=subject_id,
             detail_json=detail_json,
-            prev_hash=prev_hash,
-            this_hash=this_hash,
+            hasher=lambda prev_hash: compute_hash(
+                prev_hash, ts, actor, event, subject_table, subject_id, detail_json
+            ),
         )
         return this_hash
 

@@ -61,7 +61,9 @@ class CrossThreadGuard:
             getattr(settings, "crossthread_embedding_threshold", 0.85)
         )
 
-    def _other_thread_ngrams(self, current_thread_id: str) -> tuple[set[str], dict[str, str]]:
+    def _other_thread_ngrams(
+        self, current_thread_id: str, site_id: str | None = None
+    ) -> tuple[set[str], dict[str, str]]:
         """Build an n-gram set from chunks belonging to OTHER threads.
 
         Returns (ngram_set, gram->thread_id map). Uses only thread-history
@@ -70,12 +72,16 @@ class CrossThreadGuard:
         grams: set[str] = set()
         owner: dict[str, str] = {}
         try:
-            rows = self.store.conn.execute(  # type: ignore[attr-defined]
+            sql = (
                 "SELECT thread_id, text FROM chunks "
                 "WHERE source_kind='thread_history' AND thread_id IS NOT NULL "
-                "AND thread_id != ?",
-                (current_thread_id,),
-            ).fetchall()
+                "AND thread_id != ?"
+            )
+            params: list[object] = [current_thread_id]
+            if site_id is not None:
+                sql += " AND site_id=?"
+                params.append(site_id)
+            rows = self.store.conn.execute(sql, params).fetchall()  # type: ignore[attr-defined]
         except Exception as e:  # store without chunks table / no DB
             log.debug("cross-thread n-gram source unavailable: %s", e)
             return grams, owner
@@ -92,6 +98,7 @@ class CrossThreadGuard:
         current_thread_id: str,
         bridge: object | None = None,
         draft_embedding: list[float] | None = None,
+        site_id: str | None = None,
     ) -> CrossThreadResult:
         """Check whether ``draft_body`` leaks content from another thread.
 
@@ -105,7 +112,7 @@ class CrossThreadGuard:
 
         # ---- 1. n-gram overlap against other threads ----
         draft_grams = _ngrams(draft_body, self.n)
-        other_grams, owner = self._other_thread_ngrams(current_thread_id)
+        other_grams, owner = self._other_thread_ngrams(current_thread_id, site_id)
         overlap = sorted(draft_grams & other_grams)
         if overlap:
             res.passed = False
@@ -137,7 +144,9 @@ class CrossThreadGuard:
             try:
                 vec = draft_embedding
                 if vec:
-                    rows = self.store.knn_chunks(vec, k=8, thread_id=None)  # type: ignore[attr-defined]
+                    rows = self.store.knn_chunks(  # type: ignore[attr-defined]
+                        vec, k=8, thread_id=None, site_id=site_id
+                    )
                     leaked_tids: set[str] = set()
                     max_sim = 0.0
                     for r in rows:

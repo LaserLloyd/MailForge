@@ -10,10 +10,11 @@ bridge may be ``None`` (LLM extra not wired) — handled gracefully.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
-from nicegui import ui
+from nicegui import background_tasks, ui
 
 log = logging.getLogger(__name__)
 
@@ -30,7 +31,9 @@ def _down_banner() -> None:
     with ui.card().classes("oce-card w-full").style("border-color: var(--error)"):
         with ui.row().classes("items-center").style("gap: 8px"):
             ui.icon("cloud_off", size="22px").style("color: var(--error)")
-            ui.label("LM Studio is DOWN").classes("text-h6").style("color: var(--error); font-weight: 700")
+            ui.label("LM Studio is DOWN").classes("text-h6").style(
+                "color: var(--error); font-weight: 700"
+            )
         ui.label(
             "Drafts will be deferred (DEFERRED_NO_LLM) until it returns — no mail "
             "is lost. Start the runtime with one of:"
@@ -39,8 +42,8 @@ def _down_banner() -> None:
         ui.code("lms daemon up").classes("w-full")
 
 
-async def render(bridge: object | None) -> None:
-    """Render the models page (spec §9). Async: probes the bridge live."""
+def render(bridge: object | None) -> None:
+    """Render immediately, then populate the remote inventory in the background."""
     if bridge is None:
         with ui.card().classes("oce-card w-full").style("border-color: var(--warning)"):
             ui.label("No LM Studio bridge configured.").classes("text-weight-bold")
@@ -50,53 +53,92 @@ async def render(bridge: object | None) -> None:
             ).classes("text-body2")
         return
 
-    # Health check (sync) — drives the red banner.
-    up = False
-    try:
-        up = bool(bridge.is_up())  # type: ignore[attr-defined]
-    except Exception as e:
-        log.debug("bridge.is_up() failed: %s", e)
-        up = False
-
-    if not up:
-        _down_banner()
-        return
-
     chat_id = getattr(bridge, "model_id", None)
     embed_id = getattr(bridge, "embed_id", None)
 
     with ui.card().classes("oce-card w-full"):
-        ui.label("Configured (loaded) models").classes("text-subtitle1 text-weight-bold").style("color: var(--accent-hover)")
+        ui.label("Configured (loaded) models").classes("text-subtitle1 text-weight-bold").style(
+            "color: var(--accent-hover)"
+        )
         ui.label(f"Chat: {chat_id or '?'}")
         ui.label(f"Embedding: {embed_id or '?'}")
 
-    # On-disk / downloaded models (async).
-    try:
-        models = await bridge.list_models()  # type: ignore[attr-defined]
-    except Exception as e:
-        log.warning("list_models failed: %s", e)
-        models = []
+    inventory = ui.card().classes("oce-card w-full q-mt-md")
+    with inventory:
+        ui.label("Downloaded / on-disk models").classes("text-subtitle1 text-weight-bold").style(
+            "color: var(--accent-hover)"
+        )
+        with ui.row().classes("items-center").style("gap: 10px"):
+            ui.spinner(size="20px")
+            ui.label("Loading the LM Studio inventory…").classes("text-grey")
 
-    with ui.card().classes("oce-card w-full q-mt-md"):
-        ui.label("Downloaded / on-disk models").classes("text-subtitle1 text-weight-bold").style("color: var(--accent-hover)")
-        if not models:
-            ui.label("No models reported by LM Studio.").classes("text-grey")
+    async def _load_inventory() -> None:
+        try:
+            up = await asyncio.to_thread(lambda: bool(bridge.is_up()))  # type: ignore[attr-defined]
+        except Exception as e:
+            log.debug("bridge.is_up() failed: %s", e)
+            up = False
+
+        if not up:
+            try:
+                inventory.clear()
+                with inventory:
+                    _down_banner()
+            except Exception:
+                pass  # client navigated away while the probe was running
             return
-        loaded_keys = {str(chat_id), str(embed_id)}
-        rows: list[dict[str, Any]] = []
-        for m in models:
-            key = _model_key(m)
-            rows.append({
-                "model": key,
-                "type": (m.get("type") if isinstance(m, dict) else "") or "",
-                "loaded": "loaded" if key in loaded_keys else "on-disk",
-            })
-        ui.table(
-            columns=[
-                {"name": "model", "label": "Model", "field": "model", "align": "left"},
-                {"name": "type", "label": "Type", "field": "type", "align": "left"},
-                {"name": "loaded", "label": "Status", "field": "loaded", "align": "left"},
-            ],
-            rows=rows,
-            row_key="model",
-        ).classes("w-full")
+
+        try:
+            models = await bridge.list_models()  # type: ignore[attr-defined]
+        except Exception as e:
+            log.warning("list_models failed: %s", e)
+            models = []
+
+        try:
+            inventory.clear()
+            with inventory:
+                ui.label("Downloaded / on-disk models").classes(
+                    "text-subtitle1 text-weight-bold"
+                ).style("color: var(--accent-hover)")
+                if not models:
+                    ui.label("No models reported by LM Studio.").classes("text-grey")
+                    return
+                loaded_keys = {str(chat_id), str(embed_id)}
+                rows: list[dict[str, Any]] = []
+                for model in models:
+                    key = _model_key(model)
+                    rows.append(
+                        {
+                            "model": key,
+                            "type": (model.get("type") if isinstance(model, dict) else "") or "",
+                            "loaded": "loaded" if key in loaded_keys else "on-disk",
+                        }
+                    )
+                ui.table(
+                    columns=[
+                        {
+                            "name": "model",
+                            "label": "Model",
+                            "field": "model",
+                            "align": "left",
+                        },
+                        {
+                            "name": "type",
+                            "label": "Type",
+                            "field": "type",
+                            "align": "left",
+                        },
+                        {
+                            "name": "loaded",
+                            "label": "Status",
+                            "field": "loaded",
+                            "align": "left",
+                        },
+                    ],
+                    rows=rows,
+                    row_key="model",
+                ).classes("w-full")
+        except Exception:
+            pass  # client navigated away while the inventory was loading
+
+    background_tasks.create(_load_inventory(), name=f"models-inventory-load-{id(inventory)}")

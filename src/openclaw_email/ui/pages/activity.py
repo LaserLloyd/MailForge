@@ -101,9 +101,58 @@ def _event_list(store: object) -> None:
                     )
 
 
+_NOTE_KINDS = {
+    "incident": "error",
+    "action": "accent",
+    "observation": "",
+    "context": "warning",
+}
+
+
+def _agent_notes(store: object) -> None:
+    """Durable agent-notes log: what automated agents observed/did and why.
+
+    This is the memory that stops OpenClaw from re-diagnosing its own past
+    actions (e.g. a self-caused GitHub verification burst) as an incident."""
+    try:
+        rows = list(store.list_agent_notes(limit=30))  # type: ignore[attr-defined]
+    except Exception as e:  # noqa: BLE001
+        log.debug("list_agent_notes failed: %s", e)
+        rows = []
+    with ui.expansion(
+        f"Agent notes — {len(rows)} recorded", icon="sticky_note_2", value=bool(rows)
+    ).classes("w-full oce-card"):
+        ui.label(
+            "Durable memory shared with the OpenClaw email agents: recorded "
+            "actions and context that explain mail patterns (kept even after "
+            "chat history is gone)."
+        ).style("font-size: 12px; color: var(--text-secondary)")
+        if not rows:
+            ui.label("No notes yet — agents record them via the bridge.").style(
+                "color: var(--text-secondary)"
+            )
+            return
+        for r in rows:
+            with ui.element("div").classes("oce-row w-full").style("cursor: default"):
+                with ui.row().classes("w-full items-start no-wrap").style("gap: 10px"):
+                    with ui.column().classes("col").style("gap: 3px; min-width: 0"):
+                        with ui.row().classes("items-center").style("gap: 6px"):
+                            theme.badge(r["kind"], _NOTE_KINDS.get(r["kind"], ""))
+                            theme.badge(r["site_id"], "accent")
+                            ui.label(r["title"]).style("font-weight: 700")
+                        ui.label(r["body"]).style(
+                            "font-size: 12.5px; color: var(--text-secondary); "
+                            "white-space: pre-wrap; overflow-wrap: anywhere"
+                        )
+                        ui.label(
+                            f"{r['author']} · {(r['created_at'] or '')[:19].replace('T', ' ')}"
+                        ).style("font-size: 11px; color: var(--text-muted)")
+
+
 def render(store: object) -> None:
     """Render the activity page body."""
     _verify_banner(store)
+    _agent_notes(store)
 
     try:
         rows = store.recent_audit(_LIMIT)  # type: ignore[attr-defined]

@@ -17,7 +17,7 @@ from importlib import resources
 __all__ = ["load"]
 
 # Bump when prompt wording changes in a way the audit log should track (§8).
-PROMPT_VERSION = "1"
+PROMPT_VERSION = "3"
 
 
 def load(name: str) -> str:

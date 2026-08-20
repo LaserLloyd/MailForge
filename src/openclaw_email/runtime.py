@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import queue
 import threading
 
@@ -25,10 +26,11 @@ from .agent.graph import AgentGraph
 from .audit.monitor import AnomalyMonitor
 from .config import load_settings
 from .db.store import open_store
-from .mail.imap_listener import IMAPListener, bootstrap_allowlist
+from .mail.imap_listener import IMAPListener
 from .security.logging_filter import install_redaction
 
 log = logging.getLogger(__name__)
+DEFERRED_RETRY_INTERVAL_S = 60
 
 
 def _make_bridge(settings):
@@ -41,7 +43,28 @@ def _make_bridge(settings):
         return None
 
 
-def run_serve(start_ui: bool = True) -> None:
+def _site_cfg(settings, site_id):
+    return (getattr(settings, "sites", None) or {}).get(str(site_id or "").lower())
+
+
+def _site_terms(settings, site_id):
+    """Configured topical vocabulary for a site (``content_terms``)."""
+    from .security.inbound_screening import terms_pattern
+
+    cfg = _site_cfg(settings, site_id)
+    return terms_pattern(getattr(cfg, "content_terms", ()) or ())
+
+
+def _brand_terms(settings, site_id):
+    """Names the site is known by: its display name plus ``brand_terms``."""
+    from .security.inbound_screening import brand_pattern
+
+    cfg = _site_cfg(settings, site_id)
+    names = [getattr(cfg, "name", "") or "", *(getattr(cfg, "brand_terms", ()) or ())]
+    return brand_pattern(names)
+
+
+def run_serve(start_ui: bool = True, ui_port: int | None = None) -> None:
     settings = load_settings()
     settings.assert_invariants()
     install_redaction()
@@ -53,29 +76,56 @@ def run_serve(start_ui: bool = True) -> None:
 
     work_q: queue.Queue[int] = queue.Queue()
     stop_event = threading.Event()
+    deferred_resume_lock = asyncio.Lock()
 
     # --- start one listener per account (each with its own DB connection) ---
     listeners: list[IMAPListener] = []
-    for acct in settings.imap_accounts:
+    # Demo mode configures fictional mailboxes for Compose but must never open
+    # a socket to them; the CLI sets this before calling run_serve().
+    accounts_to_listen = [] if os.environ.get("OPENCLAW_EMAIL_NO_LISTENERS") == "1" else list(
+        settings.imap_accounts
+    )
+    for acct in accounts_to_listen:
         lstore = open_store(db_path, init=False)
-        try:
-            n = bootstrap_allowlist(acct, lstore)
-            log.info("Bootstrapped %s allowlist entries for %s.", n, acct.name)
-        except Exception as e:
-            log.info("Allowlist bootstrap skipped for %s: %s", acct.name, e)
-        listener = IMAPListener(acct, lstore, work_q.put)
+        listener = IMAPListener(
+            acct,
+            lstore,
+            work_q.put,
+            security=settings.security,
+            screening_mode=settings.site_screening_mode(acct.site_id),
+            # Optional per-site screening vocabulary from config.toml
+            # ([sites.<id>].content_terms); absent => packaged defaults.
+            site_terms=_site_terms(settings, acct.site_id),
+            brand_terms=_brand_terms(settings, acct.site_id),
+            # Runs in the listener's own thread: a slow Sent-folder scan used to
+            # block ALL listeners (and the UI) from starting.
+            bootstrap_allowlist_on_start=True,
+        )
         listeners.append(listener)
 
     monitor = AnomalyMonitor(store)
 
     async def _resume_deferred() -> None:
-        if bridge is None or not bridge.is_up():
-            return
-        for d in store.deferred_drafts():
-            try:
-                await graph.process_message(d["message_id"])
-            except Exception as e:
-                log.error("Resume of deferred draft %s failed: %s", d["id"], e)
+        # Startup recovery can take longer than the periodic retry interval.
+        # Single-flight it so the timer never classifies the same deferred row
+        # concurrently with the startup pass.
+        async with deferred_resume_lock:
+            # is_up() is a blocking HTTP probe (5 s timeout) — keep it off the
+            # event loop or the UI freezes every minute while LM Studio is down.
+            if bridge is None or not await asyncio.to_thread(bridge.is_up):
+                return
+            for d in store.deferred_drafts():
+                try:
+                    await graph.process_message(d["message_id"])
+                except Exception as e:
+                    log.error("Resume of deferred draft %s failed: %s", d["id"], e)
+
+    async def _deferred_resumer() -> None:
+        while not stop_event.is_set():
+            await asyncio.sleep(DEFERRED_RETRY_INTERVAL_S)
+            if stop_event.is_set():
+                return
+            await _resume_deferred()
 
     async def _consumer() -> None:
         loop = asyncio.get_running_loop()
@@ -94,6 +144,8 @@ def run_serve(start_ui: bool = True) -> None:
                 log.debug("model resolution skipped: %s", e)
             if getattr(bridge, "has_heavy", False):
                 log.info("OpenClaw heavy-lift link active: %s", bridge.heavy_base_url)
+        for mid in store.unprocessed_message_ids(limit=200):
+            work_q.put(mid)
         await _resume_deferred()
         while not stop_event.is_set():
             try:
@@ -107,6 +159,17 @@ def run_serve(start_ui: bool = True) -> None:
             except Exception as e:
                 log.exception("Graph failed for message %s: %s", mid, e)
 
+    async def _refresh_bot_knowledge() -> None:
+        """Refresh canonical handbooks after core mail processing is online."""
+        await asyncio.sleep(8)
+        try:
+            from .knowledge.sync import refresh_managed_knowledge
+
+            report = await refresh_managed_knowledge(store, bridge)
+            log.info("Managed response-bot handbooks refreshed: %s", sorted(report))
+        except Exception as e:
+            log.warning("Managed handbook refresh deferred: %s", e)
+
     def _start_background() -> None:
         for lst in listeners:
             lst.start()
@@ -119,6 +182,8 @@ def run_serve(start_ui: bool = True) -> None:
         # Run listeners + consumer inside NiceGUI's event loop.
         nicegui_app.on_startup(_start_background)
         nicegui_app.on_startup(lambda: asyncio.create_task(_consumer()))
+        nicegui_app.on_startup(lambda: asyncio.create_task(_deferred_resumer()))
+        nicegui_app.on_startup(lambda: asyncio.create_task(_refresh_bot_knowledge()))
 
         def _shutdown() -> None:
             stop_event.set()
@@ -129,12 +194,17 @@ def run_serve(start_ui: bool = True) -> None:
 
         nicegui_app.on_shutdown(_shutdown)
         log.info("Starting UI — open the localhost URL printed below to review drafts.")
-        run_ui(store, settings, bridge)
+        run_ui(store, settings, bridge, port=ui_port)
     else:
         # Headless: own event loop.
         _start_background()
         try:
-            asyncio.run(_consumer())
+            async def _headless() -> None:
+                await asyncio.gather(
+                    _consumer(), _deferred_resumer(), _refresh_bot_knowledge()
+                )
+
+            asyncio.run(_headless())
         except KeyboardInterrupt:
             pass
         finally:

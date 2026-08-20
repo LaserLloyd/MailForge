@@ -42,6 +42,7 @@ def _build_message(
     body: str,
     in_reply_to: str | None,
     references: str | None,
+    html_body: str | None = None,
 ) -> EmailMessage:
     msg = EmailMessage()
     msg["From"] = from_addr
@@ -57,6 +58,8 @@ def _build_message(
     if refs:
         msg["References"] = refs
     msg.set_content(body)
+    if html_body:
+        msg.add_alternative(html_body, subtype="html")
     return msg
 
 
@@ -69,6 +72,7 @@ def send_email(
     body: str,
     in_reply_to: str | None = None,
     references: str | None = None,
+    html_body: str | None = None,
 ) -> None:
     """Send one email over SMTP submission with STARTTLS.
 
@@ -82,7 +86,15 @@ def send_email(
     NO retry and NO queue here; this is a single human-approved transmission.
     """
     token = secret.get_secret_value()
-    msg = _build_message(from_addr, to_addr, subject, body, in_reply_to, references)
+    msg = _build_message(
+        from_addr,
+        to_addr,
+        subject,
+        body,
+        in_reply_to,
+        references,
+        html_body,
+    )
 
     context = ssl.create_default_context()
     with smtplib.SMTP(smtp_cfg.host, smtp_cfg.port, timeout=30) as server:

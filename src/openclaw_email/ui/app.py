@@ -30,10 +30,16 @@ from nicegui import ui
 from ..paths import runtime_file
 from . import theme
 from .pages import activity as activity_page
+from .pages import compose as compose_page
+from .pages import dashboard as dashboard_page
 from .pages import detail as detail_page
 from .pages import inbox as inbox_page
+from .pages import knowledge as knowledge_page
+from .pages import mail as mail_page
 from .pages import models as models_page
+from .pages import references as references_page
 from .pages import settings as settings_page
+from .pages import templates as templates_page
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +48,37 @@ _PORT: int | None = None
 _LAUNCH_TOKEN: str | None = None
 _TOKEN_CONSUMED = False
 _LAUNCHER_KEY: str | None = None
+# (retired key, expiry monotonic) — a just-rotated key stays valid briefly so a
+# double-opened launcher tab does not land on "Access denied".
+_PREV_LAUNCHER_KEY: tuple[str, float] | None = None
+_PREV_KEY_GRACE_S = 60.0
+
+
+def _write_secret_file(path: Any, value: str) -> None:
+    """Create/replace a 0600 secret file with no world-readable window.
+
+    ``write_text`` + ``chmod`` leaves the file at the umask default (0644)
+    until the chmod runs; creating it O_EXCL at 0600 and renaming over the
+    target avoids that, and re-asserts 0600 on files an older version left
+    at 0644.
+    """
+    import os
+    import stat
+
+    mode = stat.S_IRUSR | stat.S_IWUSR
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(value)
+        os.replace(tmp, path)
+        os.chmod(path, mode)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 # --------------------------------------------------------------------------- #
@@ -78,9 +115,6 @@ def launcher_key() -> str:
     127.0.0.1 bind + Host-header guard already assume. It is reusable (the
     launcher runs every time you click the icon), unlike the one-shot token.
     """
-    import os
-    import stat
-
     f = runtime_file("ui_launcher_key")
     if f.exists():
         try:
@@ -91,10 +125,24 @@ def launcher_key() -> str:
             pass
     key = _pysecrets.token_urlsafe(32)
     try:
-        f.write_text(key, encoding="utf-8")
-        os.chmod(f, stat.S_IRUSR | stat.S_IWUSR)  # 0600
+        _write_secret_file(f, key)
     except OSError as e:
         log.warning("could not persist launcher key: %s", e)
+    return key
+
+
+def rotate_launcher_key() -> str:
+    """Mint a fresh launcher key (the old one is retired).
+
+    The key travels in a URL query string (browser history, any proxy log),
+    so it is rotated after every successful ``/launch`` — the desktop entry
+    reads the file on each click, so rotation costs the user nothing.
+    """
+    key = _pysecrets.token_urlsafe(32)
+    try:
+        _write_secret_file(runtime_file("ui_launcher_key"), key)
+    except OSError as e:
+        log.warning("could not rotate launcher key: %s", e)
     return key
 
 
@@ -110,11 +158,7 @@ def _load_or_create_storage_secret() -> str:
             pass
     secret = _pysecrets.token_urlsafe(48)
     try:
-        f.write_text(secret, encoding="utf-8")
-        import os
-        import stat
-
-        os.chmod(f, stat.S_IRUSR | stat.S_IWUSR)  # 0600 — it signs the cookie
+        _write_secret_file(f, secret)  # 0600 from the first byte — it signs the cookie
     except OSError as e:
         log.warning("could not persist storage secret: %s", e)
     return secret
@@ -174,19 +218,48 @@ def _denied() -> None:
 # --------------------------------------------------------------------------- #
 # Host-header enforcement middleware (spec §0.7 / §11)
 # --------------------------------------------------------------------------- #
+def allowed_hosts(port: int) -> set[str]:
+    return {f"127.0.0.1:{port}", f"localhost:{port}"}
+
+
 def _install_host_guard(port: int) -> None:
-    """Reject any request whose Host header != 127.0.0.1:PORT (spec §0.7)."""
-    from starlette.middleware.base import BaseHTTPMiddleware
-    from starlette.responses import PlainTextResponse
+    """Reject any HTTP request OR WebSocket upgrade whose Host header is not
+    127.0.0.1:PORT / localhost:PORT (spec §0.7), and any WebSocket whose
+    Origin (when sent) is not one of ours.
 
-    allowed = {f"127.0.0.1:{port}", f"localhost:{port}"}
+    Written as a raw ASGI middleware on purpose: Starlette's
+    ``BaseHTTPMiddleware`` passes non-``http`` scopes straight through, so
+    the previous version never looked at NiceGUI's socket.io connection —
+    the channel every UI action travels on.
+    """
+    allowed = allowed_hosts(port)
+    allowed_origins = {f"http://{h}" for h in allowed}
 
-    class _HostHeaderGuard(BaseHTTPMiddleware):
-        async def dispatch(self, request: Any, call_next: Any) -> Any:
-            host = request.headers.get("host", "")
-            if host not in allowed:
-                return PlainTextResponse("Forbidden: bad Host header", status_code=403)
-            return await call_next(request)
+    class _HostHeaderGuard:
+        def __init__(self, app: Any) -> None:
+            self.app = app
+
+        async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+            kind = scope.get("type")
+            if kind not in ("http", "websocket"):
+                await self.app(scope, receive, send)
+                return
+            headers = {k.decode("latin-1").lower(): v.decode("latin-1")
+                       for k, v in scope.get("headers") or []}
+            host_ok = headers.get("host", "") in allowed
+            origin = headers.get("origin")
+            origin_ok = origin is None or origin in allowed_origins
+            if host_ok and (kind == "http" or origin_ok):
+                await self.app(scope, receive, send)
+                return
+            if kind == "http":
+                from starlette.responses import PlainTextResponse
+
+                resp = PlainTextResponse("Forbidden: bad Host header", status_code=403)
+                await resp(scope, receive, send)
+            else:
+                # Refuse the upgrade before the handshake completes.
+                await send({"type": "websocket.close", "code": 1008})
 
     nicegui_app.add_middleware(_HostHeaderGuard)
 
@@ -208,11 +281,13 @@ def _register_pages(store: object, settings: object, bridge: object | None) -> N
     def _launch(k: str | None = None) -> None:
         """Desktop-launcher entry: validate the 0600 launcher key, upgrade to a
         signed session cookie, then redirect to the inbox. See launcher_key()."""
-        ok = bool(
-            k
-            and _LAUNCHER_KEY is not None
-            and _pysecrets.compare_digest(k, _LAUNCHER_KEY)
-        )
+        global _LAUNCHER_KEY, _PREV_LAUNCHER_KEY
+        import time as _time
+
+        ok = bool(k and _LAUNCHER_KEY is not None and _pysecrets.compare_digest(k, _LAUNCHER_KEY))
+        if not ok and k and _PREV_LAUNCHER_KEY is not None:
+            prev, until = _PREV_LAUNCHER_KEY
+            ok = _time.monotonic() < until and _pysecrets.compare_digest(k, prev)
         if ok:
             try:
                 nicegui_app.storage.user["authenticated"] = True
@@ -222,14 +297,26 @@ def _register_pages(store: object, settings: object, bridge: object | None) -> N
         if not ok:
             _denied()
             return
+        # One use per key: rotate so the value left in browser history is dead.
+        if _LAUNCHER_KEY is not None and k == _LAUNCHER_KEY:
+            _PREV_LAUNCHER_KEY = (_LAUNCHER_KEY, _time.monotonic() + _PREV_KEY_GRACE_S)
+            _LAUNCHER_KEY = rotate_launcher_key()
         ui.navigate.to("/")
 
     @ui.page("/")
+    def _dashboard(token: str | None = None) -> None:
+        if not _gate(token):
+            _denied()
+            return
+        with theme.shell("dashboard", "Dashboard", bridge, store):
+            dashboard_page.render(store, settings)
+
+    @ui.page("/drafts")
     def _inbox(token: str | None = None) -> None:
         if not _gate(token):
             _denied()
             return
-        with theme.shell("inbox", "Inbox", bridge):
+        with theme.shell("drafts", "AI Review", bridge, store):
             inbox_page.render(store)
 
     @ui.page("/detail/{draft_id}")
@@ -237,15 +324,116 @@ def _register_pages(store: object, settings: object, bridge: object | None) -> N
         if not _gate(token):
             _denied()
             return
-        with theme.shell("inbox", f"Draft #{draft_id}", bridge):
-            detail_page.render(store, settings, draft_id)
+        with theme.shell("drafts", f"Draft #{draft_id}", bridge, store):
+            detail_page.render(store, settings, draft_id, bridge)
+
+    @ui.page("/mail")
+    def _mail(
+        message_id: int | None = None,
+        account: str = "",
+        q: str = "",
+        filter: str = "all",
+        tag: str = "",
+        page: int = 0,
+        token: str | None = None,
+    ) -> None:
+        if not _gate(token):
+            _denied()
+            return
+        with theme.shell("mail", "Inbox", bridge, store, max_width=1500):
+            mail_page.render(
+                store,
+                settings,
+                bridge,
+                message_id=message_id,
+                account=account,
+                q=q,
+                filter=filter,
+                tag=tag,
+                page=page,
+            )
+
+    @ui.page("/mail/{message_id}")
+    def _mail_detail(message_id: int, token: str | None = None) -> None:
+        if not _gate(token):
+            _denied()
+            return
+        with theme.shell("mail", "Message", bridge, store, max_width=1120):
+            mail_page.render_detail(store, settings, message_id, bridge)
+
+    @ui.page("/compose")
+    def _compose(
+        to: str = "",
+        subject: str = "",
+        draft_id: int | None = None,
+        template_id: int | None = None,
+        account: str = "",
+        reply_to: int | None = None,
+        token: str | None = None,
+    ) -> None:
+        if not _gate(token):
+            _denied()
+            return
+        with theme.shell("compose", "Compose", bridge, store):
+            compose_page.render(
+                store,
+                settings,
+                to=to,
+                subject=subject,
+                draft_id=draft_id,
+                template_id=template_id,
+                account=account,
+                reply_to=reply_to,
+            )
+
+    @ui.page("/templates")
+    def _templates(
+        site: str = "",
+        to: str = "",
+        subject: str = "",
+        message_id: int | None = None,
+        token: str | None = None,
+    ) -> None:
+        if not _gate(token):
+            _denied()
+            return
+        with theme.shell("templates", "Response Templates", bridge, store):
+            templates_page.render(
+                store,
+                settings,
+                site=site,
+                to=to,
+                subject=subject,
+                message_id=message_id,
+            )
+
+    @ui.page("/references")
+    def _references(token: str | None = None) -> None:
+        if not _gate(token):
+            _denied()
+            return
+        with theme.shell("references", "Knowledge", bridge, store):
+            references_page.render(store, settings, bridge)
+
+    @ui.page("/knowledge/{site_id}")
+    def _knowledge(
+        site_id: str,
+        full: bool = False,
+        token: str | None = None,
+    ) -> None:
+        if not _gate(token):
+            _denied()
+            return
+        title = f"{settings.site_name(site_id)} Knowledge"
+        with theme.shell("references", title, bridge, store, max_width=1180):
+            knowledge_page.render(site_id, settings, full=full)
 
     @ui.page("/activity")
     def _activity(token: str | None = None) -> None:
         if not _gate(token):
             _denied()
             return
-        with theme.shell("activity", "Activity", bridge):
+        with theme.shell("activity", "Activity", bridge, store):
             activity_page.render(store)
 
     @ui.page("/settings")
@@ -253,16 +441,16 @@ def _register_pages(store: object, settings: object, bridge: object | None) -> N
         if not _gate(token):
             _denied()
             return
-        with theme.shell("settings", "Settings", bridge):
+        with theme.shell("settings", "Settings", bridge, store):
             settings_page.render(store, settings)
 
     @ui.page("/models")
-    async def _models(token: str | None = None) -> None:
+    def _models(token: str | None = None) -> None:
         if not _gate(token):
             _denied()
             return
-        with theme.shell("models", "Models", bridge):
-            await models_page.render(bridge)
+        with theme.shell("models", "Models", bridge, store):
+            models_page.render(bridge)
 
 
 # --------------------------------------------------------------------------- #
@@ -275,6 +463,10 @@ def refresh_inbox() -> None:
     lands so the inbox table re-renders without a manual reload.
     """
     inbox_page.refresh()
+    try:
+        dashboard_page.refresh.refresh()
+    except Exception:
+        pass
 
 
 # --------------------------------------------------------------------------- #
@@ -319,13 +511,15 @@ def run_ui(
     settings: object,
     bridge: object | None = None,
     host: str = "127.0.0.1",
+    *,
+    port: int | None = None,
 ) -> None:
     """Build the app and start the NiceGUI server (spec §0.7, §9).
 
     Binds ``127.0.0.1`` only, on the persisted random high port, prints the
     one-shot launch URL to stdout, and runs with ``show=False``.
     """
-    cfg = build_app(store, settings, bridge, host=host)
+    cfg = build_app(store, settings, bridge, host=host, port=port)
     print(f"OpenClaw Email UI: {cfg['url']}", flush=True)
     log.info("UI listening on %s:%s (token in URL above)", cfg["host"], cfg["port"])
     ui.run(

@@ -19,12 +19,39 @@ from ..llm.structured import (
 )
 
 
-async def classify(bridge, spotlighted_text: str, symbolic_meta: str = "") -> Classification:
+def _site_rule(site_id: str, override: str | None = None) -> str:
+    """Site guardrail text for the drafting prompts.
+
+    The configured ``[sites.<id>].guidance`` (passed by callers as
+    ``override``) is the only source of business rules; with none configured
+    the prompt gets a neutral do-not-invent instruction.
+    """
+    if override and override.strip():
+        return override.strip()
+    return (
+        f"No additional rule is configured for site '{site_id}'; "
+        "do not invent business facts."
+    )
+
+
+async def classify(
+    bridge,
+    spotlighted_text: str,
+    symbolic_meta: str = "",
+    triage_rule: str = "",
+) -> Classification:
     """Classify an email into a typed Category. Quarantined — sees spotlighted
     untrusted content as DATA only."""
     system = load("system_worker")
     template = load("classify")
-    user = template.replace("{{EMAIL}}", spotlighted_text).replace("{{META}}", symbolic_meta)
+    user = (
+        template.replace("{{EMAIL}}", spotlighted_text)
+        .replace("{{META}}", symbolic_meta)
+        .replace(
+            "{{TRIAGE_RULE}}",
+            triage_rule.strip() or "Use the category definitions without a site override.",
+        )
+    )
     schema = json_schema_for(Classification)
     raw = await bridge.chat_structured(
         [{"role": "system", "content": system}, {"role": "user", "content": user}],
@@ -40,6 +67,8 @@ async def draft_reply(
     context_chunks: list[str],
     recipient: str,
     style,
+    site_id: str = "",
+    site_rule: str | None = None,
 ) -> ProposedDraft:
     """Draft a reply body. Recipient is BOUND by the caller (§0.4); we pass it
     in so the model writes an appropriate salutation, but the graph overrides
@@ -53,6 +82,7 @@ async def draft_reply(
         .replace("{{RECIPIENT}}", recipient)
         .replace("{{TONE}}", getattr(style, "tone", "professional"))
         .replace("{{SIGNATURE}}", getattr(style, "signature", "") or "")
+        .replace("{{SITE_RULE}}", _site_rule(site_id, site_rule))
     )
     schema = json_schema_for(ProposedDraft)
     # Drafting is the "heavy" task: prefer the OpenClaw heavy-lift model when
@@ -61,6 +91,37 @@ async def draft_reply(
         [{"role": "system", "content": system}, {"role": "user", "content": user}],
         schema,
         schema_name="proposed_draft",
+        heavy=True,
+    )
+    return coerce(raw, ProposedDraft)
+
+
+async def revise_reply(
+    bridge,
+    current_subject: str,
+    current_body: str,
+    feedback: str,
+    context_chunks: list[str],
+    recipient: str,
+    site_id: str = "",
+    site_rule: str | None = None,
+) -> ProposedDraft:
+    """Revise a stored draft from explicit human feedback; still no tools/send."""
+    system = load("system_worker")
+    template = load("revise")
+    ctx = "\n\n---\n\n".join(context_chunks) if context_chunks else "(no retrieved context)"
+    existing = f"Subject: {current_subject}\n\n{current_body}"
+    user = (
+        template.replace("{{RECIPIENT}}", recipient)
+        .replace("{{FEEDBACK}}", feedback)
+        .replace("{{DRAFT}}", existing)
+        .replace("{{CONTEXT}}", ctx)
+        .replace("{{SITE_RULE}}", _site_rule(site_id, site_rule))
+    )
+    raw = await bridge.chat_structured(
+        [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        json_schema_for(ProposedDraft),
+        schema_name="revised_draft",
         heavy=True,
     )
     return coerce(raw, ProposedDraft)

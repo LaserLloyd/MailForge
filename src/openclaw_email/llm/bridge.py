@@ -158,22 +158,24 @@ class LMStudioBridge:
         return f"http://{self.host}/v1"
 
     # ----- health -----
+    async def is_up_async(self) -> bool:
+        """:meth:`is_up` off the event loop (it is a blocking 5 s HTTP probe)."""
+        import asyncio
+
+        return await asyncio.to_thread(self.is_up)
+
     def is_up(self) -> bool:
         """Return True iff the LM Studio server answers (spec §6).
 
         Prefers the SDK's host validator; otherwise pings the OpenAI-compat
         ``/v1/models`` endpoint. Any failure → ``False`` (DEFERRED_NO_LLM).
         """
-        if _HAVE_LMS:
-            try:
-                return bool(lms.Client.is_valid_api_host(self.host))
-            except Exception as e:  # SDK present but server unreachable
-                log.debug("lmstudio host validation failed: %s", e)
-                return False
-        # No SDK: fall back to a cheap HTTP health probe.
+        # Probe the API actually used for chat and embeddings first. The native
+        # SDK validator is both stricter and dramatically slower for healthy
+        # remote servers.
         try:
             r = httpx.get(f"{self.base_url}/models", timeout=5.0)
-            return r.status_code < 500
+            return r.status_code == 200
         except Exception as e:
             log.debug("LM Studio /v1/models probe failed: %s", e)
             return False
@@ -212,13 +214,21 @@ class LMStudioBridge:
         Uses the SDK's ``list_downloaded_models`` when available, else the
         OpenAI-compat ``/v1/models`` endpoint. Returns ``[]`` when down.
         """
+        # Prefer the fast API used by the runtime. Native SDK inventory can
+        # take minutes to fail against an otherwise healthy remote host.
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as c:
+                r = await c.get(f"{self.base_url}/models")
+                r.raise_for_status()
+                return list(r.json().get("data", []))
+        except Exception as e:
+            log.info("/v1 model inventory unavailable, trying native SDK: %s", e)
         if _HAVE_LMS:
             try:
                 async with lms.AsyncClient(self.host) as c:
                     models = await c.system.list_downloaded_models()
                     out: list[dict[str, Any]] = []
                     for m in models:
-                        # SDK objects vary; coerce to plain dicts defensively.
                         if isinstance(m, dict):
                             out.append(m)
                         else:
@@ -232,16 +242,8 @@ class LMStudioBridge:
                             )
                     return out
             except Exception as e:
-                log.warning("list_downloaded_models failed, falling back to /v1: %s", e)
-        # HTTP fallback.
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as c:
-                r = await c.get(f"{self.base_url}/models")
-                r.raise_for_status()
-                return list(r.json().get("data", []))
-        except Exception as e:
-            log.info("list_models unavailable (LM Studio down?): %s", e)
-            return []
+                log.info("list_models unavailable (LM Studio down?): %s", e)
+        return []
 
     # ----- high-level chat (spec §6) -----
     async def chat(
@@ -474,15 +476,46 @@ class LMStudioBridge:
         """
         if not texts:
             return []
-        payload = {"model": self.embed_id, "input": texts}
+        # LM Studio rejects very large multi-input requests even when every
+        # individual chunk is within the model context window. Keep batches
+        # bounded, preserve order, and fail atomically so a partial document is
+        # never committed as READY.
+        batch_size = 32
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as c:
-                r = await c.post(f"{self.base_url}/embeddings", json=payload)
-                r.raise_for_status()
-                data = r.json()
-            # Preserve request order via the per-item ``index`` field.
-            items = sorted(data["data"], key=lambda d: d.get("index", 0))
-            vectors = [list(item["embedding"]) for item in items]
+                async def _request_batch(batch: list[str]) -> list[list[float]]:
+                    try:
+                        payload = {"model": self.embed_id, "input": batch}
+                        r = await c.post(f"{self.base_url}/embeddings", json=payload)
+                        r.raise_for_status()
+                        data = r.json()
+                        items = sorted(data["data"], key=lambda d: d.get("index", 0))
+                        current = [list(item["embedding"]) for item in items]
+                        if len(current) != len(batch):
+                            raise RuntimeError("embedding endpoint returned a partial batch")
+                        return current
+                    except Exception:
+                        # LM Studio can reject a particular multi-input request
+                        # while accepting both smaller halves. Split down to a
+                        # singleton before declaring the whole document failed.
+                        if len(batch) <= 1:
+                            raise
+                        midpoint = len(batch) // 2
+                        log.info(
+                            "embedding batch of %d failed; retrying as %d + %d",
+                            len(batch), midpoint, len(batch) - midpoint,
+                        )
+                        return (
+                            await _request_batch(batch[:midpoint])
+                            + await _request_batch(batch[midpoint:])
+                        )
+
+                vectors: list[list[float]] = []
+                for offset in range(0, len(texts), batch_size):
+                    batch = texts[offset : offset + batch_size]
+                    # Indices are local to each request; append batches in the
+                    # original request order.
+                    vectors.extend(await _request_batch(batch))
             for v in vectors:
                 if len(v) != EMBED_DIM:
                     log.warning(

@@ -16,6 +16,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ..db.store import DEFAULT_SITE_ID, default_site_id
 from .chunker import approx_tokens, chunk_text
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -68,6 +69,7 @@ async def _ingest_paths(
     bridge: "LMStudioBridge",
     paths: list[str],
     source_kind: str,
+    site_id: str = DEFAULT_SITE_ID,
 ) -> int:
     """Chunk + embed + store every file in ``paths``. Returns chunk count."""
     total = 0
@@ -97,6 +99,7 @@ async def _ingest_paths(
                 thread_id=None,
                 text=chunk,
                 token_count=approx_tokens(chunk),
+                site_id=site_id,
             )
             if have_vecs:
                 store.add_embedding(chunk_id, embeddings[i])
@@ -155,6 +158,11 @@ async def ingest_thread_history(
         return 0
 
     messages = store.thread_messages(thread_id)
+    site_id = default_site_id()
+    if messages:
+        account = store.get_account_for_message(messages[0]["id"])
+        if account is not None:
+            site_id = account["site_id"]
     total = 0
     for msg in messages:
         text = (msg["sanitized_text"] or "").strip()
@@ -172,9 +180,45 @@ async def ingest_thread_history(
                 thread_id=thread_id,
                 text=chunk,
                 token_count=approx_tokens(chunk),
+                site_id=site_id,
             )
             if have_vecs:
                 store.add_embedding(chunk_id, embeddings[i])
             total += 1
     log.info("ingest_thread_history: %d chunks for thread %s", total, thread_id)
     return total
+
+
+async def ingest_reference_document(
+    store: "Store", bridge: "LMStudioBridge", document_id: int
+) -> int:
+    """Parse, embed, and atomically replace one uploaded reference document."""
+    doc = store.get_reference_document(int(document_id))
+    if doc is None:
+        raise ValueError("reference document not found")
+    store.update_reference_document_status(document_id, "INDEXING")
+    try:
+        path = Path(doc["stored_path"]).expanduser()
+        text = _read_document(path)
+        if not text.strip():
+            raise ValueError("document contains no readable text")
+        texts = chunk_text(text)
+        if not texts:
+            raise ValueError("document produced no chunks")
+        embeddings = await embed_chunks(bridge, texts)
+        if len(embeddings) != len(texts):
+            raise RuntimeError("embedding model returned an incomplete result")
+        rows = [
+            {
+                "text": chunk,
+                "token_count": approx_tokens(chunk),
+                "embedding": embeddings[i],
+            }
+            for i, chunk in enumerate(texts)
+        ]
+        return store.replace_document_chunks(document_id, doc["site_id"], rows)
+    except Exception as e:
+        store.update_reference_document_status(
+            document_id, "ERROR", error_text=str(e)[:500], chunk_count=0
+        )
+        raise

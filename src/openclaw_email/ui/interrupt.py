@@ -94,8 +94,9 @@ DEFAULT_EMAIL_CONFIG: HumanInterruptConfig = {
 class ApprovalRecord:
     """In-process record proving a human approved a send (spec §0.1, §11).
 
-    The send path asserts an instance of this exists (with ``approved_by`` set)
-    BEFORE calling :func:`openclaw_email.mail.smtp_sender.send_email`. It is the
+    The send path explicitly validates that an instance exists (with
+    ``approved_by`` set) BEFORE calling
+    :func:`openclaw_email.mail.smtp_sender.send_email`. It is the
     runtime witness of the "human-approval record" invariant.
     """
 

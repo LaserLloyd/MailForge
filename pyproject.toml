@@ -1,11 +1,12 @@
 [project]
 name = "openclaw-email"
-version = "0.2.0"
+version = "0.3.1"
 description = "Self-contained, cross-platform local-LLM email triage & auto-draft assistant (no auto-send)."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
-authors = [{ name = "OpenClaw" }]
+authors = [{ name = "Laser Lloyd" }]
+urls = { Homepage = "https://www.laserlloyd.com" }
 
 # Core runtime dependencies. These are required for the package to import and
 # for the setup-wizard / serve loop to function. Heavy ML security models are
@@ -19,6 +20,7 @@ dependencies = [
     "keyrings.cryptfile>=1.3",
     "imap-tools>=1.7",
     "nicegui>=2.0",
+    "markdown2>=2.5",
     "lxml_html_clean>=0.1",
     "bleach>=6.1",
     "html2text>=2024.2.26",
