@@ -8,7 +8,13 @@ from openclaw_email.config import Settings
 
 
 def test_version_matches_package_metadata():
-    assert __version__ == "0.3.1"
+    """__init__ and pyproject must agree — compared, not hand-copied here."""
+    import tomllib
+    from pathlib import Path
+
+    pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    declared = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]["version"]
+    assert __version__ == declared
 
 
 def test_saved_config_is_owner_only(tmp_path):

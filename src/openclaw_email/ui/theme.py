@@ -32,6 +32,7 @@ NAV: list[tuple[str, str, str, str]] = [
     ("dashboard", "Dashboard", "dashboard", "/"),
     ("mail", "Inbox", "inbox", "/mail"),
     ("drafts", "AI Review", "auto_awesome", "/drafts"),
+    ("spam", "Spam", "gpp_maybe", "/spam"),
     ("compose", "Compose", "edit", "/compose"),
     ("templates", "Templates", "content_copy", "/templates"),
     ("references", "Knowledge", "library_books", "/references"),

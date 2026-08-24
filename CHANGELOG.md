@@ -3,6 +3,45 @@
 All notable changes to this project are documented here. Dates are ISO-8601.
 Published by Laser Lloyd — https://www.laserlloyd.com
 
+## 0.4.0 — 2026-08-24
+
+### Added
+- **Spam & Deletion page** (sidebar) — everything the inbound screener held back
+  from the AI, in three boxes ordered by how likely it is to be a scam
+  (*Potential spam* → *Likely scam or phishing* → *Confirmed spam*), plus the
+  **Scheduled for deletion** queue. Each box has select-all, shift-click range
+  selection, an inline preview on row click, and bulk **Mark as spam & learn**
+  (records human screening feedback so later mail from the same sender or
+  subject template is filtered), **Not spam**, and **Delete**.
+- **Provider-side delete.** Deleting a message can now remove the copy on the
+  mail server as well — `[security] server_delete_mode`: `trash` (default;
+  server-side MOVE into the account's Trash/Deleted folder, recoverable there),
+  `expunge` (`\Deleted` + EXPUNGE), or `off` (pre-0.4 behaviour). Configurable
+  in Settings → Deleting mail.
+- **Retention policy.** Spam and scam mail is deleted immediately; everything
+  else you delete is held in the local Trash for `[security]
+  trash_retention_days` (60) and then permanently removed, locally and at the
+  provider. A background sweep runs every six hours; `openclaw-email
+  purge-trash` reports the queue and (with `--yes`) runs it by hand.
+- New `messages` columns: `trashed_at`, `purged_at`, `server_deleted_at`,
+  `server_delete_error`. Existing trash has its retention clock started at
+  upgrade, never backdated to the received date.
+
+### Changed
+- Deleting explains what will happen and when, in the Inbox toast, the Trash
+  banner, and the delete confirmation — and the toast is no longer destroyed by
+  the reload that follows it.
+- Trash view gained **Delete permanently**, which skips the holding period.
+
+### Notes
+- A purge keeps a one-line tombstone rather than dropping the row: message
+  content, links, and attachment files are destroyed, but the learned spam rules
+  taught from that message (`message_screening_feedback` cascades on delete)
+  survive.
+- A provider that refuses or cannot be reached is recorded on the message and
+  reported in the UI; the local content is still shredded and the next sweep
+  retries the server.
+
 ## 0.3.1 — 2026-08-19
 
 ### Added

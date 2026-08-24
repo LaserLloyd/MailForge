@@ -153,6 +153,19 @@ class SecuritySettings(BaseModel):
     # --- attachment ingest caps ----------------------------------------------
     attachment_max_bytes: int = 15 * 1024 * 1024  # per file
     attachment_max_count: int = 25  # per message
+    # --- deleting mail at the provider ---------------------------------------
+    # A UI delete always moves the message to the LOCAL, reversible Trash. This
+    # setting decides what additionally happens on the IMAP server:
+    #   "trash"   — MOVE the message to the account's Trash/Deleted folder. The
+    #               provider copy is recoverable from there. Falls back to
+    #               "expunge" only when the server exposes no such folder.
+    #   "expunge" — flag \\Deleted and EXPUNGE. NOT recoverable.
+    #   "off"     — never touch the provider mailbox (pre-0.4 behaviour).
+    server_delete_mode: Literal["off", "trash", "expunge"] = "trash"
+    # Local Trash is a holding box, not a graveyard: spam/scam mail is deleted
+    # on the next sweep with no holding period, everything else after this many
+    # days — locally AND at the provider, per server_delete_mode above.
+    trash_retention_days: int = 60
 
 
 class StyleSettings(BaseModel):

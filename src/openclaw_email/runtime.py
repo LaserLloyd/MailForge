@@ -159,6 +159,26 @@ def run_serve(start_ui: bool = True, ui_port: int | None = None) -> None:
             except Exception as e:
                 log.exception("Graph failed for message %s: %s", mid, e)
 
+    async def _retention_sweep() -> None:
+        """Permanently delete Trash whose holding period is up (mail/retention).
+
+        Runs off the event loop — a sweep logs into every mailbox it has work
+        for, and that must never stall the UI or the listeners.
+        """
+        from .mail.retention import SWEEP_INTERVAL_S, sweep
+
+        while not stop_event.is_set():
+            try:
+                report = await asyncio.to_thread(sweep, store, settings)
+                if report.requested:
+                    log.info("Retention sweep: %s", report.summary())
+            except Exception as e:  # noqa: BLE001
+                log.exception("Retention sweep failed: %s", e)
+            for _ in range(int(SWEEP_INTERVAL_S)):
+                if stop_event.is_set():
+                    return
+                await asyncio.sleep(1)
+
     async def _refresh_bot_knowledge() -> None:
         """Refresh canonical handbooks after core mail processing is online."""
         await asyncio.sleep(8)
@@ -184,6 +204,7 @@ def run_serve(start_ui: bool = True, ui_port: int | None = None) -> None:
         nicegui_app.on_startup(lambda: asyncio.create_task(_consumer()))
         nicegui_app.on_startup(lambda: asyncio.create_task(_deferred_resumer()))
         nicegui_app.on_startup(lambda: asyncio.create_task(_refresh_bot_knowledge()))
+        nicegui_app.on_startup(lambda: asyncio.create_task(_retention_sweep()))
 
         def _shutdown() -> None:
             stop_event.set()
@@ -201,7 +222,10 @@ def run_serve(start_ui: bool = True, ui_port: int | None = None) -> None:
         try:
             async def _headless() -> None:
                 await asyncio.gather(
-                    _consumer(), _deferred_resumer(), _refresh_bot_knowledge()
+                    _consumer(),
+                    _deferred_resumer(),
+                    _refresh_bot_knowledge(),
+                    _retention_sweep(),
                 )
 
             asyncio.run(_headless())

@@ -405,6 +405,45 @@ def render(store: object, settings: object) -> None:
                     str(quarantined_now) if quarantined_now is not None else "unavailable"
                 ).style("font-size: 20px; font-weight: 800; color: var(--accent-hover)")
 
+    # --- Deleting mail --------------------------------------------------------
+    delete_inputs: dict[str, Any] = {}
+    with ui.card().classes("oce-card w-full q-mt-md"):
+        ui.label("Deleting mail").classes("text-subtitle1 text-weight-bold").style(
+            "color: var(--accent-hover)"
+        )
+        ui.label(
+            "Deleting a message always removes it from this app. These settings decide "
+            "what happens to the copy on your mail server, and how long deleted mail is "
+            "kept first. Spam and scam mail is never held — it is deleted on the next "
+            "sweep."
+        ).style("font-size: 12px; color: var(--text-secondary)")
+        with ui.row().classes("w-full oce-toolbar").style("gap: 12px"):
+            delete_inputs["mode"] = ui.select(
+                {
+                    "trash": "Move to the provider's Trash folder (recoverable there)",
+                    "expunge": "Delete from the mail server permanently",
+                    "off": "Never touch the mail server",
+                },
+                label="On the mail server",
+                value=str(getattr(sec, "server_delete_mode", "trash") if sec else "trash"),
+            ).props("dense outlined options-dense").classes("w-96 oce-toolbar-grow")
+            delete_inputs["days"] = ui.number(
+                "Hold deleted mail for (days)",
+                value=int(getattr(sec, "trash_retention_days", 60) if sec else 60),
+                min=0,
+                max=3650,
+                format="%d",
+            ).props("dense outlined").classes("w-56")
+        try:
+            from ...mail.retention import retention_days as _days
+
+            held = len(store.trash_queue(retention_days=_days(settings)))  # type: ignore[attr-defined]
+            ui.label(
+                f"{held} message(s) are currently waiting to be deleted — see Spam & Deletion."
+            ).style("font-size: 12px; color: var(--text-muted)")
+        except Exception as e:  # noqa: BLE001
+            log.debug("trash queue count unavailable: %s", e)
+
     # --- Sites (read-only) -----------------------------------------------------
     with ui.card().classes("oce-card w-full q-mt-md"):
         ui.label("Sites").classes("text-subtitle1 text-weight-bold").style(
@@ -457,6 +496,11 @@ def render(store: object, settings: object) -> None:
                 )
                 sec.recipient_block_domains = set(_parse_csv(allow_inputs["recipient_block"].value))
                 sec.link_allowlist_domains = set(_parse_csv(allow_inputs["link_allow"].value))
+                mode = str(delete_inputs["mode"].value or "trash")
+                if mode not in {"off", "trash", "expunge"}:
+                    raise ValueError(f"unknown provider delete mode: {mode}")
+                sec.server_delete_mode = mode  # type: ignore[assignment]
+                sec.trash_retention_days = max(0, int(delete_inputs["days"].value or 0))
 
             # Re-assert invariants before persisting (spec §0).
             if hasattr(settings, "assert_invariants"):
