@@ -39,6 +39,7 @@ from .pages import mail as mail_page
 from .pages import models as models_page
 from .pages import references as references_page
 from .pages import settings as settings_page
+from .pages import spam as spam_page
 from .pages import templates as templates_page
 
 log = logging.getLogger(__name__)
@@ -360,6 +361,14 @@ def _register_pages(store: object, settings: object, bridge: object | None) -> N
             return
         with theme.shell("mail", "Message", bridge, store, max_width=1120):
             mail_page.render_detail(store, settings, message_id, bridge)
+
+    @ui.page("/spam")
+    def _spam(account: str = "", token: str | None = None) -> None:
+        if not _gate(token):
+            _denied()
+            return
+        with theme.shell("spam", "Spam & Deletion", bridge, store, max_width=1180):
+            spam_page.render(store, settings, account=account)
 
     @ui.page("/compose")
     def _compose(

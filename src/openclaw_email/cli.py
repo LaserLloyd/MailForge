@@ -587,3 +587,53 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+@app.command("purge-trash")
+def purge_trash(
+    yes: bool = typer.Option(
+        False, "--yes", help="Actually delete. Without it this only reports what is due."
+    ),
+    now: bool = typer.Option(
+        False,
+        "--now",
+        help="Ignore the holding period and delete EVERYTHING in Trash, not just what is due.",
+    ),
+) -> None:
+    """Permanently delete Trash whose holding period is up — locally and at the
+    mail server.
+
+    The app runs this automatically every few hours; the command exists for a
+    manual sweep and for checking what is queued. Spam and scam mail has no
+    holding period; everything else waits ``security.trash_retention_days``.
+    """
+    from .config import load_settings
+    from .db.store import open_store
+    from .mail.retention import delete_mode, purge_now, retention_days, sweep
+
+    settings = load_settings()
+    store = open_store(settings.resolved_db_path())
+    days = retention_days(settings)
+    mode = delete_mode(settings)
+    queue = store.trash_queue(retention_days=days)
+    due = store.trash_due_ids(retention_days=days)
+    typer.echo(
+        f"Trash: {len(queue)} message(s) held, {len(due)} due now "
+        f"(retention {days} days, provider delete mode '{mode}')."
+    )
+    if not yes:
+        for row in queue[:20]:
+            when = row["due_at"] or "immediately (spam/scam)"
+            typer.echo(f"  #{row['id']:>6}  due {when}  {str(row['subject'] or '')[:60]}")
+        if len(queue) > 20:
+            typer.echo(f"  … and {len(queue) - 20} more")
+        typer.secho("Dry run — pass --yes to delete.", fg="yellow")
+        raise typer.Exit(code=0)
+    if now:
+        report = purge_now(store, settings, [int(r["id"]) for r in queue])
+    else:
+        report = sweep(store, settings)
+    typer.secho(report.summary(), fg="green" if report.ok else "yellow")
+    for err in report.errors:
+        typer.secho(f"  provider error — {err}", fg="red")
+    raise typer.Exit(code=0 if report.ok else 1)

@@ -164,6 +164,10 @@ class Store:
                 "screening_reason": "TEXT",
                 "screening_source": "TEXT NOT NULL DEFAULT 'AUTO_POLICY'",
                 "trashed": "INTEGER NOT NULL DEFAULT 0",
+                "trashed_at": "TEXT",
+                "purged_at": "TEXT",
+                "server_deleted_at": "TEXT",
+                "server_delete_error": "TEXT",
             },
             "drafts": {
                 "sender_addr": "TEXT",
@@ -194,6 +198,20 @@ class Store:
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS msg_screening "
             "ON messages(screening_status, received_at DESC)"
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS msg_trash_retention "
+            "ON messages(trashed, purged_at, trashed_at)"
+        )
+        # Retention clock starts when this version first runs, never earlier.
+        # Mail deleted before the holding period existed has no trashed_at, and
+        # falling back to received_at would make anything old enough due for
+        # PERMANENT, provider-side deletion on the very first sweep — deleting
+        # it under a policy its owner never agreed to. Idempotent: after this,
+        # every trashed row has a stamp.
+        self.conn.execute(
+            "UPDATE messages SET trashed_at=? WHERE trashed=1 AND trashed_at IS NULL",
+            (_now(),),
         )
 
     # DDL used to rebuild legacy tables whose site_id CHECK constraint would
@@ -552,6 +570,9 @@ class Store:
             "WHERE 1=1"
         )
         params: list[Any] = []
+        # A purged message keeps a one-line tombstone (the spam filter learns from
+        # it) but has no content left — it must never surface in a list again.
+        sql += " AND m.purged_at IS NULL"
         if trashed_only:
             sql += " AND m.trashed=1"
         elif archived_only:
@@ -1158,10 +1179,18 @@ class Store:
             return 0
         placeholders = ",".join("?" for _ in ids)
         if trashed:
-            sql = f"UPDATE messages SET trashed=1,archived=0 WHERE id IN ({placeholders})"
-            params: tuple[Any, ...] = tuple(ids)
+            # trashed_at starts the retention clock (security.trash_retention_days);
+            # COALESCE so re-deleting an already-deleted message does not restart it.
+            sql = (
+                "UPDATE messages SET trashed=1,archived=0,trashed_at=COALESCE(trashed_at,?) "
+                f"WHERE id IN ({placeholders})"
+            )
+            params: tuple[Any, ...] = (_now(), *ids)
         else:
-            sql = f"UPDATE messages SET trashed=0 WHERE id IN ({placeholders})"
+            sql = (
+                "UPDATE messages SET trashed=0,trashed_at=NULL "
+                f"WHERE id IN ({placeholders})"
+            )
             params = tuple(ids)
         cur = self.conn.execute(sql, params)
         self.conn.commit()
@@ -1169,6 +1198,144 @@ class Store:
 
     def set_message_trashed(self, message_id: int, trashed: bool = True) -> bool:
         return self.set_messages_trashed([message_id], trashed) == 1
+
+    # ----- retention queue (local Trash -> permanent deletion) -----
+    #: Screening statuses that skip the holding period entirely — spam and scam
+    #: mail is deleted the moment the user says so, here and at the provider.
+    PURGE_IMMEDIATELY = ("SPAM", "POTENTIAL_SPAM", "POTENTIAL_ISSUE")
+
+    def trash_queue(self, *, retention_days: int = 60) -> list[sqlite3.Row]:
+        """Everything waiting in local Trash, with its scheduled deletion date.
+
+        ``due_at`` is NULL for spam/scam mail (deleted on the next sweep, no
+        holding period) and ``trashed_at + retention_days`` for everything else.
+        Rows already purged are excluded — there is nothing left to delete.
+        """
+        days = max(0, int(retention_days))
+        placeholders = ",".join("?" for _ in self.PURGE_IMMEDIATELY)
+        return self.conn.execute(
+            "SELECT m.id, m.from_addr, m.subject, m.received_at, m.trashed_at, "
+            "m.screening_status, m.server_deleted_at, m.server_delete_error, "
+            "a.name AS account_name, "
+            f"CASE WHEN m.screening_status IN ({placeholders}) THEN NULL "
+            "ELSE datetime(COALESCE(m.trashed_at, m.received_at), ?) END AS due_at "
+            "FROM messages m LEFT JOIN accounts a ON a.id=m.account_id "
+            "WHERE m.trashed=1 AND m.purged_at IS NULL "
+            "ORDER BY datetime(COALESCE(m.trashed_at, m.received_at)) ASC",
+            (*self.PURGE_IMMEDIATELY, f"+{days} days"),
+        ).fetchall()
+
+    def trash_due_ids(self, *, retention_days: int = 60) -> list[int]:
+        """Ids the retention sweep should permanently delete right now."""
+        days = max(0, int(retention_days))
+        placeholders = ",".join("?" for _ in self.PURGE_IMMEDIATELY)
+        rows = self.conn.execute(
+            "SELECT id FROM messages WHERE trashed=1 AND purged_at IS NULL AND ("
+            f"screening_status IN ({placeholders}) "
+            "OR datetime(COALESCE(trashed_at, received_at), ?) <= datetime('now')"
+            ") ORDER BY id",
+            (*self.PURGE_IMMEDIATELY, f"+{days} days"),
+        ).fetchall()
+        return [int(r["id"]) for r in rows]
+
+    def attachment_paths(self, message_ids: Iterable[int]) -> list[str]:
+        ids = self._message_ids(message_ids)
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        rows = self.conn.execute(
+            f"SELECT stored_path FROM attachments WHERE message_id IN ({placeholders}) "
+            "AND stored_path IS NOT NULL",
+            tuple(ids),
+        ).fetchall()
+        return [str(r["stored_path"]) for r in rows if r["stored_path"]]
+
+    def purge_messages(self, message_ids: Iterable[int]) -> int:
+        """Shred message content locally, keeping a one-line tombstone.
+
+        The row itself survives on purpose. ``message_screening_feedback``
+        cascades on delete, so dropping the row would erase the very rule the
+        user taught by marking the message as spam — and ``drafts`` /
+        ``classifications`` reference it without a cascade, so a hard DELETE
+        would fail outright once a draft existed. What is destroyed is
+        everything that carries content: body, HTML, recipients, links, and the
+        attachment rows (their files are removed by the caller, which knows the
+        paths from :meth:`attachment_paths`).
+        """
+        ids = self._message_ids(message_ids)
+        if not ids:
+            return 0
+        placeholders = ",".join("?" for _ in ids)
+        try:
+            self.conn.execute(
+                f"DELETE FROM message_links WHERE message_id IN ({placeholders})", tuple(ids)
+            )
+            self.conn.execute(
+                f"DELETE FROM attachments WHERE message_id IN ({placeholders})", tuple(ids)
+            )
+            cur = self.conn.execute(
+                "UPDATE messages SET purged_at=?,trashed=1,raw_html=NULL,sanitized_text=NULL,"
+                "to_addrs=NULL,cc_addrs=NULL,has_attachments=0,link_count=0 "
+                f"WHERE id IN ({placeholders}) AND purged_at IS NULL",
+                (_now(), *ids),
+            )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return int(cur.rowcount)
+
+    # ----- provider-side delete bookkeeping -----
+    def server_locators(self, message_ids: Iterable[int]) -> list[sqlite3.Row]:
+        """(message id, account name, folder, uid) for messages still on a server.
+
+        Rows already expunged (``server_deleted_at`` set) are omitted so a
+        repeated delete is a no-op rather than a second round-trip, and rows
+        with no UID (hand-inserted/demo mail) can never be targeted.
+        """
+        ids = self._message_ids(message_ids)
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        return self.conn.execute(
+            "SELECT m.id AS message_id, m.folder, m.uid, a.name AS account_name "
+            f"FROM messages m JOIN accounts a ON a.id=m.account_id WHERE m.id IN ({placeholders}) "
+            "AND m.uid IS NOT NULL AND m.server_deleted_at IS NULL",
+            tuple(ids),
+        ).fetchall()
+
+    def record_server_delete(
+        self,
+        message_ids: Iterable[int],
+        *,
+        error: str | None = None,
+    ) -> int:
+        """Record the outcome of a provider-side delete.
+
+        Success stamps ``server_deleted_at`` and clears any earlier error;
+        failure records the error and leaves ``server_deleted_at`` NULL, so the
+        message is still listed as present at the provider and a later retry
+        picks it up again.
+        """
+        ids = self._message_ids(message_ids)
+        if not ids:
+            return 0
+        placeholders = ",".join("?" for _ in ids)
+        if error is None:
+            sql = (
+                "UPDATE messages SET server_deleted_at=?,server_delete_error=NULL "
+                f"WHERE id IN ({placeholders})"
+            )
+            params: tuple[Any, ...] = (_now(), *ids)
+        else:
+            sql = (
+                "UPDATE messages SET server_delete_error=? "
+                f"WHERE id IN ({placeholders})"
+            )
+            params = (str(error)[:500], *ids)
+        cur = self.conn.execute(sql, params)
+        self.conn.commit()
+        return int(cur.rowcount)
 
     # ----- message links (controller-side, LLM never sees) -----
     def add_links(self, message_id: int, links: Iterable[tuple[str, str, str]]) -> None:

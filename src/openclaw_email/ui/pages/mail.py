@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from collections.abc import Callable
@@ -177,6 +178,40 @@ class RangeSelection:
     @property
     def all_selected(self) -> bool:
         return bool(self.visible_ids) and len(self.ids) == len(self.visible_ids)
+
+
+def _notify_then_navigate(notice: str, url: str, *, kind: str = "positive") -> None:
+    """Show a result message, then reload the list a moment later.
+
+    ``ui.navigate`` tears the page down, taking any toast with it — so a notify
+    immediately followed by a navigate is a message nobody ever reads. Deleting
+    now explains a retention policy the user has to know about, so the reload
+    waits for the toast to land.
+    """
+    ui.notify(notice, type=kind, timeout=7000)
+    ui.timer(2.6, lambda: ui.navigate.to(url), once=True)
+
+
+def _delete_notice(settings: object, changed: int) -> str:
+    """What a delete actually did, in the user's terms.
+
+    Deleting is a two-stage policy (see :mod:`mail.retention`): the message goes
+    to the local holding box now and is destroyed — here and at the provider —
+    once its retention period is up. Saying only "moved to Trash" would understate
+    it; saying "deleted" would overstate it.
+    """
+    from ...mail.retention import delete_mode, retention_days
+
+    days = retention_days(settings)
+    tail = {
+        "trash": "moved to your provider's Trash folder",
+        "expunge": "removed from the mail server too",
+        "off": "left untouched on the mail server (provider deletion is off)",
+    }[delete_mode(settings)]
+    return (
+        f"Deleted {changed} message(s). They are held for {days} days — restore them from "
+        f"Trash before then — after which they are erased here and {tail}."
+    )
 
 
 def _account_options(settings: object) -> list[str]:
@@ -464,12 +499,7 @@ def _message_reader(
     def _trash() -> None:
         try:
             store.set_message_trashed(message_id, True)  # type: ignore[attr-defined]
-            ui.notify(
-                "Message moved to local Trash. The provider mailbox was not changed.",
-                type="positive",
-                timeout=6000,
-            )
-            ui.navigate.to(back_url)
+            _notify_then_navigate(_delete_notice(settings, 1), back_url)
         except Exception as e:  # noqa: BLE001
             ui.notify(f"Could not move message to Trash: {e}", type="negative")
 
@@ -812,12 +842,15 @@ def render(
         filters["page"] = str(page)
     site_labels = {sid: site.name for sid, site in (getattr(settings, "sites", None) or {}).items()}
 
-    def _go(**changes: str) -> None:
+    def _current_url(**changes: str) -> str:
         current = dict(filters)
         if any(k != "page" for k in changes):
             current.pop("page", None)  # a new view starts at its first page
         current.update(changes)
-        ui.navigate.to("/mail?" + urlencode({k: v for k, v in current.items() if v}))
+        return "/mail?" + urlencode({k: v for k, v in current.items() if v})
+
+    def _go(**changes: str) -> None:
+        ui.navigate.to(_current_url(**changes))
 
     def _choose_filter(value: str) -> None:
         if value.startswith("tag:"):
@@ -893,9 +926,26 @@ def render(
             "content-related or spam."
         ).style("font-size: 12px; color: var(--text-secondary)")
     elif filter == "trash":
-        ui.label(
-            "Trash is local and reversible. These messages remain unchanged at the provider."
-        ).style("font-size: 12px; color: var(--text-secondary)")
+        from ...mail.retention import delete_mode, retention_days
+
+        days = retention_days(settings)
+        where = {
+            "trash": "and moved to your provider's Trash folder",
+            "expunge": "and removed from the mail server",
+            "off": "(the mail server keeps its copy — provider deletion is off)",
+        }[delete_mode(settings)]
+        with ui.row().classes("w-full items-center").style("gap: 8px"):
+            ui.label(
+                f"Deleted mail waits here for {days} days, then is erased here "
+                f"{where}. Spam and scam mail is not held — it goes on the next sweep. "
+                "Restore anything you want to keep."
+            ).style("font-size: 12px; color: var(--text-secondary)")
+            ui.space()
+            ui.button(
+                "Deletion queue",
+                icon="schedule",
+                on_click=lambda: ui.navigate.to("/spam"),
+            ).props("flat dense no-caps color=primary")
 
     visible_ids = [int(_value(row, "id")) for row in rows]
     selection = RangeSelection(visible_ids)
@@ -1011,10 +1061,7 @@ def render(
                 notice = f"Archived {changed} message(s)."
             elif action == "trash":
                 changed = store.set_messages_trashed(message_ids, True)  # type: ignore[attr-defined]
-                notice = (
-                    f"Moved {changed} message(s) to local Trash. "
-                    "The provider mailbox was not changed."
-                )
+                notice = _delete_notice(settings, changed)
             elif action == "restore":
                 if filter == "trash":
                     changed = store.set_messages_trashed(message_ids, False)  # type: ignore[attr-defined]
@@ -1024,10 +1071,61 @@ def render(
             else:
                 raise ValueError(f"unsupported bulk action: {action}")
             _audit_bulk(action, message_ids, changed)
-            ui.notify(notice, type="positive", timeout=6500)
-            _go()
+            _notify_then_navigate(notice, _current_url())
         except Exception as e:  # noqa: BLE001
             ui.notify(f"Bulk action failed: {e}", type="negative")
+
+    async def _purge_selected() -> None:
+        """Skip the holding period for the selected Trash messages.
+
+        Irreversible, and it reaches the provider, so it asks first — the rest of
+        the bulk actions are all undoable and deliberately do not.
+        """
+        from ...mail.retention import purge_now
+
+        message_ids = selection.ids
+        if not message_ids:
+            return
+        with ui.dialog() as confirm, ui.card().classes("oce-card").style(
+            "width: min(500px, 94vw); padding: 18px; gap: 8px"
+        ):
+            ui.label("Delete permanently?").style("font-size: 17px; font-weight: 800")
+            ui.label(
+                f"{len(message_ids)} message(s) will be deleted from this app and from "
+                "the mail server, without waiting out the holding period. "
+                "This cannot be undone."
+            ).style("font-size: 12.5px; color: var(--text-secondary)")
+            with ui.row().classes("w-full justify-end oce-toolbar"):
+                ui.button("Cancel", on_click=lambda: confirm.submit(False)).props("flat no-caps")
+                ui.button("Delete permanently", icon="delete_forever",
+                          on_click=lambda: confirm.submit(True)).props(
+                    "unelevated no-caps color=negative"
+                )
+        if not await confirm:
+            return
+        progress = ui.notification(
+            f"Deleting {len(message_ids)} message(s) — contacting the mail server…",
+            spinner=True,
+            timeout=None,
+        )
+        try:
+            report = await asyncio.to_thread(purge_now, store, settings, message_ids)
+        except Exception as e:  # noqa: BLE001
+            ui.notify(f"Delete failed: {e}", type="negative")
+            return
+        finally:
+            try:
+                progress.dismiss()
+            except Exception:  # noqa: BLE001
+                pass
+        _audit_bulk("purge_now", message_ids, report.purged)
+        for err in report.errors:
+            ui.notify(f"The mail server refused the delete — {err}", type="negative", timeout=9000)
+        _notify_then_navigate(
+            report.summary(),
+            _current_url(),
+            kind="positive" if report.ok else "warning",
+        )
 
     with (
         ui.row()
@@ -1057,6 +1155,12 @@ def render(
                 ui.button("Restore", icon="restore", on_click=lambda: _apply_bulk("restore")).props(
                     "flat dense no-caps color=primary"
                 )
+            )
+        if filter == "trash":
+            bulk_buttons.append(
+                ui.button(
+                    "Delete permanently", icon="delete_forever", on_click=_purge_selected
+                ).props("flat dense no-caps color=negative")
             )
         if filter != "trash":
             if filter != "archived":

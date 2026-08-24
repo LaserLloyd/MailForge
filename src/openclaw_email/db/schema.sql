@@ -24,8 +24,14 @@ CREATE TABLE IF NOT EXISTS messages (
   subject TEXT, received_at TEXT, raw_html BLOB, sanitized_text TEXT,
   has_attachments INTEGER, link_count INTEGER,
   seen INTEGER DEFAULT 0, archived INTEGER DEFAULT 0,
-  -- Local, reversible trash. Provider mail is never deleted by a UI action.
+  -- Local, reversible trash. Whether the provider copy is also removed is
+  -- decided by security.server_delete_mode; the two columns below record what
+  -- actually happened at the server so the UI never claims more than it did.
   trashed INTEGER NOT NULL DEFAULT 0,
+  trashed_at TEXT,                    -- starts the retention clock
+  purged_at TEXT,                     -- content shredded + removed at the provider
+  server_deleted_at TEXT,
+  server_delete_error TEXT,
   -- Quarantine (prompt-injection containment): 1 => no LLM may read this
   -- message and the OpenClaw bridge returns metadata only, until a human
   -- releases it in the UI.

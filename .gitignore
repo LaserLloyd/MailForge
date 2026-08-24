@@ -12,6 +12,10 @@ wheels/
 # NiceGUI runtime storage
 .nicegui/
 
+# Screenshot runs (scripts/demo_screenshots.py, ad-hoc Playwright drives) default
+# to the working directory; keep the results out of the repo root.
+/*.png
+
 # Backups, local artifacts
 *.bak
 *.bak-*
