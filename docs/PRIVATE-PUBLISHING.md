@@ -65,3 +65,21 @@ Rules for keeping it useful:
 
 ---
 
+---
+
+## Release checklist
+
+1. `uv run ruff check src tests scripts` — clean.
+2. `uv run --extra dev pytest -q` — green.
+3. `uv run python scripts/scrub_check.py --self-test` and then over
+   `src tests docs scripts installer packaging README.md pyproject.toml` —
+   clean.
+4. Bump `version` in `pyproject.toml`, add a `CHANGELOG.md` entry (what changed,
+   and anything an existing install must do).
+5. `uv run python scripts/publish_public.py` (dry run) — check the file list.
+6. `uv run python scripts/publish_public.py --go` — note the printed sha256.
+7. Skim `<out>/PUBLISH-REPORT.md` and the produced `README.md` as a stranger
+   would read it.
+8. Unpack the zip somewhere clean and run `uv run openclaw-email demo` from it.
+9. Publish the archive, and record the version + sha256 wherever it is offered
+   for download.
