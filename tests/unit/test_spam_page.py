@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from openclaw_email.config import IMAPAccount, SecuritySettings, Settings
+from openclaw_email.config import SecuritySettings, Settings
 from openclaw_email.db.store import open_store
 from openclaw_email.ui import theme
 from openclaw_email.ui.pages import spam
