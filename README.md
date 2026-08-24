@@ -43,7 +43,14 @@ bypassed, the worst case stays bounded — the only thing the model can do is
   provider's known site directly.
 - **Spam learning is narrow and reversible.** "Spam & learn" applies to an exact
   sender or a stable multi-word subject pattern only. It never blocks a whole
-  public domain and never deletes or moves mail on the server.
+  public domain, and labelling a message never deletes it — deleting is always a
+  separate, deliberate action.
+- **Deleting is two-stage, and you decide how far it goes.** Deleting puts a
+  message in a local holding box. Spam and scam mail is then removed
+  immediately; everything else is kept for `trash_retention_days` (60) so you
+  can restore it, and only then destroyed. Whether the provider's copy goes too
+  is yours to set: `server_delete_mode` is `trash` (server-side move into the
+  account's Trash folder, recoverable there), `expunge`, or `off`.
 - **Recipients are bound, not invented.** A draft can only go to someone already
   in the thread, in your contacts, or on the auto-built allowlist.
 - **Secrets never hit disk in plaintext.** Credentials live in your OS keyring.
@@ -133,6 +140,7 @@ uv run ruff check src tests scripts   # lint
 | `openclaw-email ingest` | Embed your style guides / context docs for retrieval |
 | `openclaw-email references-refresh` | Rebuild the managed per-site knowledge handbooks |
 | `openclaw-email bridge <action> --site <id>` | Site-bound JSON stdin/stdout bridge for a local agent |
+| `openclaw-email purge-trash` | Report the deletion queue; `--yes` runs the sweep now |
 | `openclaw-email audit-verify` | Verify the audit hash chain is intact |
 | `openclaw-email service install\|start\|stop\|desktop` | Manage the background service / launcher |
 | `openclaw-email redteam` | Run offline red-team suites (garak / promptfoo) |
@@ -190,11 +198,19 @@ component conventions live in **`docs/STYLE-GUIDE.md`**):
   exactly.
 - **Mail + Compose** — a normal mail view with triage tabs, account filtering, a
   reading pane with Formatted (Markdown) / Plain text toggle, multi-select bulk
-  Read / Unread / Archive / Delete / Restore (Delete is a reversible *local*
-  trash — the server mailbox is never changed), an attachments card
+  Read / Unread / Archive / Delete / Restore (Delete is reversible until its
+  retention period is up — see **Spam** below), an attachments card
   (download-only, never read by any AI), replies, persistent manual drafts,
   explicit send confirmation, and sent history. Replies always go out through
   the mailbox that received the original.
+- **Spam** — everything the screener held back from the AI, in three boxes
+  ordered by how likely a message is to be a scam (*Potential spam* → *Likely
+  scam or phishing* → *Confirmed spam*), plus the **Scheduled for deletion**
+  queue with a countdown per message. Select-all, shift-click ranges, an inline
+  preview on row click, and bulk *Mark as spam & learn* / *Not spam* / *Delete*.
+  A delete here skips the holding period and, unless `server_delete_mode` is
+  `off`, removes the provider's copy too; if the mail server refuses or cannot
+  be reached, the page says so and the next sweep retries.
 - **AI response workshop** — a right-side chat drawer: ask for a first response,
   give feedback ("shorter", "warmer"), review revisions, apply one explicitly.
   Applying never sends, and the applied text is re-checked by the guardrails.
@@ -279,6 +295,10 @@ link_allowlist_domains = []
 approvals_per_hour = 60
 attachment_max_bytes = 15728640
 attachment_max_count = 25
+server_delete_mode = "trash"     # trash | expunge | off — what a delete does
+                                 # to the copy on the mail server
+trash_retention_days = 60        # how long deleted mail is kept before it is
+                                 # destroyed (spam/scam is never held)
 
 [style]
 style_guide_paths = []           # documents embedded by `openclaw-email ingest`
