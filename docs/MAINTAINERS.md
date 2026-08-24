@@ -71,8 +71,7 @@ Notes:
 
 ```bash
 uv run --extra dev pytest -q            # full suite
-uv run --extra dev pytest -q tests/unit/test_scrub_check.py
-uv run ruff check src tests scripts
+uv run ruff check .                     # exactly what CI runs
 ```
 
 `tests/conftest.py` points `OPENCLAW_EMAIL_HOME` at a temporary directory before
@@ -87,19 +86,9 @@ never reaching a model or the bridge.
 
 ---
 
-## Release checklist
+## Releasing
 
-1. `uv run ruff check src tests scripts` — clean.
-2. `uv run --extra dev pytest -q` — green.
-3. `python3 scripts/scrub_check.py --self-test` and then over
-   `src tests docs scripts installer packaging README.md pyproject.toml` —
-   clean.
-4. Bump `version` in `pyproject.toml`, add a `CHANGELOG.md` entry (what changed,
-   and anything an existing install must do).
-5. `python3 scripts/publish_public.py` (dry run) — check the file list.
-6. `python3 scripts/publish_public.py --go` — note the printed sha256.
-7. Skim `<out>/PUBLISH-REPORT.md` and the produced `README.md` as a stranger
-   would read it.
-8. Unpack the zip somewhere clean and run `uv run openclaw-email demo` from it.
-9. Publish the archive, and record the version + sha256 wherever it is offered
-   for download.
+Bump `version` in `pyproject.toml`, add a `CHANGELOG.md` entry saying what
+changed and anything an existing install must do, and check the suite and lint
+are green. The build and publishing steps that produce a release from this
+repository are maintainer-private and are not part of this distribution.
