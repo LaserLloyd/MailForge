@@ -6,14 +6,14 @@ import hashlib
 
 import pytest
 
-from emailforge.bridge_cli import (
+from siftforge.bridge_cli import (
     BridgeInputError,
     _daily_brief,
     _do_agent_send,
     _prepare_send,
 )
-from emailforge.config import Settings
-from emailforge.db.store import open_store, register_sites
+from siftforge.config import Settings
+from siftforge.db.store import open_store, register_sites
 
 
 @pytest.fixture(autouse=True)
@@ -69,7 +69,7 @@ def test_prepare_send_issues_single_use_token(tmp_path):
         assert out["from"] == "sales@example.test"
         assert out["send_token"]
         assert "explicit yes" in out["confirm_instructions"].lower()
-        from emailforge.bridge_cli import content_digest
+        from siftforge.bridge_cli import content_digest
 
         subject = store.get_draft(did)["subject"]
         body_sha = content_digest(subject, out["body"])
@@ -127,7 +127,7 @@ def test_send_happy_path_uses_token_once(tmp_path, monkeypatch):
     def _fake_send_email(**kwargs):
         sent.update(kwargs)
 
-    import emailforge.mail.smtp_sender as smtp_sender
+    import siftforge.mail.smtp_sender as smtp_sender
 
     monkeypatch.setattr(smtp_sender, "send_email", _fake_send_email)
 
@@ -135,7 +135,7 @@ def test_send_happy_path_uses_token_once(tmp_path, monkeypatch):
         def get_secret_value(self):
             return "pw"
 
-    import emailforge.secrets as secret_store
+    import siftforge.secrets as secret_store
 
     monkeypatch.setattr(secret_store, "get_smtp_secret", lambda addr: _Secret())
 

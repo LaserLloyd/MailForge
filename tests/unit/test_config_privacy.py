@@ -3,8 +3,8 @@ from __future__ import annotations
 import os
 import stat
 
-from emailforge import __version__
-from emailforge.config import Settings
+from siftforge import __version__
+from siftforge.config import Settings
 
 
 def test_version_matches_package_metadata():

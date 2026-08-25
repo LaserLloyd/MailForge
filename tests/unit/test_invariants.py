@@ -11,12 +11,12 @@ from pathlib import Path
 
 import pytest
 
-from emailforge.agent.tools import ALLOWED_TOOLS, FORBIDDEN_TOOLS, assert_tool_allowed
-from emailforge.audit.log import AuditLog, verify_chain
-from emailforge.config import IMAPAccount, Settings, SMTPAccount
-from emailforge.db.store import open_store
-from emailforge.mail.normalize import normalize_email
-from emailforge.security import run_output_guardrails
+from siftforge.agent.tools import ALLOWED_TOOLS, FORBIDDEN_TOOLS, assert_tool_allowed
+from siftforge.audit.log import AuditLog, verify_chain
+from siftforge.config import IMAPAccount, Settings, SMTPAccount
+from siftforge.db.store import open_store
+from siftforge.mail.normalize import normalize_email
+from siftforge.security import run_output_guardrails
 
 
 def _settings() -> Settings:

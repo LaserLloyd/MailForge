@@ -1,7 +1,7 @@
-"""Capture the documentation screenshots from a running ``emailforge demo``.
+"""Capture the documentation screenshots from a running ``siftforge demo``.
 
 Usage:
-    emailforge demo --no-browser --port 8899      # in another terminal
+    siftforge demo --no-browser --port 8899      # in another terminal
     uv run --with playwright python scripts/demo_screenshots.py \
         "http://127.0.0.1:8899/?token=..." out_dir
 

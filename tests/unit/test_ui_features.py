@@ -8,12 +8,12 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-from emailforge.config import IMAPAccount, Settings, SMTPAccount
-from emailforge.db.store import open_store
-from emailforge.mail.markdown import markdown_to_safe_html
-from emailforge.mail.smtp_sender import _build_message
-from emailforge.ui.interrupt import ApprovalRecord
-from emailforge.ui.pages import assistant, compose, detail, mail, models, references
+from siftforge.config import IMAPAccount, Settings, SMTPAccount
+from siftforge.db.store import open_store
+from siftforge.mail.markdown import markdown_to_safe_html
+from siftforge.mail.smtp_sender import _build_message
+from siftforge.ui.interrupt import ApprovalRecord
+from siftforge.ui.pages import assistant, compose, detail, mail, models, references
 
 
 def test_models_page_defers_remote_inventory_loading():

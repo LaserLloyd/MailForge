@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-from emailforge.mail import imap_listener
-from emailforge.mail.imap_listener import IMAPListener, _received_at
+from siftforge.mail import imap_listener
+from siftforge.mail.imap_listener import IMAPListener, _received_at
 
 
 class _CursorStore:
@@ -106,7 +106,7 @@ def test_received_at_normalises_to_utc_and_rejects_1900():
 
 
 def test_duplicate_that_never_reached_triage_is_requeued(tmp_path):
-    from emailforge.db.store import open_store
+    from siftforge.db.store import open_store
 
     store = open_store(tmp_path / "d.db")
     acct = store.upsert_account("t", "imap", "h", 993, "u@x", "main")
