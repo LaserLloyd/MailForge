@@ -26,3 +26,8 @@ wheels/
 .pytest_cache/
 .ruff_cache/
 *.log
+
+# This fork's private identifiers for scripts/scrub_check.py. Publishing the
+# list of words that must never be published is its own leak — the rules IN
+# the repo are generic shapes; the literals live here and never ship.
+scripts/scrub-rules.local.txt
