@@ -10,8 +10,8 @@ There is a single repository. Anything specific to a particular deployment —
 site ids, brand names, drafting guidance, mailbox hosts, knowledge sources —
 lives in **configuration**, never in code:
 
-* `~/.config/emailforge/config.toml` (`%APPDATA%\emailforge\` on
-  Windows), or `<EMAILFORGE_HOME>/config/config.toml`;
+* `~/.config/siftforge/config.toml` (`%APPDATA%\siftforge\` on
+  Windows), or `<SIFTFORGE_HOME>/config/config.toml`;
 * documents referenced from that file (knowledge roots, policy files, style
   guides).
 
@@ -50,7 +50,7 @@ screening_mode = "standard"        # or "content_only"
 triage_guidance = ""
 ```
 
-Then point a mailbox at it (`emailforge account-add --site studio …`) and
+Then point a mailbox at it (`siftforge account-add --site studio …`) and
 restart the service so the listener starts. On first start the store registers
 the configured ids; a legacy database whose `site_id` CHECK constraint predates
 the registry is rebuilt lazily to accept them.
@@ -74,7 +74,7 @@ uv run --extra dev pytest -q            # full suite
 uv run ruff check .                     # exactly what CI runs
 ```
 
-`tests/conftest.py` points `EMAILFORGE_HOME` at a temporary directory before
+`tests/conftest.py` points `SIFTFORGE_HOME` at a temporary directory before
 the package is imported, so the suite can never read or write a real
 configuration, and registers the example sites `main` + `shop` per test
 (restoring the previous registry afterwards).
