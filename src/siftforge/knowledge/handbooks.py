@@ -354,7 +354,12 @@ def _atomic_private_write(path: Path, content: str) -> Path:
     fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     temporary = Path(temporary_name)
     try:
-        os.fchmod(fd, 0o600)
+        # os.fchmod is Unix-only; Windows has no descriptor-based chmod (and no
+        # owner/group/other bits at all), so fall back to a path chmod there.
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, 0o600)
+        else:  # pragma: no cover - Windows
+            os.chmod(temporary, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
             stream.write(content)
             stream.flush()
