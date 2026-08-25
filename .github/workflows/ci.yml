@@ -6,6 +6,54 @@ on:
   pull_request:
 
 jobs:
+  privacy:
+    # Blocking, and deliberately first: everything else is a quality question,
+    # this one is a "did private data leave the machine" question.
+    #
+    # CI never has scripts/scrub-rules.local.txt — that file is git-ignored
+    # precisely because publishing the list of words that must never be
+    # published is its own leak. So this job proves the GENERIC rules only
+    # (home paths, tailnet hosts, private/CGNAT IPs, real email addresses,
+    # keys and secret-shaped strings, assistant session URLs and trailers).
+    # The scanner says so on stderr rather than letting a clean run read as
+    # "no private data". The name and hostname rules run on the maintainer's
+    # clone, through the git hooks in scripts/hooks/.
+    name: no private data
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 because the commit-range step needs the PR's base
+      # commit; the default shallow clone does not contain it and the scan
+      # would fail with "unknown revision" on every pull request.
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Prove the scanner still works
+        run: python3 scripts/scrub_check.py --self-test
+
+      - name: Scan the tree
+        run: |
+          python3 scripts/scrub_check.py \
+            src tests scripts docs installer packaging .github \
+            README.md LICENSE CHANGELOG.md CONTRIBUTING.md SECURITY.md \
+            pyproject.toml
+
+      - name: Scan the TREE of every commit in the pull request
+        if: github.event_name == 'pull_request'
+        # Not just the head: a secret added in one commit and removed in the
+        # next still publishes, and a head-only scan calls that clean.
+        run: |
+          for sha in $(git rev-list --reverse \
+              "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"); do
+            python3 scripts/scrub_check.py --rev "$sha"
+          done
+
+      - name: Scan the commit messages in the pull request
+        if: github.event_name == 'pull_request'
+        run: |
+          python3 scripts/scrub_check.py --commit-range \
+            "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+
   test:
     runs-on: ${{ matrix.os }}
     strategy:
@@ -13,10 +61,10 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v10
         with:
           enable-cache: true
 
