@@ -11,15 +11,15 @@ import stat
 
 import pytest
 
-from openclaw_email.config import SiteConfig
-from openclaw_email.knowledge.handbooks import (
+from bluebox.config import SiteConfig
+from bluebox.knowledge.handbooks import (
     build_site_handbooks,
     read_site_handbook,
     sync_site_handbook_to_openclaw,
     sync_site_handbooks_to_openclaw,
     write_site_handbooks,
 )
-from openclaw_email.knowledge.sync import managed_sites
+from bluebox.knowledge.sync import managed_sites
 
 _POLICY = """# {NAME} Email Response Handbook
 

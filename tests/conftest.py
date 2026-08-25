@@ -1,7 +1,7 @@
 """Test isolation: every test runs against a throwaway application home.
 
 ``config.Settings`` binds the TOML path at import time, so the override has to
-be in place before ``openclaw_email`` is imported — a conftest at this level is
+be in place before ``bluebox`` is imported — a conftest at this level is
 the earliest hook pytest offers. Without it the suite would read (and the
 config tests could write) the machine's real config.toml.
 """
@@ -12,7 +12,7 @@ import os
 import tempfile
 
 os.environ.setdefault(
-    "OPENCLAW_EMAIL_HOME", tempfile.mkdtemp(prefix="openclaw-email-tests-")
+    "BLUEBOX_HOME", tempfile.mkdtemp(prefix="bluebox-tests-")
 )
 
 
@@ -26,7 +26,7 @@ def _registered_sites():
     ``register_sites`` installs a process-wide registry, so a test that
     configures its own sites would otherwise leak into the next one.
     """
-    from openclaw_email.db import store as store_mod
+    from bluebox.db import store as store_mod
 
     previous = store_mod.VALID_SITES
     store_mod.register_sites(["main", "shop"])

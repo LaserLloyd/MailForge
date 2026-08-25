@@ -1,8 +1,8 @@
-# OpenClaw Email Agent — UI Style Guide
+# BlueBox — UI Style Guide
 
-Canonical style guide for the NiceGUI frontend in `src/openclaw_email/ui/`.
+Canonical style guide for the NiceGUI frontend in `src/bluebox/ui/`.
 The single source of truth for tokens and CSS is
-`src/openclaw_email/ui/theme.py` — this document explains how to use it.
+`src/bluebox/ui/theme.py` — this document explains how to use it.
 If code and this guide disagree, fix whichever one is wrong.
 
 ---
@@ -21,7 +21,7 @@ If code and this guide disagree, fix whichever one is wrong.
 - **One accent color.** `--accent` (`#6366f1`, indigo) is the only brand
   hue. Green/red/amber/cyan are reserved for state only — never
   decorative. Reuse `--accent` for new features instead of adding a color.
-- **Flat cards, 1px borders.** `.oce-card` uses `box-shadow: none`; depth
+- **Flat cards, 1px borders.** `.bb-card` uses `box-shadow: none`; depth
   comes from a 1px `var(--border)` line plus `var(--bg-tertiary)` on
   `var(--bg-primary)`, not shadows or gradients.
 - **Security states are always visually loud.** Quarantine and
@@ -46,7 +46,7 @@ color.
 |---|---|---|
 | `--bg-primary` | `#0b1121` | Page/body background, full-window reader background. |
 | `--bg-secondary` | `#101830` | Header, sidebar drawer, AI drawer, reader sticky header. |
-| `--bg-tertiary` | `#16203f` | Cards (`.oce-card`), rows (`.oce-row`), stat chips. Same value as `--bot-bubble`. |
+| `--bg-tertiary` | `#16203f` | Cards (`.bb-card`), rows (`.bb-row`), stat chips. Same value as `--bot-bubble`. |
 | `--bg-hover` | `#1d2a52` | Hover state for nav buttons/rows; badge default background. |
 | `--bg-input` | `#131c38` | Quasar outlined-field background. |
 | `--text-primary` | `#e7ecf8` | Body copy. |
@@ -62,12 +62,12 @@ color.
 | `--success` | `#34d399` | SENT/APPROVED, "known recipient", Quasar `positive`. |
 | `--error` | `#f87171` | BLOCKED/REJECTED, quarantine, "NEW EXTERNAL", Quasar `negative`. |
 | `--warning` | `#fbbf24` | DEFERRED, mid-risk injection score, Quasar `warning`. |
-| `--info` | `#22d3ee` | Wired to Quasar `info`; no `.oce-*` consumer yet — available for a future info-only badge. |
+| `--info` | `#22d3ee` | Wired to Quasar `info`; no `.bb-*` consumer yet — available for a future info-only badge. |
 | `--radius-sm` | `6px` | Reserved — no current consumer. |
 | `--radius-md` | `12px` | Standard radius: cards, rows, buttons, inputs, bubbles, expansions. |
 | `--radius-lg` | `16px` | Reserved — no current consumer. |
 | `--font-sans` | `'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif` | All UI chrome and body text. |
-| `--font-mono` | `'JetBrains Mono', 'Fira Code', ui-monospace, monospace` | Code blocks, `.oce-mono`, `<code>`/`<pre>`. |
+| `--font-mono` | `'JetBrains Mono', 'Fira Code', ui-monospace, monospace` | Code blocks, `.bb-mono`, `<code>`/`<pre>`. |
 
 ---
 
@@ -75,7 +75,7 @@ color.
 
 Two stacks, no others: `var(--font-sans)` (Inter) for chrome/prose,
 `var(--font-mono)` (JetBrains Mono) for anything that reads as *data* —
-guardrail-flag JSON, provenance/thread rows (`.oce-mono` in `detail.py`,
+guardrail-flag JSON, provenance/thread rows (`.bb-mono` in `detail.py`,
 `activity.py`), raw audit fields. There's no type-scale variable; sizes are
 inline `.style("font-size: …")` — match these rather than inventing new
 ones:
@@ -85,9 +85,9 @@ ones:
 | `18px` | `800` | Full-window reader title, and `mail.py`'s inline message-reader subject (`subject_label(..., full=True)`). |
 | `1.25rem` (20px) | `700` | Draft-detail page header subject — one step up since it's the page's single most important line. |
 | `16px`–`17px` | `700`–`800` | Dashboard card-section titles ("Needs a reply", etc.), empty-state headlines. |
-| `13px`–`13.5px` | `400`–`700` | Body: list-row subjects (`.oce-subject`), message body (`markdown.plain_text`), row sender names. |
+| `13px`–`13.5px` | `400`–`700` | Body: list-row subjects (`.bb-subject`), message body (`markdown.plain_text`), row sender names. |
 | `12px`–`12.5px` | `400`–`600` | Secondary descriptive text: reader notes, provenance rows, sender/time lines. |
-| `11px`–`11.5px` | `400`–`600` | Metadata: snippets, `.oce-badge` text (`11.5px`), stat-chip labels. |
+| `11px`–`11.5px` | `400`–`600` | Metadata: snippets, `.bb-badge` text (`11.5px`), stat-chip labels. |
 | `10.5px` | `400` | Smallest text in the system: row timestamps in the dense mail list. |
 
 Never go below 10.5px, and keep sub-12px sizes for timestamps/badges/
@@ -110,14 +110,14 @@ with theme.shell("mail", title="Inbox", bridge=bridge, store=store):
 It applies the palette, builds the left drawer (from the module-level `NAV`
 list), builds the header (title, the permanent approval note, a live health
 dot when `bridge` is passed), then yields a centered content column
-(`oce-main-column`) clamped to `max(760, max_width)`px with `gap: 14px`.
+(`bb-main-column`) clamped to `max(760, max_width)`px with `gap: 14px`.
 Page code only fills that column.
 
 ### Sidebar
 
 `ui.left_drawer(value=None, fixed=True).props(":breakpoint=760 :width=210")`
 — Quasar's `:breakpoint` collapses it to an overlay below 760px, toggled by
-the hamburger (`.oce-menu-btn`, hidden above 760px). Add pages to `NAV` in
+the hamburger (`.bb-menu-btn`, hidden above 760px). Add pages to `NAV` in
 `theme.py`, not by hand-building a nav button in a page file.
 
 ### Content column and card grid
@@ -127,7 +127,7 @@ the window narrows:
 
 ```python
 with ui.row().classes("w-full items-stretch").style("gap: 14px; flex-wrap: wrap"):
-    with ui.card().classes("oce-card").style("padding: 14px; flex: 1 1 400px; min-width: 0"):
+    with ui.card().classes("bb-card").style("padding: 14px; flex: 1 1 400px; min-width: 0"):
         ...
 ```
 
@@ -137,20 +137,20 @@ basis and break the wrap.
 
 ### Mail workspace (split pane)
 
-`.oce-mail-workspace` is a CSS grid (`minmax(310px, 390px) minmax(0, 1fr)`)
-holding `.oce-mail-list` (scrolling rows) and `.oce-mail-pane` (scrolling
+`.bb-mail-workspace` is a CSS grid (`minmax(310px, 390px) minmax(0, 1fr)`)
+holding `.bb-mail-list` (scrolling rows) and `.bb-mail-pane` (scrolling
 reader), each scrolling to `calc(100vh - 160px)`.
 
 ### 760px breakpoint
 
 One `@media (max-width: 760px)` block does all responsive work: the drawer
-becomes a slide-over (hamburger appears, header note hides), `.oce-toolbar`
+becomes a slide-over (hamburger appears, header note hides), `.bb-toolbar`
 rows wrap/stack, stat chips shrink their min-width. Most notably, **the mail
 workspace collapses from two panes to one**: `mail.py` adds a
 `.has-selection` class to the workspace div whenever a `message_id` is
 selected, and CSS toggles visibility —
-`.has-selection .oce-mail-list { display: none }`,
-`:not(.has-selection) .oce-mail-pane { display: none }`. No selection shows
+`.has-selection .bb-mail-list { display: none }`,
+`:not(.has-selection) .bb-mail-pane { display: none }`. No selection shows
 the list; a selection shows the reader full-width with a "Back to inbox"
 button. Follow this pattern for any new split-pane view.
 
@@ -158,45 +158,45 @@ button. Follow this pattern for any new split-pane view.
 
 ## 5. Components
 
-**`.oce-card`** — base surface (`var(--bg-tertiary)`, 1px border, 12px
+**`.bb-card`** — base surface (`var(--bg-tertiary)`, 1px border, 12px
 radius, no shadow). Use for any self-contained block.
 
 ```python
-with ui.card().classes("w-full oce-card").style("padding: 12px; gap: 6px"):
+with ui.card().classes("w-full bb-card").style("padding: 12px; gap: 6px"):
     ui.label("Attachments (2)").style("font-weight: 700")
 ```
 
-**`.oce-row`** — clickable list row (inbox rows, dashboard mini-rows). Same
+**`.bb-row`** — clickable list row (inbox rows, dashboard mini-rows). Same
 surface as a card plus pointer cursor and hover (`--bg-hover` /
-`--border-light`). Add `.oce-row--selected` for the open row (accent border
+`--border-light`). Add `.bb-row--selected` for the open row (accent border
 + tinted background). Build on `ui.element("div")`, not `ui.card()` — cards
 carry Quasar shadow/ripple assumptions that fight the flat style.
 
 ```python
-with ui.element("div").classes("oce-row w-full").on(
+with ui.element("div").classes("bb-row w-full").on(
     "click", lambda _e, i=message_id: ui.navigate.to(f"/mail?message_id={i}")
 ):
     ...
 ```
 
-**`.oce-stat`** — headline-number chip: big number (`.oce-stat-n`, 22px/700)
-over an uppercase label (`.oce-stat-l`, 11.5px). Use for a dashboard-style
+**`.bb-stat`** — headline-number chip: big number (`.bb-stat-n`, 22px/700)
+over an uppercase label (`.bb-stat-l`, 11.5px). Use for a dashboard-style
 counter. Click affordance is manual — there's no built-in link variant.
 
 ```python
-chip = ui.element("div").classes("oce-stat").style("cursor: pointer").on(
+chip = ui.element("div").classes("bb-stat").style("cursor: pointer").on(
     "click", lambda: ui.navigate.to("/mail?filter=unread")
 )
 with chip:
-    ui.label(str(unread_n)).classes("oce-stat-n").style("color: var(--accent-hover)")
-    ui.label("Unread").classes("oce-stat-l")
+    ui.label(str(unread_n)).classes("bb-stat-n").style("color: var(--accent-hover)")
+    ui.label("Unread").classes("bb-stat-l")
 ```
 
-**`.oce-badge`** (+ `theme.badge()`, `theme.state_badge()`,
+**`.bb-badge`** (+ `theme.badge()`, `theme.state_badge()`,
 `theme.risk_badge()`, `theme.quarantine_badge()`,
 `theme.screening_badge()`) — never hand-write a badge
 span. `kind` is one of `""` / `"accent"` / `"success"` / `"error"` /
-`"warning"`, each an `.oce-badge--{kind}` modifier tinting bg+border+text
+`"warning"`, each an `.bb-badge--{kind}` modifier tinting bg+border+text
 together.
 
 ```python
@@ -210,37 +210,37 @@ theme.screening_badge(status)        # content / questionable / spam state
 `risk_badge` returns `None` (renders nothing) for a missing score — no
 placeholder badge, no `if` guard needed at the call site.
 
-**`.oce-bubble`** — chat-style bubbles on the draft-detail page for the
+**`.bb-bubble`** — chat-style bubbles on the draft-detail page for the
 original-email/drafted-reply pair. `--bot` (inbound) squares the
 bottom-left corner; `--user` (outbound) squares the bottom-right and adds
 an accent border tint.
 
 ```python
-with ui.element("div").classes("oce-bubble oce-bubble--bot w-full"):
+with ui.element("div").classes("bb-bubble bb-bubble--bot w-full"):
     markdown_ui.plain_text(sanitized_body)
 ```
 
 The AI assistant drawer (`assistant.py`) uses a **separate, parallel**
-pair — `.oce-chat-message` / `--user` / `--assistant` (adds
+pair — `.bb-chat-message` / `--user` / `--assistant` (adds
 `white-space: pre-wrap` for streaming text) — for its live chat transcript
-inside `.oce-chat-scroll`. Use `.oce-bubble` for the persistent
-original/draft pair on a page; use `.oce-chat-message` only inside the AI
+inside `.bb-chat-scroll`. Use `.bb-bubble` for the persistent
+original/draft pair on a page; use `.bb-chat-message` only inside the AI
 drawer's transcript.
 
-**`.oce-sticky-actions`** — pins a page's primary action row to the
+**`.bb-sticky-actions`** — pins a page's primary action row to the
 viewport bottom with a translucent-dark backdrop (`rgba(16,24,48,.96)`) so
 scrolled content doesn't show through.
 
 ```python
-with ui.row().classes("w-full justify-end oce-toolbar oce-sticky-actions").style("gap: 10px"):
+with ui.row().classes("w-full justify-end bb-toolbar bb-sticky-actions").style("gap: 10px"):
     reject_btn = ui.button("Reject", icon="close", on_click=_reject).props("outline color=negative")
     approve_btn = ui.button("Approve & Send", icon="send", on_click=_approve_and_send).props(
         "unelevated no-caps color=positive"
     )
 ```
 
-**Health dot** — `.oce-dot`, an 11px circle in the header: gray/idle
-default, `.oce-dot--up`/`--down` (glow) once `_health_dot()`'s async probe
+**Health dot** — `.bb-dot`, an 11px circle in the header: gray/idle
+default, `.bb-dot--up`/`--down` (glow) once `_health_dot()`'s async probe
 resolves. It's private to `theme.py` — pages get it for free by passing
 `bridge`/`store` into `shell()`, never by calling `_health_dot()` directly:
 
@@ -273,11 +273,11 @@ def subject_label(subject: Any, *, full: bool = False, style: str = "") -> ui.la
 ```
 
 - **Lists** (`subject_label(subject)`, `full=False`, default) — applies
-  `.oce-subject` (`-webkit-line-clamp: 2`, `overflow: hidden`) and attaches
+  `.bb-subject` (`-webkit-line-clamp: 2`, `overflow: hidden`) and attaches
   a `ui.tooltip(text)` with the complete subject. Nothing is lost, just
   deferred to hover.
 - **Readers** (`subject_label(subject, full=True)`) — applies
-  `.oce-subject--full` (`white-space: normal`, no clamp): the subject wraps
+  `.bb-subject--full` (`white-space: normal`, no clamp): the subject wraps
   onto as many lines as it needs. Used for the full-window reader title and
   the draft-detail header.
 - **`clean_subject(subject)`** is the string-only half: unfolds header line
@@ -287,12 +287,12 @@ def subject_label(subject: Any, *, full: bool = False, style: str = "") -> ui.la
 
 | Class | Behavior | Use for |
 |---|---|---|
-| `.oce-subject` | 2-line clamp, wraps, `overflow-wrap: anywhere` | List-row subjects (paired with a tooltip via `subject_label`) |
-| `.oce-subject--full` | No clamp, wraps freely | Reader/detail-page subjects (`subject_label(..., full=True)`) |
-| `.oce-clip-1` | Single line, ellipsis | **Senders and snippets only** — from-name, body snippets, filenames, "→ recipient" lines. **Never a subject.** |
+| `.bb-subject` | 2-line clamp, wraps, `overflow-wrap: anywhere` | List-row subjects (paired with a tooltip via `subject_label`) |
+| `.bb-subject--full` | No clamp, wraps freely | Reader/detail-page subjects (`subject_label(..., full=True)`) |
+| `.bb-clip-1` | Single line, ellipsis | **Senders and snippets only** — from-name, body snippets, filenames, "→ recipient" lines. **Never a subject.** |
 
 If a tight layout tempts you to write
-`ui.label(subject).classes("oce-clip-1")` — that's the bug this section
+`ui.label(subject).classes("bb-clip-1")` — that's the bug this section
 exists to prevent. Use `theme.subject_label()` instead.
 
 ---
@@ -323,7 +323,7 @@ Always the error family, always paired with the `gpp_maybe` icon and an
 explanation — never a silent badge:
 
 ```python
-with ui.card().classes("w-full oce-card").style("padding: 12px; border-color: var(--error)"):
+with ui.card().classes("w-full bb-card").style("padding: 12px; border-color: var(--error)"):
     ui.icon("gpp_maybe", size="22px").style("color: var(--error)")
     ui.label("Quarantined — suspected prompt injection").style(
         "font-weight: 800; color: var(--error)"
@@ -400,7 +400,7 @@ security actions, the user opens the provider's known site independently.
   genuinely secondary decoration only (timestamps, muted icons, disabled
   affordances) — never the sole copy of an important fact.
 - **Tooltips carry the full content whenever something is clamped.** This
-  is load-bearing for `.oce-subject`'s 2-line clamp: `subject_label()`
+  is load-bearing for `.bb-subject`'s 2-line clamp: `subject_label()`
   always attaches a `ui.tooltip(text)` with the untruncated subject in list
   form. Give any new clamped/truncated element the same treatment —
   clamping is a layout affordance, not a way to drop information. The

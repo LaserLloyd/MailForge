@@ -11,14 +11,14 @@ from a normal project. It is not high, it is just specific.
 curl -LsSf https://astral.sh/uv/install.sh | sh    # or: winget install astral-sh.uv
 
 git clone <your fork>
-cd openclaw-email
+cd bluebox
 uv sync --extra dev
 
 uv run pytest -q          # the suite: fast, offline, no mailbox needed
 uv run ruff check .       # lint (CI runs exactly these two)
 ```
 
-Never point a work-in-progress at a real mailbox. `uv run openclaw-email demo`
+Never point a work-in-progress at a real mailbox. `uv run bluebox demo`
 builds a throwaway application home, seeds fictional mail, configures no IMAP
 account, and deletes itself on exit — develop against that.
 

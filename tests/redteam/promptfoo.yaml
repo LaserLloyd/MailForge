@@ -1,4 +1,4 @@
-# promptfoo redteam config — OpenClaw Email Agent (build spec §3 phase 10, §10).
+# promptfoo redteam config — BlueBox (build spec §3 phase 10, §10).
 #
 # Runs OFFLINE against the local agent endpoint (127.0.0.1, spec §0.7).
 # promptfoo is OPTIONAL; the redteam_runner skips with guidance when absent.
@@ -7,7 +7,7 @@
 # external action) — the exact threat class the agent is architected to bound
 # (Agents Rule of Two, spec §0). Known attacks must land BLOCKED/DEFERRED.
 
-description: OpenClaw Email Agent offline red-team
+description: BlueBox offline red-team
 
 # Target the local agent endpoint (no external providers / no network egress).
 targets:
