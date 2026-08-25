@@ -62,6 +62,9 @@ DENY_PATTERNS: tuple[str, ...] = (
     # exactly what must never ship, so neither it nor its tests nor this
     # script nor the private doc are part of the public tree.
     "scrub_check.py", "publish_public.py", "test_scrub_check.py", "PRIVATE-PUBLISHING.md",
+    # The hooks and their installer only call the scanner above, which is not
+    # shipped — publishing them would ship a gate that cannot run.
+    "hooks", "install-hooks.sh",
     "PUBLISH-REPORT.md",
     "*.db", "*.db-wal", "*.db-shm", "*.sqlite", "*.sqlite3",
     ".env", ".env.*", "*.bak", "*.bak-*", "*.orig", "*.rej", "*.log",
