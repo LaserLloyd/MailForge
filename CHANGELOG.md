@@ -21,7 +21,7 @@ Published by Laser Lloyd — https://www.laserlloyd.com
 - **Retention policy.** Spam and scam mail is deleted immediately; everything
   else you delete is held in the local Trash for `[security]
   trash_retention_days` (60) and then permanently removed, locally and at the
-  provider. A background sweep runs every six hours; `openclaw-email
+  provider. A background sweep runs every six hours; `bluebox
   purge-trash` reports the queue and (with `--yes`) runs it by hand.
 - New `messages` columns: `trashed_at`, `purged_at`, `server_deleted_at`,
   `server_delete_error`. Existing trash has its retention clock started at
@@ -45,7 +45,7 @@ Published by Laser Lloyd — https://www.laserlloyd.com
 ## 0.3.1 — 2026-08-19
 
 ### Added
-- **Demo mode** — `openclaw-email demo` builds a throwaway application home,
+- **Demo mode** — `bluebox demo` builds a throwaway application home,
   seeds ~25 fictional messages across two example sites, and opens the normal
   UI. No mailbox is configured, and your real config/database are never opened.
 - **Live sync chip + Refresh** in the UI header: per-account listener state
@@ -57,7 +57,7 @@ Published by Laser Lloyd — https://www.laserlloyd.com
 - **Public edition tooling** — `scripts/scrub_check.py` (standalone denylist
   scanner with `--self-test`) and `scripts/publish_public.py` (allowlisted sync
   → scrub gate → tests → reproducible zip + `PUBLISH-REPORT.md`).
-- `OPENCLAW_EMAIL_HOME` relocates config and data together; `run_serve()` and
+- `BLUEBOX_HOME` relocates config and data together; `run_serve()` and
   `run_ui()` accept an explicit UI port.
 - `[compose] signature` configures the name used by templates and the composer.
 

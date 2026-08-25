@@ -15,13 +15,13 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from openclaw_email.config import LLMSettings, OpenClawSettings, Settings
-from openclaw_email.llm import prompts
-from openclaw_email.llm.bridge import LMStudioBridge
+from bluebox.config import LLMSettings, OpenClawSettings, Settings
+from bluebox.llm import prompts
+from bluebox.llm.bridge import LMStudioBridge
 
 
 def test_prompt_override_prefers_user_dir_then_falls_back(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENCLAW_EMAIL_PROMPT_DIR", str(tmp_path))
+    monkeypatch.setenv("BLUEBOX_PROMPT_DIR", str(tmp_path))
     packaged = prompts.load("classify")
     assert packaged  # packaged default exists
 
@@ -38,7 +38,7 @@ def test_heavy_lift_off_by_default():
 
 
 def test_heavy_lift_on_when_configured(monkeypatch):
-    monkeypatch.setenv("OPENCLAW_EMAIL_HEAVY_KEY", "k-123")
+    monkeypatch.setenv("BLUEBOX_HEAVY_KEY", "k-123")
     s = Settings(
         openclaw=OpenClawSettings(
             heavy_lift_base_url="http://127.0.0.1:9/v1",
@@ -52,7 +52,7 @@ def test_heavy_lift_on_when_configured(monkeypatch):
 
 
 def test_heavy_disabled_flag_ignores_link(monkeypatch):
-    monkeypatch.setenv("OPENCLAW_EMAIL_HEAVY_KEY", "k-123")
+    monkeypatch.setenv("BLUEBOX_HEAVY_KEY", "k-123")
     s = Settings(
         openclaw=OpenClawSettings(
             enabled=False,
@@ -121,8 +121,8 @@ def test_launcher_key_is_stable_and_0600(tmp_path, monkeypatch):
     import os
     import stat
 
-    monkeypatch.setattr("openclaw_email.paths.data_dir", lambda: tmp_path)
-    from openclaw_email.ui import app as ui_app
+    monkeypatch.setattr("bluebox.paths.data_dir", lambda: tmp_path)
+    from bluebox.ui import app as ui_app
 
     k1 = ui_app.launcher_key()
     k2 = ui_app.launcher_key()

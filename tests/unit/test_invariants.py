@@ -11,12 +11,12 @@ from pathlib import Path
 
 import pytest
 
-from openclaw_email.agent.tools import ALLOWED_TOOLS, FORBIDDEN_TOOLS, assert_tool_allowed
-from openclaw_email.audit.log import AuditLog, verify_chain
-from openclaw_email.config import IMAPAccount, Settings, SMTPAccount
-from openclaw_email.db.store import open_store
-from openclaw_email.mail.normalize import normalize_email
-from openclaw_email.security import run_output_guardrails
+from bluebox.agent.tools import ALLOWED_TOOLS, FORBIDDEN_TOOLS, assert_tool_allowed
+from bluebox.audit.log import AuditLog, verify_chain
+from bluebox.config import IMAPAccount, Settings, SMTPAccount
+from bluebox.db.store import open_store
+from bluebox.mail.normalize import normalize_email
+from bluebox.security import run_output_guardrails
 
 
 def _settings() -> Settings:

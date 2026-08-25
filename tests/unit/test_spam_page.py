@@ -10,10 +10,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from openclaw_email.config import SecuritySettings, Settings
-from openclaw_email.db.store import open_store
-from openclaw_email.ui import theme
-from openclaw_email.ui.pages import spam
+from bluebox.config import SecuritySettings, Settings
+from bluebox.db.store import open_store
+from bluebox.ui import theme
+from bluebox.ui.pages import spam
 
 
 def _store(tmp_path):

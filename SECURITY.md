@@ -1,6 +1,6 @@
 # Security policy
 
-OpenClaw Email Agent reads a real mailbox, holds mailbox credentials in your OS
+BlueBox reads a real mailbox, holds mailbox credentials in your OS
 keyring, and lets a local language model draft replies. Its security properties
 are the product, so please report anything that weakens them.
 
@@ -46,7 +46,7 @@ bug report:
 - **Deleting is bounded.** Provider-side deletion may only ever target the
   `(folder, uid)` pairs this app recorded at ingest — never a search, never a
   whole folder. A way to make it delete anything else is in scope.
-- **The audit chain is append-only.** `openclaw-email audit-verify` must detect
+- **The audit chain is append-only.** `bluebox audit-verify` must detect
   tampering; a way to rewrite history undetected is in scope.
 
 ## What does not count

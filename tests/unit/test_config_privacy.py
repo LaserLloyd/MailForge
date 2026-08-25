@@ -3,8 +3,8 @@ from __future__ import annotations
 import os
 import stat
 
-from openclaw_email import __version__
-from openclaw_email.config import Settings
+from bluebox import __version__
+from bluebox.config import Settings
 
 
 def test_version_matches_package_metadata():

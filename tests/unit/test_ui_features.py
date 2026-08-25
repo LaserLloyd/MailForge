@@ -8,12 +8,12 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-from openclaw_email.config import IMAPAccount, Settings, SMTPAccount
-from openclaw_email.db.store import open_store
-from openclaw_email.mail.markdown import markdown_to_safe_html
-from openclaw_email.mail.smtp_sender import _build_message
-from openclaw_email.ui.interrupt import ApprovalRecord
-from openclaw_email.ui.pages import assistant, compose, detail, mail, models, references
+from bluebox.config import IMAPAccount, Settings, SMTPAccount
+from bluebox.db.store import open_store
+from bluebox.mail.markdown import markdown_to_safe_html
+from bluebox.mail.smtp_sender import _build_message
+from bluebox.ui.interrupt import ApprovalRecord
+from bluebox.ui.pages import assistant, compose, detail, mail, models, references
 
 
 def test_models_page_defers_remote_inventory_loading():

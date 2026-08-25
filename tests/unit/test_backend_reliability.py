@@ -7,14 +7,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from openclaw_email.llm import bridge as bridge_module
-from openclaw_email.llm.bridge import LMStudioBridge
+from bluebox.llm import bridge as bridge_module
+from bluebox.llm.bridge import LMStudioBridge
 
-from openclaw_email.agent import worker
-from openclaw_email.agent.graph import AgentGraph
-from openclaw_email.config import Settings
-from openclaw_email.db.store import Store, open_store
-from openclaw_email.mail.imap_listener import IMAPListener
+from bluebox.agent import worker
+from bluebox.agent.graph import AgentGraph
+from bluebox.config import Settings
+from bluebox.db.store import Store, open_store
+from bluebox.mail.imap_listener import IMAPListener
 
 
 class _CaptureBridge:
@@ -152,8 +152,8 @@ def test_embedding_failed_batch_splits_before_failing_document(monkeypatch):
 
 
 def test_cli_ingest_awaits_async_ingester(monkeypatch):
-    from openclaw_email import cli
-    from openclaw_email.rag import embedder
+    from bluebox import cli
+    from bluebox.rag import embedder
 
     called = []
 
@@ -162,7 +162,7 @@ def test_cli_ingest_awaits_async_ingester(monkeypatch):
         return 7
 
     monkeypatch.setattr(embedder, "ingest_documents", fake_ingest)
-    monkeypatch.setattr("openclaw_email.config.load_settings", lambda: object())
+    monkeypatch.setattr("bluebox.config.load_settings", lambda: object())
     cli.ingest(style=True, context=False)
     assert called == [(True, False)]
 
@@ -375,7 +375,7 @@ def test_knn_site_scope_overfetches_past_globally_closer_other_site():
 
 
 def test_reference_delete_removes_chunks_and_only_app_owned_file(tmp_path, monkeypatch):
-    from openclaw_email import paths
+    from bluebox import paths
 
     data = tmp_path / "data"
     library = data / "references" / "main"
@@ -399,8 +399,8 @@ def test_reference_delete_removes_chunks_and_only_app_owned_file(tmp_path, monke
 
 
 def test_revision_refuses_immutable_sent_draft(tmp_path):
-    from openclaw_email.agent.revisions import revise_draft
-    from openclaw_email.config import Settings
+    from bluebox.agent.revisions import revise_draft
+    from bluebox.config import Settings
 
     store = open_store(tmp_path / "immutable.db")
     message_id = _insert_message(store)
@@ -416,7 +416,7 @@ def test_revision_refuses_immutable_sent_draft(tmp_path):
 
 
 def test_bridge_rejects_unknown_site_before_opening_database(monkeypatch, capsys):
-    from openclaw_email.bridge_cli import run_bridge
+    from bluebox.bridge_cli import run_bridge
 
     monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
     assert run_bridge("status", "not-a-site") == 2
