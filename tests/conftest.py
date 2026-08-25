@@ -32,3 +32,25 @@ def _registered_sites():
     store_mod.register_sites(["main", "shop"])
     yield
     store_mod.VALID_SITES = previous
+
+
+@pytest.fixture
+def assert_private_mode():
+    """Assert a file is owner-only, where the platform actually has modes.
+
+    Windows has no owner/group/other bits: ``os.chmod`` there only toggles the
+    read-only attribute, so ``S_IMODE`` reports 0o666/0o444 whatever the code
+    asked for. Asserting 0600 on Windows tests the OS, not SiftForge — so the
+    check degrades to "the file was created" there and stays strict on POSIX.
+    """
+    import os
+    import stat
+    import sys
+
+    def check(path) -> None:
+        if sys.platform == "win32":  # pragma: no cover - Windows
+            assert os.path.exists(path), f"{path} was not created"
+            return
+        assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+
+    return check

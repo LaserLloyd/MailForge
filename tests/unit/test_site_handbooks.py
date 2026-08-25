@@ -7,7 +7,6 @@ business), so these tests describe the generic contract only.
 from __future__ import annotations
 
 import os
-import stat
 
 import pytest
 
@@ -197,7 +196,7 @@ def test_knowledge_intro_override_is_used(tmp_path):
     assert "Reference only; rules above win." in documents["full_text"]
 
 
-def test_private_atomic_write_read_and_explicit_openclaw_sync(tmp_path):
+def test_private_atomic_write_read_and_explicit_openclaw_sync(tmp_path, assert_private_mode):
     site = _llms_site(tmp_path)
     output = tmp_path / "managed"
     workspaces = tmp_path / "agent-workspaces"
@@ -206,10 +205,13 @@ def test_private_atomic_write_read_and_explicit_openclaw_sync(tmp_path):
 
     assert paths["handbook"].name == "shop-site-handbook.md"
     assert paths["full_text"].name == "shop-site-full-text.md"
-    assert stat.S_IMODE(os.stat(paths["handbook"]).st_mode) == 0o600
-    assert stat.S_IMODE(os.stat(paths["full_text"]).st_mode) == 0o600
-    assert read_site_handbook("shop", root=output) == paths["handbook"].read_text()
-    assert read_site_handbook("shop", root=output, full=True) == paths["full_text"].read_text()
+    assert_private_mode(paths["handbook"])
+    assert_private_mode(paths["full_text"])
+    assert read_site_handbook("shop", root=output) == paths["handbook"].read_text(encoding="utf-8")
+    assert (
+        read_site_handbook("shop", root=output, full=True)
+        == paths["full_text"].read_text(encoding="utf-8")
+    )
     assert not workspaces.exists()
 
     target = sync_site_handbook_to_openclaw(
@@ -217,8 +219,8 @@ def test_private_atomic_write_read_and_explicit_openclaw_sync(tmp_path):
     )
 
     assert target == workspaces / "workspace-email-shop" / "SITE-HANDBOOK.md"
-    assert target.read_text() == paths["handbook"].read_text()
-    assert stat.S_IMODE(os.stat(target).st_mode) == 0o600
+    assert target.read_text(encoding="utf-8") == paths["handbook"].read_text(encoding="utf-8")
+    assert_private_mode(target)
 
 
 def test_sync_uses_site_isolated_workspaces_and_skips_unconfigured_sites(tmp_path):
@@ -238,8 +240,8 @@ def test_sync_uses_site_isolated_workspaces_and_skips_unconfigured_sites(tmp_pat
 
     assert set(paths) == {"main", "shop"}
     assert paths["main"].parent.name == "workspace-email-main"
-    assert "Main Email Response Handbook" in paths["main"].read_text()
-    assert "Shop Email Response Handbook" in paths["shop"].read_text()
+    assert "Main Email Response Handbook" in paths["main"].read_text(encoding="utf-8")
+    assert "Shop Email Response Handbook" in paths["shop"].read_text(encoding="utf-8")
     assert managed_sites(registry) == ("main", "shop")
 
 
@@ -274,3 +276,24 @@ def test_incomplete_or_unconfigured_sources_fail_closed(tmp_path):
         )
     with pytest.raises(FileNotFoundError, match="no policy_file"):
         build_site_handbooks("shop", site=_llms_site(tmp_path, policy_file=None))
+
+
+def test_private_write_does_not_need_fchmod(tmp_path, monkeypatch, assert_private_mode):
+    """Windows has no ``os.fchmod``; the private write must not depend on it.
+
+    Deleting the attribute reproduces the Windows ``os`` module surface, so a
+    reintroduced bare ``os.fchmod(fd, ...)`` fails here on Linux.
+    """
+    monkeypatch.delattr(os, "fchmod", raising=False)
+    site = _llms_site(tmp_path)
+    output = tmp_path / "managed"
+
+    paths = write_site_handbooks("shop", root=output, site=site)
+
+    assert "Shop Email Response Handbook" in paths["handbook"].read_text(encoding="utf-8")
+    assert_private_mode(paths["handbook"])
+    # No stray ".shop-site-handbook.md.XXXX" temp files left behind.
+    assert sorted(p.name for p in output.iterdir()) == [
+        "shop-site-full-text.md",
+        "shop-site-handbook.md",
+    ]

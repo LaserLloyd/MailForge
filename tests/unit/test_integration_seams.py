@@ -117,10 +117,7 @@ def test_model_resolution_keeps_served_config(monkeypatch):
     assert rep["changed"] is False  # both already served
 
 
-def test_launcher_key_is_stable_and_0600(tmp_path, monkeypatch):
-    import os
-    import stat
-
+def test_launcher_key_is_stable_and_0600(tmp_path, monkeypatch, assert_private_mode):
     monkeypatch.setattr("siftforge.paths.data_dir", lambda: tmp_path)
     from siftforge.ui import app as ui_app
 
@@ -128,7 +125,7 @@ def test_launcher_key_is_stable_and_0600(tmp_path, monkeypatch):
     k2 = ui_app.launcher_key()
     assert k1 and k1 == k2  # reusable, stable across calls
     f = tmp_path / "ui_launcher_key"
-    assert stat.S_IMODE(os.stat(f).st_mode) == 0o600
+    assert_private_mode(f)
 
 
 def test_standalone_has_no_smtp_and_passes_invariants():

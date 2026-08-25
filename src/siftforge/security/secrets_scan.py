@@ -74,17 +74,30 @@ def scan(text: str) -> list[str]:
         log.debug("detect-secrets unavailable, using heuristic scan: %s", e)
         return _heuristic_scan(text)
     try:
+        import os
         import tempfile
 
         types: set[str] = set()
-        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=True) as fh:
-            fh.write(text)
-            fh.flush()
+        # delete=False + explicit close: Windows refuses a second open of a
+        # still-open NamedTemporaryFile, and scan_file() reopens by name.
+        # encoding is explicit because email text is not ASCII and Windows
+        # would otherwise write it as cp1252.
+        handle = tempfile.NamedTemporaryFile(
+            "w", suffix=".txt", delete=False, encoding="utf-8"
+        )
+        try:
+            with handle as fh:
+                fh.write(text)
             with default_settings():
                 coll = SecretsCollection()
-                coll.scan_file(fh.name)
+                coll.scan_file(handle.name)
                 for _file, secret in coll:
                     types.add(secret.type)
+        finally:
+            try:
+                os.unlink(handle.name)
+            except OSError:
+                pass
         # Union with heuristic so defence-in-depth never regresses.
         return sorted(types | set(_heuristic_scan(text)))
     except Exception as e:

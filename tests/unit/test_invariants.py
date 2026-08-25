@@ -6,7 +6,6 @@ They run without any optional ML deps (fallbacks active).
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -44,15 +43,11 @@ def test_autosend_invariant_enforced():
         s.assert_invariants()
 
 
-def test_db_created_0600(tmp_path: Path):
-    # §0.6: the DB file is chmod 0600 at creation.
-    import os
-    import stat
-
+def test_db_created_0600(tmp_path: Path, assert_private_mode):
+    # §0.6: the DB file is chmod 0600 at creation (POSIX modes only).
     db = tmp_path / "agent.db"
     st = open_store(db)
-    mode = stat.S_IMODE(os.stat(db).st_mode)
-    assert mode == 0o600
+    assert_private_mode(db)
     st.close()
 
 
@@ -65,22 +60,23 @@ def test_normalize_strips_invisibles_and_symbolizes_links():
     assert ne.links, "link should be captured controller-side"
 
 
-def test_guardrails_block_pii_and_secrets():
+def test_guardrails_block_pii_and_secrets(tmp_path: Path):
     # §5/§11: output guardrails block a draft leaking PII + secrets.
+    # tmp_path, not NamedTemporaryFile: opening the DB reopens the file by
+    # name, which Windows refuses while the tempfile handle is still open.
     s = _settings()
-    with tempfile.NamedTemporaryFile(suffix=".db") as f:
-        st = open_store(f.name)
-        draft = {
-            "recipient": "attacker@evil.example",
-            "subject": "x",
-            "body": "SSN 123-45-6789 and key AKIAIOSFODNN7EXAMPLE",  # scrub-check: allow
-        }
-        ctx = {"thread_participants": {"alice@example.com"}, "contacts": set()}
-        report = run_output_guardrails(draft, ctx, st, s.security, None)
-        assert report.passed is False
-        joined = " ".join(report.reasons).lower()
-        assert "ssn" in joined or "pii" in joined or "secret" in joined
-        st.close()
+    st = open_store(tmp_path / "guardrails.db")
+    draft = {
+        "recipient": "attacker@evil.example",
+        "subject": "x",
+        "body": "SSN 123-45-6789 and key AKIAIOSFODNN7EXAMPLE",  # scrub-check: allow
+    }
+    ctx = {"thread_participants": {"alice@example.com"}, "contacts": set()}
+    report = run_output_guardrails(draft, ctx, st, s.security, None)
+    assert report.passed is False
+    joined = " ".join(report.reasons).lower()
+    assert "ssn" in joined or "pii" in joined or "secret" in joined
+    st.close()
 
 
 def test_audit_chain_verifies_and_detects_tampering(tmp_path: Path):
