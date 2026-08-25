@@ -10,10 +10,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from bluebox.config import SecuritySettings, Settings
-from bluebox.db.store import open_store
-from bluebox.ui import theme
-from bluebox.ui.pages import spam
+from emailforge.config import SecuritySettings, Settings
+from emailforge.db.store import open_store
+from emailforge.ui import theme
+from emailforge.ui.pages import spam
 
 
 def _store(tmp_path):

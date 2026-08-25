@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from bluebox.security.inbound_screening import (
+from emailforge.security.inbound_screening import (
     AI_WITHHELD_STATUSES,
     _CONTENT_TOPICAL,
     assess_inbound,

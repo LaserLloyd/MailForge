@@ -3,14 +3,14 @@
 
 FOLDER-MODE only (`COLLECT`), NEVER onefile: onefile triggers AV false
 positives and has a slow cold start (spec §1/§10). The resulting folder is then
-wrapped by Inno Setup (see installer/inno/bluebox.iss), and the
+wrapped by Inno Setup (see installer/inno/emailforge.iss), and the
 distributable should be code-signed to further reduce AV false positives.
 
 Build (Windows, after `uv pip install pyinstaller`):
 
     pyinstaller packaging/pyinstaller.spec
 
-Output: dist/bluebox/  (the folder Inno Setup packages).
+Output: dist/emailforge/  (the folder Inno Setup packages).
 """
 
 import os
@@ -20,14 +20,14 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 # Repo root = parent of packaging/ (spec uses this spec file at packaging/).
 REPO = Path(os.getcwd())
-SRC = REPO / "src" / "bluebox"
+SRC = REPO / "src" / "emailforge"
 
 # Bundle non-Python package assets the runtime reads via importlib.resources:
 #  - db/schema.sql            (§7 schema)
 #  - llm/prompts/*            (versioned spotlight prompt templates)
 datas = []
-datas += [(str(SRC / "db" / "schema.sql"), "bluebox/db")]
-datas += [(str(SRC / "llm" / "prompts"), "bluebox/llm/prompts")]
+datas += [(str(SRC / "db" / "schema.sql"), "emailforge/db")]
+datas += [(str(SRC / "llm" / "prompts"), "emailforge/llm/prompts")]
 # Installer assets the service installers read at runtime (systemd template is
 # Linux-only but harmless to ship; WinSW exe/descriptor are needed on Windows).
 datas += [(str(REPO / "installer"), "installer")]
@@ -37,7 +37,7 @@ datas += collect_data_files("nicegui")
 # Hidden imports: optional/deferred modules loaded lazily. Collect the package's
 # own submodules so dynamic imports (security/*, service/*) are bundled.
 hiddenimports = []
-hiddenimports += collect_submodules("bluebox")
+hiddenimports += collect_submodules("emailforge")
 
 block_cipher = None
 
@@ -66,7 +66,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,  # FOLDER-MODE: binaries collected by COLLECT below
-    name="bluebox",
+    name="emailforge",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -84,5 +84,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name="bluebox",
+    name="emailforge",
 )

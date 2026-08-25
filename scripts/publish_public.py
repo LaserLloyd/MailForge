@@ -7,14 +7,14 @@
 Steps, in order, each of which aborts the build on failure:
 
 1. **Copy an ALLOWLIST** of paths into ``--out`` (default
-   ``~/Projects/bluebox-public``), skipping a DENY list of runtime,
+   ``~/Projects/emailforge-public``), skipping a DENY list of runtime,
    secret, and build artefacts. Nothing outside the allowlist can leak, because
    nothing outside it is ever read.
 2. **Scrub gate** — run ``scrub_check.py`` over the produced tree.
 3. **Tests** — ``uv run --extra dev pytest -q`` *inside* the produced tree, so
    the thing that ships is the thing that was tested.
 4. **Zip** — deterministic ordering, fixed timestamps, one top-level
-   ``bluebox-<version>/`` folder. Prints size + sha256.
+   ``emailforge-<version>/`` folder. Prints size + sha256.
 5. **Report** — ``<out>-PUBLISH-REPORT.md`` (beside the tree) with file count, hash, results.
 
 Every subprocess is invoked with a fixed argv list; there is no shell.
@@ -147,7 +147,7 @@ def test(out: Path) -> subprocess.CompletedProcess[str]:
 
 
 def build_zip(out: Path, files: list[Path], zip_path: Path, version: str) -> tuple[str, int]:
-    top = f"bluebox-{version}"
+    top = f"emailforge-{version}"
     zip_path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for relative in sorted(files):
@@ -168,7 +168,7 @@ def write_report(
     report.write_text(
         "\n".join(
             [
-                f"# BlueBox {version} — publish report",
+                f"# EmailForge {version} — publish report",
                 "",
                 f"- Built (UTC): {datetime.now(timezone.utc).isoformat(timespec='seconds')}",
                 f"- Files: {len(files)}",
@@ -203,7 +203,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--repo", type=Path, default=REPO_ROOT, help="Source repository.")
     parser.add_argument(
-        "--out", type=Path, default=Path.home() / "Projects" / "bluebox-public",
+        "--out", type=Path, default=Path.home() / "Projects" / "emailforge-public",
         help="Output tree (REPLACED on --go).",
     )
     parser.add_argument("--zip", dest="zip_path", type=Path, default=None, help="Archive path.")
@@ -217,11 +217,11 @@ def main(argv: list[str] | None = None) -> int:
     zip_path: Path = (
         args.zip_path.expanduser().resolve()
         if args.zip_path
-        else out.parent / f"bluebox-{version}.zip"
+        else out.parent / f"emailforge-{version}.zip"
     )
     files = plan_files(repo)
 
-    print(f"bluebox {version}")
+    print(f"emailforge {version}")
     print(f"  source : {repo}")
     print(f"  output : {out}")
     print(f"  archive: {zip_path}")
