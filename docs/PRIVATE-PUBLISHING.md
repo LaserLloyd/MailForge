@@ -22,7 +22,7 @@ The build is five gated steps; any failure aborts before anything is published:
 3. **Tests.** `uv run --extra dev pytest -q` runs *inside* the produced tree, so
    what ships is what was tested.
 4. **Zip.** Deterministic ordering and fixed timestamps, wrapped in a single
-   `bluebox-<version>/` folder. Size and sha256 are printed.
+   `emailforge-<version>/` folder. Size and sha256 are printed.
 5. **Report.** `<out>/PUBLISH-REPORT.md` records file count, hash, scrub result
    and test summary.
 
@@ -80,6 +80,6 @@ Rules for keeping it useful:
 6. `uv run python scripts/publish_public.py --go` — note the printed sha256.
 7. Skim `<out>/PUBLISH-REPORT.md` and the produced `README.md` as a stranger
    would read it.
-8. Unpack the zip somewhere clean and run `uv run bluebox demo` from it.
+8. Unpack the zip somewhere clean and run `uv run emailforge demo` from it.
 9. Publish the archive, and record the version + sha256 wherever it is offered
    for download.

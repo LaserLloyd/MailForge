@@ -352,7 +352,7 @@ wheels = [
 ]
 
 [[package]]
-name = "bluebox"
+name = "emailforge"
 version = "0.4.0"
 source = { editable = "." }
 dependencies = [

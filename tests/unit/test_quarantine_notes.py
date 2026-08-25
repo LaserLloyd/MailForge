@@ -7,9 +7,9 @@ import json
 
 import pytest
 
-from bluebox.config import Settings
-from bluebox.db import store as store_mod
-from bluebox.db.store import open_store, register_sites, validate_site_id
+from emailforge.config import Settings
+from emailforge.db import store as store_mod
+from emailforge.db.store import open_store, register_sites, validate_site_id
 
 
 @pytest.fixture(autouse=True)
@@ -77,7 +77,7 @@ def test_quarantine_flag_roundtrip_and_counts(tmp_path):
 
 
 def test_graph_refuses_quarantined_message(tmp_path):
-    from bluebox.agent.graph import AgentGraph
+    from emailforge.agent.graph import AgentGraph
 
     with open_store(tmp_path / "g.db") as store:
         mid = _message(store, uid=2, quarantined=1, reason="test")
@@ -102,7 +102,7 @@ def test_graph_refuses_quarantined_message(tmp_path):
 
 
 def test_bridge_json_withholds_quarantined_bodies(tmp_path):
-    from bluebox.bridge_cli import _message_json
+    from emailforge.bridge_cli import _message_json
 
     with open_store(tmp_path / "b.db") as store:
         mid = _message(store, uid=3, quarantined=1, reason="test")
@@ -117,7 +117,7 @@ def test_bridge_json_withholds_quarantined_bodies(tmp_path):
 
 
 def test_bridge_json_marks_untrusted_content(tmp_path):
-    from bluebox.bridge_cli import UNTRUSTED_CLOSE, UNTRUSTED_OPEN, _message_json
+    from emailforge.bridge_cli import UNTRUSTED_CLOSE, UNTRUSTED_OPEN, _message_json
 
     with open_store(tmp_path / "u.db") as store:
         mid = _message(store, uid=4)
@@ -129,7 +129,7 @@ def test_bridge_json_marks_untrusted_content(tmp_path):
 
 
 def test_revise_refuses_quarantined_source(tmp_path):
-    from bluebox.agent.revisions import revise_draft
+    from emailforge.agent.revisions import revise_draft
 
     with open_store(tmp_path / "r.db") as store:
         mid = _message(store, uid=5, quarantined=1)
@@ -178,8 +178,8 @@ def test_weekly_summary_includes_quarantine_count(tmp_path):
 # cynical content-only screening + human alignment
 # --------------------------------------------------------------------------- #
 def test_content_only_site_screens_before_any_model_sees_the_body():
-    from bluebox.config import SiteConfig
-    from bluebox.security.inbound_screening import assess_inbound
+    from emailforge.config import SiteConfig
+    from emailforge.security.inbound_screening import assess_inbound
 
     # content_only is per-site configuration, not a built-in for any brand.
     settings = Settings(
@@ -231,7 +231,7 @@ def test_content_only_site_screens_before_any_model_sees_the_body():
 
 
 def test_spam_feedback_filters_and_learns_without_deleting(tmp_path):
-    from bluebox.security.inbound_screening import assess_inbound
+    from emailforge.security.inbound_screening import assess_inbound
 
     with open_store(tmp_path / "screening.db") as store:
         mid = _message(
@@ -274,8 +274,8 @@ def test_spam_feedback_filters_and_learns_without_deleting(tmp_path):
 
 
 def test_questionable_screening_withholds_body_and_all_ai_work(tmp_path):
-    from bluebox.agent.graph import AgentGraph
-    from bluebox.bridge_cli import _message_json
+    from emailforge.agent.graph import AgentGraph
+    from emailforge.bridge_cli import _message_json
 
     with open_store(tmp_path / "withheld.db") as store:
         mid = _message(store, site_id="shop", uid=21)
@@ -302,7 +302,7 @@ def test_questionable_screening_withholds_body_and_all_ai_work(tmp_path):
 
 
 def test_inbound_markdown_can_strip_every_clickable_link():
-    from bluebox.mail.markdown import markdown_to_safe_html
+    from emailforge.mail.markdown import markdown_to_safe_html
 
     rendered = markdown_to_safe_html(
         "[Sign in](https://evil.example/login) or visit https://evil.example/reset",
@@ -331,7 +331,7 @@ def test_attachment_rows_roundtrip(tmp_path):
 
 
 def test_safe_attachment_name_blocks_traversal():
-    from bluebox.mail.imap_listener import _safe_attachment_name
+    from emailforge.mail.imap_listener import _safe_attachment_name
 
     assert _safe_attachment_name("../../etc/passwd") == "passwd"
     assert _safe_attachment_name("..\\..\\win\\cmd.exe") == "cmd.exe"
@@ -365,7 +365,7 @@ def test_triage_counts_and_filters(tmp_path):
 
 
 def test_clean_subject_unfolds_header_linebreaks():
-    from bluebox.ui.theme import clean_subject
+    from emailforge.ui.theme import clean_subject
 
     folded = "[GitHub] A third-party OAuth application has been added to your\r\n account"
     assert clean_subject(folded) == (

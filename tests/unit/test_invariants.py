@@ -11,12 +11,12 @@ from pathlib import Path
 
 import pytest
 
-from bluebox.agent.tools import ALLOWED_TOOLS, FORBIDDEN_TOOLS, assert_tool_allowed
-from bluebox.audit.log import AuditLog, verify_chain
-from bluebox.config import IMAPAccount, Settings, SMTPAccount
-from bluebox.db.store import open_store
-from bluebox.mail.normalize import normalize_email
-from bluebox.security import run_output_guardrails
+from emailforge.agent.tools import ALLOWED_TOOLS, FORBIDDEN_TOOLS, assert_tool_allowed
+from emailforge.audit.log import AuditLog, verify_chain
+from emailforge.config import IMAPAccount, Settings, SMTPAccount
+from emailforge.db.store import open_store
+from emailforge.mail.normalize import normalize_email
+from emailforge.security import run_output_guardrails
 
 
 def _settings() -> Settings:

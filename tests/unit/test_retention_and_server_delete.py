@@ -15,10 +15,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from bluebox.config import IMAPAccount, SecuritySettings, Settings
-from bluebox.db.store import Store, open_store
-from bluebox.mail import retention
-from bluebox.mail.server_delete import DeleteOutcome
+from emailforge.config import IMAPAccount, SecuritySettings, Settings
+from emailforge.db.store import Store, open_store
+from emailforge.mail import retention
+from emailforge.mail.server_delete import DeleteOutcome
 
 
 def _store(tmp_path) -> Store:
@@ -294,28 +294,28 @@ class _FakeMailbox:
 
 
 def test_trash_folder_is_found_by_well_known_name():
-    from bluebox.mail.server_delete import find_trash_folder
+    from emailforge.mail.server_delete import find_trash_folder
 
     box = _FakeMailbox([_Folder("INBOX"), _Folder("Trash"), _Folder("Sent")])
     assert find_trash_folder(box) == "Trash"
 
 
 def test_trash_folder_falls_back_to_the_imap_flag():
-    from bluebox.mail.server_delete import find_trash_folder
+    from emailforge.mail.server_delete import find_trash_folder
 
     box = _FakeMailbox([_Folder("INBOX"), _Folder("Papierkorb", flags=("\\Trash",))])
     assert find_trash_folder(box) == "Papierkorb"
 
 
 def test_no_trash_folder_reports_none_so_the_caller_can_expunge():
-    from bluebox.mail.server_delete import find_trash_folder
+    from emailforge.mail.server_delete import find_trash_folder
 
     assert find_trash_folder(_FakeMailbox([_Folder("INBOX")])) is None
 
 
 def test_delete_uids_is_a_no_op_when_mode_is_off():
-    from bluebox.config import IMAPAccount
-    from bluebox.mail.server_delete import delete_uids
+    from emailforge.config import IMAPAccount
+    from emailforge.mail.server_delete import delete_uids
 
     account = IMAPAccount(name="a", host="h", username="u", auth_method="password")
     outcome = delete_uids(account, {"INBOX": [(1, 10)]}, mode="off")
@@ -331,7 +331,7 @@ def test_summary_never_claims_a_surviving_provider_copy_is_gone():
 
 
 def test_cli_exposes_a_manual_sweep():
-    from bluebox import cli
+    from emailforge import cli
 
     assert any(
         getattr(c, "name", "") == "purge-trash" or getattr(c.callback, "__name__", "") == "purge_trash"

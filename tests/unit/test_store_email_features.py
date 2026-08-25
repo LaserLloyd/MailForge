@@ -6,8 +6,8 @@ import sqlite3
 
 import pytest
 
-from bluebox.db.store import Store, open_store
-from bluebox.response_templates import EXAMPLE_TEMPLATES
+from emailforge.db.store import Store, open_store
+from emailforge.response_templates import EXAMPLE_TEMPLATES
 
 
 def _message(store: Store, *, site_id: str = "main", uid: int = 1) -> int:

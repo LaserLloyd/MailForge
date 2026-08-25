@@ -1,8 +1,8 @@
-# BlueBox — UI Style Guide
+# EmailForge — UI Style Guide
 
-Canonical style guide for the NiceGUI frontend in `src/bluebox/ui/`.
+Canonical style guide for the NiceGUI frontend in `src/emailforge/ui/`.
 The single source of truth for tokens and CSS is
-`src/bluebox/ui/theme.py` — this document explains how to use it.
+`src/emailforge/ui/theme.py` — this document explains how to use it.
 If code and this guide disagree, fix whichever one is wrong.
 
 ---

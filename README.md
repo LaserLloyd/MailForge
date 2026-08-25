@@ -1,4 +1,4 @@
-# BlueBox
+# EmailForge
 
 A **self-contained, cross-platform (Linux + Windows) local-LLM email assistant**.
 It watches your mailbox, screens and classifies what arrives, and writes *draft*
@@ -12,7 +12,7 @@ click **Approve** before anything is ever sent.
 Try it in one command, with fictional data and no mailbox:
 
 ```bash
-uv run bluebox demo
+uv run emailforge demo
 ```
 
 ---
@@ -83,16 +83,16 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 uv tool install .
 
 # 3. look around first, with fictional data and no mailbox
-bluebox demo
+emailforge demo
 
 # 4. set up your real account — stores credentials in your OS keyring
-bluebox setup-wizard
+emailforge setup-wizard
 
 # 5. run it
-bluebox serve
+emailforge serve
 
 # 6. (optional) install as a background service that survives reboot
-bluebox service install
+emailforge service install
 ```
 
 ### Windows (PowerShell)
@@ -100,8 +100,8 @@ bluebox service install
 ```powershell
 irm https://astral.sh/uv/install.ps1 | iex
 uv tool install .
-bluebox service install        # installs a Windows service via WinSW
-bluebox setup-wizard
+emailforge service install        # installs a Windows service via WinSW
+emailforge setup-wizard
 ```
 
 Then open the `http://127.0.0.1:<port>/?token=…` URL it prints — the token is
@@ -119,7 +119,7 @@ uv tool install ".[policy,redteam]"   # offline flow policy + garak/promptfoo CI
 ### Working from a checkout
 
 ```bash
-uv run bluebox demo            # no install needed
+uv run emailforge demo            # no install needed
 uv run --extra dev pytest -q          # the test suite
 uv run ruff check src tests scripts   # lint
 ```
@@ -130,24 +130,24 @@ uv run ruff check src tests scripts   # lint
 
 | Command | What it does |
 |---|---|
-| `bluebox demo` | Throwaway install seeded with fictional mail — nothing real is touched |
-| `bluebox setup-wizard` | Interactive account / credential / config / DB setup |
-| `bluebox account-add` | Add another mailbox without replacing existing configuration |
-| `bluebox account-list` / `account-remove` | Inspect / detach mailboxes (history is kept) |
-| `bluebox serve` | Run the listener + agent + web UI |
-| `bluebox serve --no-ui` | Headless (e.g. under the service) |
-| `bluebox open` | Open an authenticated browser session to the running UI |
-| `bluebox ingest` | Embed your style guides / context docs for retrieval |
-| `bluebox references-refresh` | Rebuild the managed per-site knowledge handbooks |
-| `bluebox bridge <action> --site <id>` | Site-bound JSON stdin/stdout bridge for a local agent |
-| `bluebox purge-trash` | Report the deletion queue; `--yes` runs the sweep now |
-| `bluebox audit-verify` | Verify the audit hash chain is intact |
-| `bluebox service install\|start\|stop\|desktop` | Manage the background service / launcher |
-| `bluebox redteam` | Run offline red-team suites (garak / promptfoo) |
+| `emailforge demo` | Throwaway install seeded with fictional mail — nothing real is touched |
+| `emailforge setup-wizard` | Interactive account / credential / config / DB setup |
+| `emailforge account-add` | Add another mailbox without replacing existing configuration |
+| `emailforge account-list` / `account-remove` | Inspect / detach mailboxes (history is kept) |
+| `emailforge serve` | Run the listener + agent + web UI |
+| `emailforge serve --no-ui` | Headless (e.g. under the service) |
+| `emailforge open` | Open an authenticated browser session to the running UI |
+| `emailforge ingest` | Embed your style guides / context docs for retrieval |
+| `emailforge references-refresh` | Rebuild the managed per-site knowledge handbooks |
+| `emailforge bridge <action> --site <id>` | Site-bound JSON stdin/stdout bridge for a local agent |
+| `emailforge purge-trash` | Report the deletion queue; `--yes` runs the sweep now |
+| `emailforge audit-verify` | Verify the audit hash chain is intact |
+| `emailforge service install\|start\|stop\|desktop` | Manage the background service / launcher |
+| `emailforge redteam` | Run offline red-team suites (garak / promptfoo) |
 
 ### Demo mode
 
-`bluebox demo [--port N] [--no-browser] [--keep]` creates a temporary
+`emailforge demo [--port N] [--no-browser] [--keep]` creates a temporary
 application home (config + database) under your system temp directory, seeds ~25
 fictional messages across two sites, and starts the normal UI against it. It
 configures **no** IMAP account, so no mail is ever fetched or sent, and it never
@@ -237,13 +237,13 @@ Everything lives in one TOML file:
 
 | OS | Path |
 |---|---|
-| Linux | `~/.config/bluebox/config.toml` (data in `~/.local/share/bluebox/`) |
-| Windows | `%APPDATA%\bluebox\config.toml` (data in `%LOCALAPPDATA%`) |
+| Linux | `~/.config/emailforge/config.toml` (data in `~/.local/share/emailforge/`) |
+| Windows | `%APPDATA%\emailforge\config.toml` (data in `%LOCALAPPDATA%`) |
 
-Set `BLUEBOX_HOME=/some/dir` to relocate both (`<dir>/config`,
+Set `EMAILFORGE_HOME=/some/dir` to relocate both (`<dir>/config`,
 `<dir>/data`) — that is how demo mode isolates itself. Any setting can also come
-from the environment with the `BLUEBOX_` prefix and `__` nesting
-(`BLUEBOX_SECURITY__QUARANTINE_THRESHOLD=0.9`). **Passwords are never
+from the environment with the `EMAILFORGE_` prefix and `__` nesting
+(`EMAILFORGE_SECURITY__QUARANTINE_THRESHOLD=0.9`). **Passwords are never
 stored here** — they go to the OS keyring.
 
 ```toml
@@ -301,7 +301,7 @@ trash_retention_days = 60        # how long deleted mail is kept before it is
                                  # destroyed (spam/scam is never held)
 
 [style]
-style_guide_paths = []           # documents embedded by `bluebox ingest`
+style_guide_paths = []           # documents embedded by `emailforge ingest`
 context_doc_paths = []
 tone = "professional"
 
@@ -310,7 +310,7 @@ enabled = true
 prompt_override_dir = ""         # default: <config dir>/prompts
 heavy_lift_base_url = ""         # any OpenAI-compatible endpoint; "" => local only
 heavy_lift_model = ""
-heavy_lift_key_env = "BLUEBOX_HEAVY_KEY"
+heavy_lift_key_env = "EMAILFORGE_HEAVY_KEY"
 agent_send_enabled = false       # prompt-gated agent-relayed send; ships OFF
 agent_send_per_hour = 10
 agent_send_token_ttl_s = 900
@@ -332,7 +332,7 @@ screening_mode = "content_only"
 ```
 
 Sites also carry the knowledge-handbook keys used by
-`bluebox references-refresh`, which builds one canonical, indexed
+`emailforge references-refresh`, which builds one canonical, indexed
 handbook per site from your own source material:
 
 | Key | Meaning |
@@ -353,12 +353,12 @@ fully functional on your local LLM server. When one is present:
 
 - **Prompt updates** — drop updated `<name>.txt` templates (`system_planner`,
   `system_worker`, `classify`, `draft`, `revise`) into the prompt-override dir
-  (`<config dir>/prompts/`, or `BLUEBOX_PROMPT_DIR`); they win over the
+  (`<config dir>/prompts/`, or `EMAILFORGE_PROMPT_DIR`); they win over the
   packaged defaults with no restart. `openclaw.enabled = false` ignores them.
 - **Heavy lifting when online** — point `heavy_lift_base_url` at any
   OpenAI-compatible endpoint; when set *and reachable* the draft step uses it,
   and on any error it falls back to the local model.
-- **The bridge** — `bluebox bridge <action> --site <id>` speaks JSON on
+- **The bridge** — `emailforge bridge <action> --site <id>` speaks JSON on
   stdin/stdout: `status`, `list`, `get`, `propose`, `revise`, `daily-brief`,
   `weekly-summary`, `reference-search`, `notes`, `note-add`. Quarantined and
   screened-out messages are **metadata only**; eligible bodies come wrapped in
@@ -375,7 +375,7 @@ fully functional on your local LLM server. When one is present:
 
 ## Architecture
 
-`src/bluebox/`: `config.py`/`secrets.py` (settings + keyring), `db/`
+`src/emailforge/`: `config.py`/`secrets.py` (settings + keyring), `db/`
 (schema + the only place SQL lives), `mail/` (IMAP/SMTP, sanitize, normalize),
 `llm/` (bridge + structured output), `rag/` (chunk/embed/retrieve), `agent/`
 (deterministic graph, planner, quarantined worker, restricted tools),
@@ -384,7 +384,7 @@ fully functional on your local LLM server. When one is present:
 
 Paths resolve per-OS through `platformdirs`, so the same build behaves correctly
 on Linux and Windows. `packaging/pyinstaller.spec` (folder mode, never one-file)
-plus `installer/inno/bluebox.iss` produce a double-click Windows
+plus `installer/inno/emailforge.iss` produce a double-click Windows
 installer for machines with no Python.
 
 ---
