@@ -3,6 +3,32 @@
 All notable changes to this project are documented here. Dates are ISO-8601.
 Published by Laser Lloyd — https://www.laserlloyd.com
 
+## Unreleased
+
+### Added
+- **Outbox & Sent page** (sidebar) — every outgoing message in one list, newest
+  first: those an agent staged for approval and those that were transmitted.
+  Each row carries exactly one status chip and there are no ambiguous states —
+  *NOT SENT — awaiting approval* (amber), *EXPIRED — never sent* (grey),
+  *SENT &lt;local time&gt;* (green), *FAILED — reason* (red), plus two explicit red
+  "we do not know" states: a transmission whose result was never recorded, and
+  a one-time token consumed with no transmission behind it. Neither ever reads
+  as sent. Row detail shows the content verbatim, the mailbox it leaves from,
+  and (for staged rows) a link to the existing approval screen. The page has no
+  send control of its own.
+- **Durable send log** (`sent_messages`). Every send attempt from any path —
+  the approval page, Compose, or the agent bridge — records timestamp, mailbox,
+  recipients, subject, verbatim body, outcome, SMTP message-id, and the result
+  of the Sent-folder copy. The row is written *before* the SMTP socket opens,
+  so a crash mid-send is visible rather than silent.
+- **Sent mail is appended to the account's IMAP Sent folder** after a
+  successful send (folder discovered per account, `Sent` as fallback), so mail
+  sent from SiftForge shows up in every other mail client. Best effort by
+  design: a failed append is noted on the outbox row and never turns a
+  delivered message into a failed one.
+- **Header chip** beside "Mail checked" counting messages awaiting approval and
+  any unresolved send, so a staged message cannot sit unnoticed.
+
 ## 0.4.0 — 2026-08-24
 
 ### Added
