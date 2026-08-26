@@ -34,6 +34,7 @@ NAV: list[tuple[str, str, str, str]] = [
     ("drafts", "AI Review", "auto_awesome", "/drafts"),
     ("spam", "Spam", "gpp_maybe", "/spam"),
     ("compose", "Compose", "edit", "/compose"),
+    ("outbox", "Outbox", "outbox", "/outbox"),
     ("templates", "Templates", "content_copy", "/templates"),
     ("references", "Knowledge", "library_books", "/references"),
     ("activity", "Activity", "history", "/activity"),
@@ -633,6 +634,48 @@ def _sync_widget(store: object | None = None) -> None:
     ui.timer(2.0, _paint)
 
 
+def _outbox_widget(store: object | None = None) -> None:
+    """Header chip: how many outgoing messages need a human, right now.
+
+    A message staged for approval that nobody notices is the failure mode this
+    exists to prevent, so the count sits beside the mail-sync chip on every
+    page and is only drawn when it is non-zero. "Unresolved" covers a
+    transmission whose result was never recorded — that must look like a
+    problem, not like silence.
+    """
+    if store is None:
+        return
+    counts_fn = getattr(store, "outbox_counts", None)
+    if not callable(counts_fn):
+        return
+    try:
+        counts = counts_fn()
+    except Exception as e:  # noqa: BLE001
+        log.debug("outbox counts unavailable: %s", e)
+        return
+    staged = int(counts.get("staged", 0) or 0)
+    unresolved = int(counts.get("unknown", 0) or 0) + int(counts.get("in_flight", 0) or 0)
+    if not staged and not unresolved:
+        return
+    kind = "bb-dot--down" if unresolved else "bb-dot--warn"
+    parts = []
+    if staged:
+        parts.append(f"{staged} awaiting approval")
+    if unresolved:
+        parts.append(f"{unresolved} unresolved")
+    chip = ui.element("div").classes(
+        "bb-sync " + ("bb-sync--error" if unresolved else "bb-sync--warn")
+    ).style("cursor: pointer; padding-right: 9px")
+    with chip:
+        ui.element("div").classes(f"bb-dot {kind}")
+        ui.label("Outbox: " + ", ".join(parts)).classes("bb-sync-text")
+        ui.tooltip(
+            "Messages staged for your approval, and any send whose result was "
+            "never recorded. Click to open the Outbox."
+        ).style("white-space: pre-line; max-width: 380px")
+    chip.on("click", lambda: ui.navigate.to("/outbox"))
+
+
 @contextmanager
 def shell(
     active: str,
@@ -672,6 +715,7 @@ def shell(
         ui.label("human approval — nothing sends without you").classes(
             "text-caption bb-header-note"
         ).style("color: var(--text-secondary)")
+        _outbox_widget(store)
         _sync_widget(store)
         _health_dot(bridge, store)
 

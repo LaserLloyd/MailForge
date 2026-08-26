@@ -37,6 +37,7 @@ from .pages import inbox as inbox_page
 from .pages import knowledge as knowledge_page
 from .pages import mail as mail_page
 from .pages import models as models_page
+from .pages import outbox as outbox_page
 from .pages import references as references_page
 from .pages import settings as settings_page
 from .pages import spam as spam_page
@@ -361,6 +362,22 @@ def _register_pages(store: object, settings: object, bridge: object | None) -> N
             return
         with theme.shell("mail", "Message", bridge, store, max_width=1120):
             mail_page.render_detail(store, settings, message_id, bridge)
+
+    @ui.page("/outbox")
+    def _outbox(view: str = "all", page: int = 0, token: str | None = None) -> None:
+        if not _gate(token):
+            _denied()
+            return
+        with theme.shell("outbox", "Outbox & Sent", bridge, store, max_width=1180):
+            outbox_page.render(store, settings, view=view, page=page)
+
+    @ui.page("/outbox/{kind}/{row_id}")
+    def _outbox_detail(kind: str, row_id: int, token: str | None = None) -> None:
+        if not _gate(token):
+            _denied()
+            return
+        with theme.shell("outbox", "Outbox entry", bridge, store, max_width=1020):
+            outbox_page.render_detail(store, settings, kind, row_id)
 
     @ui.page("/spam")
     def _spam(account: str = "", token: str | None = None) -> None:
