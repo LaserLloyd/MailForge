@@ -97,6 +97,40 @@ CREATE TABLE IF NOT EXISTS send_authorizations (
   used_at TEXT);
 CREATE INDEX IF NOT EXISTS send_auth_draft ON send_authorizations(draft_id);
 
+-- Durable record of every transmission ATTEMPT (Outbox / Sent page).
+-- One row is written BEFORE the socket opens with outcome 'UNKNOWN'; the
+-- result is stamped afterwards. A row left at 'UNKNOWN' therefore means the
+-- process died (or was killed) between authorisation and result — it is shown
+-- as its own explicit state and never as "sent".
+--   outcome: UNKNOWN (in flight / result never recorded) | SENT | FAILED
+--   origin:  ui_draft | ui_compose | agent_bridge
+--   imap_append: PENDING | OK | SKIPPED | FAILED  (never affects `outcome`)
+-- draft_id/authorization_id are ON DELETE SET NULL: deleting a draft must not
+-- erase the evidence that mail went out.
+CREATE TABLE IF NOT EXISTS sent_messages (
+  id INTEGER PRIMARY KEY,
+  draft_id INTEGER REFERENCES drafts(id) ON DELETE SET NULL,
+  authorization_id INTEGER REFERENCES send_authorizations(id) ON DELETE SET NULL,
+  site_id TEXT NOT NULL DEFAULT 'main',
+  origin TEXT NOT NULL DEFAULT 'ui_compose',
+  from_addr TEXT NOT NULL,
+  to_addrs TEXT NOT NULL,
+  subject TEXT,
+  body TEXT,                          -- verbatim, exactly as transmitted
+  outcome TEXT NOT NULL DEFAULT 'UNKNOWN'
+    CHECK (outcome IN ('UNKNOWN','SENT','FAILED')),
+  error_text TEXT,
+  smtp_message_id TEXT,
+  imap_append TEXT NOT NULL DEFAULT 'PENDING'
+    CHECK (imap_append IN ('PENDING','OK','SKIPPED','FAILED')),
+  imap_folder TEXT,
+  imap_note TEXT,
+  created_at TEXT NOT NULL,
+  completed_at TEXT);
+CREATE INDEX IF NOT EXISTS sent_messages_created ON sent_messages(created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS sent_messages_site ON sent_messages(site_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS sent_messages_auth ON sent_messages(authorization_id);
+
 CREATE TABLE IF NOT EXISTS agent_notes (
   id INTEGER PRIMARY KEY,
   site_id TEXT NOT NULL,
