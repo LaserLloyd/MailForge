@@ -22,7 +22,8 @@ def test_seed_creates_two_sites_and_a_full_mailbox(seeded):
     store, counts = seeded
     assert counts["accounts"] == 2
     assert counts["messages"] >= 25
-    assert counts["drafts"] == 2
+    # pending reply + sent reply + the one staged for approval in the Outbox
+    assert counts["drafts"] == 3
     sites = {
         row["site_id"]
         for row in store.conn.execute("SELECT DISTINCT site_id FROM accounts")
