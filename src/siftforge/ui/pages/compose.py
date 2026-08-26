@@ -128,6 +128,7 @@ def _do_send(
     subject: str,
     body: str,
     in_reply_to: str | None = None,
+    draft_id: int | None = None,
 ) -> None:
     """Privileged SMTP transmit called only after the confirmation dialog."""
     sec = getattr(settings, "security", None)
@@ -153,7 +154,7 @@ def _do_send(
 
     from ... import secrets as secret_store
     from ...audit.log import AuditLog
-    from ...mail.smtp_sender import send_email
+    from ...mail.outbox import transmit_and_record
 
     account = next(
         (a for a in getattr(settings, "imap_accounts", []) or [] if a.username == from_addr),
@@ -184,7 +185,9 @@ def _do_send(
             "in_reply_to": in_reply_to,
         },
     )
-    send_email(
+    transmit_and_record(
+        store,
+        settings,
         smtp_cfg=smtp_cfg,
         secret=secret,
         from_addr=from_addr,
@@ -194,6 +197,9 @@ def _do_send(
         in_reply_to=in_reply_to,
         references=in_reply_to,
         html_body=markdown_to_safe_html(body),
+        origin="ui_compose",
+        site_id=_site_for_sender(settings, from_addr),
+        draft_id=draft_id,
     )
 
     try:
@@ -536,7 +542,7 @@ def render(
                     )
                 await run.io_bound(
                     _do_send, store, settings, frm, to_addr, subject_v, body_v,
-                    state.get("in_reply_to"),
+                    state.get("in_reply_to"), state["id"],
                 )
                 store.mark_manual_draft_sent(state["id"])  # type: ignore[attr-defined]
             except Exception as e:  # noqa: BLE001

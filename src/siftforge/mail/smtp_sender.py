@@ -21,12 +21,27 @@ from __future__ import annotations
 import base64
 import smtplib
 import ssl
+from dataclasses import dataclass
 from email.message import EmailMessage
 from email.utils import make_msgid
 
 from pydantic import SecretStr
 
 from ..config import SMTPAccount
+
+
+@dataclass(frozen=True)
+class SendResult:
+    """What was actually put on the wire.
+
+    ``message_id`` is the header the recipient's client will thread on, and
+    ``raw`` is the exact RFC 5322 byte stream — the copy appended to the
+    mailbox's IMAP Sent folder, so other clients show the same message this
+    machine sent, byte for byte.
+    """
+
+    message_id: str
+    raw: bytes
 
 
 def _xoauth2_string(username: str, access_token: str) -> str:
@@ -73,7 +88,7 @@ def send_email(
     in_reply_to: str | None = None,
     references: str | None = None,
     html_body: str | None = None,
-) -> None:
+) -> SendResult:
     """Send one email over SMTP submission with STARTTLS.
 
     ``secret`` is the account password (``auth_method`` password) or an OAuth2
@@ -84,6 +99,10 @@ def send_email(
 
     Raises on any transport/auth failure — the UI surfaces the error. There is
     NO retry and NO queue here; this is a single human-approved transmission.
+
+    Returns a :class:`SendResult` with the generated ``Message-ID`` and the raw
+    bytes, so the caller can log what went out and append the same bytes to the
+    account's IMAP Sent folder.
     """
     token = secret.get_secret_value()
     msg = _build_message(
@@ -108,3 +127,4 @@ def send_email(
             # Fall back to XOAUTH2 (token is an OAuth2 access token).
             server.docmd("AUTH", "XOAUTH2 " + _xoauth2_string(smtp_cfg.username, token))
         server.send_message(msg)
+    return SendResult(message_id=str(msg["Message-ID"] or ""), raw=msg.as_bytes())

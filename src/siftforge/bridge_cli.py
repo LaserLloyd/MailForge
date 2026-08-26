@@ -424,7 +424,7 @@ def _do_agent_send(data: dict[str, Any], site: str, store: Any, settings: Any) -
     from . import secrets as secret_store
     from .audit.log import AuditLog
     from .mail.markdown import markdown_to_safe_html
-    from .mail.smtp_sender import send_email
+    from .mail.outbox import transmit_and_record
 
     smtp_cfg = _resolve_send_account(store, settings, draft)
     if smtp_cfg.username != auth["from_addr"]:
@@ -451,7 +451,9 @@ def _do_agent_send(data: dict[str, Any], site: str, store: Any, settings: Any) -
                 "recipient": auth["recipient"]},
     )
     try:
-        send_email(
+        transmit_and_record(
+            store,
+            settings,
             smtp_cfg=smtp_cfg,
             secret=secret,
             from_addr=smtp_cfg.username,
@@ -461,6 +463,10 @@ def _do_agent_send(data: dict[str, Any], site: str, store: Any, settings: Any) -
             html_body=markdown_to_safe_html(body),
             in_reply_to=in_reply_to,
             references=None,
+            origin="agent_bridge",
+            site_id=site,
+            draft_id=draft_id,
+            authorization_id=int(auth["id"]),
         )
     except Exception as e:
         store.update_draft_state(

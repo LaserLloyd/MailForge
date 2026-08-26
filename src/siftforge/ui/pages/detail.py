@@ -165,7 +165,7 @@ def _do_send(store: object, settings: object, draft: Any, body: str, approval: A
         raise PermissionError("Send blocked: approved recipient changed")
 
     from ... import secrets as secret_store
-    from ...mail.smtp_sender import send_email
+    from ...mail.outbox import transmit_and_record
 
     account = source_account_for_draft(store, draft)
     from_addr = str(_value(account, "username", "") or "")
@@ -195,7 +195,9 @@ def _do_send(store: object, settings: object, draft: Any, body: str, approval: A
     except Exception:
         pass
 
-    send_email(
+    transmit_and_record(
+        store,
+        settings,
         smtp_cfg=smtp_cfg,
         secret=secret,
         from_addr=from_addr,
@@ -205,6 +207,9 @@ def _do_send(store: object, settings: object, draft: Any, body: str, approval: A
         html_body=markdown_to_safe_html(body),
         in_reply_to=in_reply_to,
         references=references,
+        origin="ui_draft",
+        site_id=str(_value(account, "site_id", "") or "") or None,
+        draft_id=int(_value(draft, "id")),
     )
 
 
