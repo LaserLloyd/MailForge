@@ -1085,6 +1085,176 @@ class Store:
         ).fetchone()
         return int(row["n"] or 0)
 
+    # ----- outbox: staged authorizations + the durable sent log -------------
+    def list_staged_sends(
+        self, site_id: str | None = None, limit: int = 200, offset: int = 0
+    ) -> list[sqlite3.Row]:
+        """Send authorizations that have NOT produced a transmission record.
+
+        Newest first. Each row carries the draft it authorises plus a derived
+        ``status``:
+
+          * ``STAGED``   — token unused and unexpired: awaiting a human yes.
+          * ``EXPIRED``  — token unused and past ``expires_at``: it can never send.
+          * ``UNKNOWN``  — token CONSUMED but no ``sent_messages`` row exists.
+            Never render this as sent; the transmission result is genuinely
+            unknown (the process died between consuming and recording).
+        """
+        sql = (
+            "SELECT a.*, d.subject AS subject, d.body AS body, d.site_id AS site_id, "
+            "d.state AS draft_state, d.thread_id AS thread_id, d.message_id AS message_id, "
+            "CASE WHEN a.used_at IS NOT NULL THEN 'UNKNOWN' "
+            "     WHEN datetime(a.expires_at) <= datetime('now') THEN 'EXPIRED' "
+            "     ELSE 'STAGED' END AS status "
+            "FROM send_authorizations a "
+            "JOIN drafts d ON d.id = a.draft_id "
+            "WHERE NOT EXISTS (SELECT 1 FROM sent_messages s WHERE s.authorization_id = a.id)"
+        )
+        values: list[Any] = []
+        if site_id is not None:
+            sql += " AND d.site_id=?"
+            values.append(validate_site_id(site_id))
+        sql += " ORDER BY a.created_at DESC, a.id DESC LIMIT ? OFFSET ?"
+        values.extend([max(1, int(limit)), max(0, int(offset))])
+        return self.conn.execute(sql, values).fetchall()
+
+    def get_staged_send(self, auth_id: int) -> sqlite3.Row | None:
+        rows = [
+            r for r in self.list_staged_sends(limit=10_000) if int(r["id"]) == int(auth_id)
+        ]
+        return rows[0] if rows else None
+
+    def begin_send_record(
+        self,
+        from_addr: str,
+        to_addrs: str,
+        subject: str,
+        body: str,
+        *,
+        origin: str = "ui_compose",
+        site_id: str | None = None,
+        draft_id: int | None = None,
+        authorization_id: int | None = None,
+    ) -> int:
+        """Open a send record BEFORE transmitting. Outcome starts 'UNKNOWN'.
+
+        Writing the row first is what makes a crash mid-send visible: an
+        orphaned 'UNKNOWN' row is an honest "we do not know", where no row at
+        all would look like nothing ever happened.
+        """
+        if str(origin) not in {"ui_draft", "ui_compose", "agent_bridge"}:
+            raise ValueError("origin must be ui_draft|ui_compose|agent_bridge")
+        site = validate_site_id(site_id or default_site_id())
+        cur = self.conn.execute(
+            "INSERT INTO sent_messages(draft_id,authorization_id,site_id,origin,from_addr,"
+            "to_addrs,subject,body,outcome,imap_append,created_at) "
+            "VALUES(?,?,?,?,?,?,?,?,'UNKNOWN','PENDING',?)",
+            (
+                int(draft_id) if draft_id is not None else None,
+                int(authorization_id) if authorization_id is not None else None,
+                site,
+                str(origin),
+                str(from_addr or ""),
+                str(to_addrs or ""),
+                str(subject or ""),
+                str(body or ""),
+                _now(),
+            ),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid or 0)
+
+    def finish_send_record(
+        self,
+        record_id: int,
+        outcome: str,
+        *,
+        smtp_message_id: str | None = None,
+        error_text: str | None = None,
+    ) -> None:
+        """Stamp the transmission result on an open send record."""
+        value = str(outcome or "").upper()
+        if value not in {"SENT", "FAILED", "UNKNOWN"}:
+            raise ValueError("outcome must be SENT|FAILED|UNKNOWN")
+        self.conn.execute(
+            "UPDATE sent_messages SET outcome=?,smtp_message_id=?,error_text=?,"
+            "completed_at=? WHERE id=?",
+            (
+                value,
+                smtp_message_id,
+                (str(error_text)[:500] if error_text else None),
+                _now(),
+                int(record_id),
+            ),
+        )
+        self.conn.commit()
+
+    def record_send_append(
+        self,
+        record_id: int,
+        status: str,
+        *,
+        folder: str | None = None,
+        note: str | None = None,
+    ) -> None:
+        """Record what happened to the IMAP Sent-folder copy of a sent message.
+
+        Deliberately separate from ``outcome``: a mail that left the SMTP relay
+        is SENT even if the provider copy could not be appended.
+        """
+        value = str(status or "").upper()
+        if value not in {"PENDING", "OK", "SKIPPED", "FAILED"}:
+            raise ValueError("imap append status must be PENDING|OK|SKIPPED|FAILED")
+        self.conn.execute(
+            "UPDATE sent_messages SET imap_append=?,imap_folder=?,imap_note=? WHERE id=?",
+            (value, folder, (str(note)[:300] if note else None), int(record_id)),
+        )
+        self.conn.commit()
+
+    def list_sent_messages(
+        self, site_id: str | None = None, limit: int = 100, offset: int = 0
+    ) -> list[sqlite3.Row]:
+        sql = "SELECT * FROM sent_messages"
+        values: list[Any] = []
+        if site_id is not None:
+            sql += " WHERE site_id=?"
+            values.append(validate_site_id(site_id))
+        sql += " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?"
+        values.extend([max(1, int(limit)), max(0, int(offset))])
+        return self.conn.execute(sql, values).fetchall()
+
+    def get_sent_message(self, record_id: int) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT * FROM sent_messages WHERE id=?", (int(record_id),)
+        ).fetchone()
+
+    def outbox_counts(self, site_id: str | None = None) -> dict[str, int]:
+        """Counts the header chip and page tabs read.
+
+        ``pending`` is what must never sit unnoticed: staged-and-live
+        authorizations plus any transmission whose result was never recorded.
+        """
+        staged = self.list_staged_sends(site_id=site_id, limit=10_000)
+        counts = {
+            "staged": sum(1 for r in staged if r["status"] == "STAGED"),
+            "expired": sum(1 for r in staged if r["status"] == "EXPIRED"),
+            "unknown": sum(1 for r in staged if r["status"] == "UNKNOWN"),
+            "sent": 0,
+            "failed": 0,
+            "in_flight": 0,
+        }
+        sql = "SELECT outcome, COUNT(*) AS n FROM sent_messages"
+        values: list[Any] = []
+        if site_id is not None:
+            sql += " WHERE site_id=?"
+            values.append(validate_site_id(site_id))
+        sql += " GROUP BY outcome"
+        for row in self.conn.execute(sql, values):
+            key = {"SENT": "sent", "FAILED": "failed", "UNKNOWN": "in_flight"}[row["outcome"]]
+            counts[key] = int(row["n"] or 0)
+        counts["pending"] = counts["staged"] + counts["unknown"] + counts["in_flight"]
+        return counts
+
     # ----- agent notes (durable cross-session memory for bridge agents) -----
     def add_agent_note(
         self,
