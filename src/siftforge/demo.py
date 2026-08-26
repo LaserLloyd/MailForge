@@ -339,6 +339,10 @@ def seed_demo(store: Any) -> dict[str, int]:
         if has_attachments:
             _seed_attachment(store, mid)
 
+    # Outbox seeding is not idempotent the way message insertion is (a send
+    # authorization's token hash is UNIQUE), so it runs only on a fresh store.
+    seed_outbox = not store.list_sent_messages(limit=1) and not store.list_staged_sends(limit=1)
+
     drafts = 0
     pending = message_ids.get("Question about your workshop guide")
     if pending is not None:
@@ -374,6 +378,51 @@ def seed_demo(store: Any) -> dict[str, int]:
         )
         store.update_draft_state(draft_id, "SENT", sent_at=_iso(2.8))
         drafts += 1
+        # Outbox: the same reply as a completed transmission, so the Sent view
+        # is not empty in the demo.
+        if seed_outbox:
+            record = store.begin_send_record(
+                "hello@example.com",
+                "casey.lin@example.com",
+                "Re: Permission to reprint a diagram",
+                "Hi Casey,\n\nYes, please go ahead with credit and a link back.\n\n"
+                "Best,\nAlex Example",
+                origin="ui_draft",
+                site_id="main",
+                draft_id=draft_id,
+            )
+            store.finish_send_record(
+                record, "SENT", smtp_message_id="<demo-sent-1@example.com>"
+            )
+            store.record_send_append(record, "OK", folder="Sent")
+
+    # Outbox: one message staged by an agent and still awaiting a human yes —
+    # the amber state the page exists to make impossible to miss.
+    staged_source = message_ids.get("Speaking slot at the maker meetup?")
+    if staged_source is not None and seed_outbox:
+        staged_draft = store.create_draft(
+            message_id=staged_source,
+            thread_id=threads.get("Speaking slot at the maker meetup?", "demo-thread-3"),
+            recipient="jordan.pike@example.org",
+            subject="Re: Speaking slot at the maker meetup?",
+            body=(
+                "Hi Jordan,\n\nOctober could work — please send the dates and the "
+                "format and I'll confirm.\n\nBest,\nAlex Example"
+            ),
+            state="PENDING",
+            sender_addr="hello@example.com",
+            site_id="main",
+        )
+        drafts += 1
+        store.create_send_authorization(
+            staged_draft,
+            "demo-token-hash-not-a-real-token",
+            "demo-body-digest",
+            "jordan.pike@example.org",
+            "hello@example.com",
+            "email-main",
+            ttl_seconds=3600,
+        )
 
     return {"accounts": len(accounts), "messages": inserted, "drafts": drafts}
 
