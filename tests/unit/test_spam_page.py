@@ -10,10 +10,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from siftforge.config import SecuritySettings, Settings
-from siftforge.db.store import open_store
-from siftforge.ui import theme
-from siftforge.ui.pages import spam
+from mailforge.config import SecuritySettings, Settings
+from mailforge.db.store import open_store
+from mailforge.ui import theme
+from mailforge.ui.pages import spam
 
 
 def _store(tmp_path):

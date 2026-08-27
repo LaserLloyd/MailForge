@@ -1,7 +1,7 @@
 """Test isolation: every test runs against a throwaway application home.
 
 ``config.Settings`` binds the TOML path at import time, so the override has to
-be in place before ``siftforge`` is imported — a conftest at this level is
+be in place before ``mailforge`` is imported — a conftest at this level is
 the earliest hook pytest offers. Without it the suite would read (and the
 config tests could write) the machine's real config.toml.
 """
@@ -12,7 +12,7 @@ import os
 import tempfile
 
 os.environ.setdefault(
-    "SIFTFORGE_HOME", tempfile.mkdtemp(prefix="siftforge-tests-")
+    "MAILFORGE_HOME", tempfile.mkdtemp(prefix="mailforge-tests-")
 )
 
 
@@ -26,7 +26,7 @@ def _registered_sites():
     ``register_sites`` installs a process-wide registry, so a test that
     configures its own sites would otherwise leak into the next one.
     """
-    from siftforge.db import store as store_mod
+    from mailforge.db import store as store_mod
 
     previous = store_mod.VALID_SITES
     store_mod.register_sites(["main", "shop"])
@@ -40,7 +40,7 @@ def assert_private_mode():
 
     Windows has no owner/group/other bits: ``os.chmod`` there only toggles the
     read-only attribute, so ``S_IMODE`` reports 0o666/0o444 whatever the code
-    asked for. Asserting 0600 on Windows tests the OS, not SiftForge — so the
+    asked for. Asserting 0600 on Windows tests the OS, not MailForge — so the
     check degrades to "the file was created" there and stays strict on POSIX.
     """
     import os

@@ -1,4 +1,4 @@
-# garak red-team config — SiftForge (build spec §3 phase 10, §10).
+# garak red-team config — MailForge (build spec §3 phase 10, §10).
 #
 # Runs OFFLINE against the local agent endpoint (the agent's UI/API binds
 # 127.0.0.1 only, spec §0.7). garak is OPTIONAL; the redteam_runner skips with
@@ -34,4 +34,4 @@ run:
   seed: 1337
 
 reporting:
-  report_prefix: siftforge-garak
+  report_prefix: mailforge-garak

@@ -389,7 +389,7 @@ SELF_TEST_CLEAN: tuple[str, ...] = (
     "sender = 'sam@corp.test'",
     "contact: alex.example@example.org",
     'api_key = ""',
-    'api_key = "${SIFTFORGE_HEAVY_KEY}"',
+    'api_key = "${MAILFORGE_HEAVY_KEY}"',
     "password = None",
     "Published by Laser Lloyd — https://www.laserlloyd.com",
     "site_id = 'main'",

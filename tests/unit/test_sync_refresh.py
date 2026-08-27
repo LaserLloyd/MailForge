@@ -6,9 +6,9 @@ import threading
 import time
 from types import SimpleNamespace
 
-from siftforge.mail import imap_listener
-from siftforge.mail.imap_listener import IMAPListener
-from siftforge.mail.sync_state import SyncRegistry, human_age
+from mailforge.mail import imap_listener
+from mailforge.mail.imap_listener import IMAPListener
+from mailforge.mail.sync_state import SyncRegistry, human_age
 
 
 def test_registry_tracks_checks_errors_and_summary():
@@ -192,8 +192,8 @@ def test_run_backoff_sleep_is_woken_by_refresh(monkeypatch):
 # --------------------------------------------------------------------------- #
 def test_audit_chain_survives_concurrent_appenders(tmp_path):
     """Two threads appending at once must still produce one linear chain."""
-    from siftforge.audit.log import AuditLog, verify_chain
-    from siftforge.db.store import open_store
+    from mailforge.audit.log import AuditLog, verify_chain
+    from mailforge.db.store import open_store
 
     db = tmp_path / "a.db"
     store = open_store(db)
@@ -223,7 +223,7 @@ def test_audit_chain_survives_concurrent_appenders(tmp_path):
 
 
 def test_list_received_orders_by_instant_and_searches_bodies(tmp_path):
-    from siftforge.db.store import open_store
+    from mailforge.db.store import open_store
 
     store = open_store(tmp_path / "m.db")
     acct = store.upsert_account("a", "imap", "h", 993, "u@x", "main")

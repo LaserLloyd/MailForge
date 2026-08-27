@@ -15,13 +15,13 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from siftforge.config import LLMSettings, OpenClawSettings, Settings
-from siftforge.llm import prompts
-from siftforge.llm.bridge import LMStudioBridge
+from mailforge.config import LLMSettings, OpenClawSettings, Settings
+from mailforge.llm import prompts
+from mailforge.llm.bridge import LMStudioBridge
 
 
 def test_prompt_override_prefers_user_dir_then_falls_back(tmp_path, monkeypatch):
-    monkeypatch.setenv("SIFTFORGE_PROMPT_DIR", str(tmp_path))
+    monkeypatch.setenv("MAILFORGE_PROMPT_DIR", str(tmp_path))
     packaged = prompts.load("classify")
     assert packaged  # packaged default exists
 
@@ -38,7 +38,7 @@ def test_heavy_lift_off_by_default():
 
 
 def test_heavy_lift_on_when_configured(monkeypatch):
-    monkeypatch.setenv("SIFTFORGE_HEAVY_KEY", "k-123")
+    monkeypatch.setenv("MAILFORGE_HEAVY_KEY", "k-123")
     s = Settings(
         openclaw=OpenClawSettings(
             heavy_lift_base_url="http://127.0.0.1:9/v1",
@@ -52,7 +52,7 @@ def test_heavy_lift_on_when_configured(monkeypatch):
 
 
 def test_heavy_disabled_flag_ignores_link(monkeypatch):
-    monkeypatch.setenv("SIFTFORGE_HEAVY_KEY", "k-123")
+    monkeypatch.setenv("MAILFORGE_HEAVY_KEY", "k-123")
     s = Settings(
         openclaw=OpenClawSettings(
             enabled=False,
@@ -118,8 +118,8 @@ def test_model_resolution_keeps_served_config(monkeypatch):
 
 
 def test_launcher_key_is_stable_and_0600(tmp_path, monkeypatch, assert_private_mode):
-    monkeypatch.setattr("siftforge.paths.data_dir", lambda: tmp_path)
-    from siftforge.ui import app as ui_app
+    monkeypatch.setattr("mailforge.paths.data_dir", lambda: tmp_path)
+    from mailforge.ui import app as ui_app
 
     k1 = ui_app.launcher_key()
     k2 = ui_app.launcher_key()

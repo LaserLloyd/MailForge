@@ -10,15 +10,15 @@ import os
 
 import pytest
 
-from siftforge.config import SiteConfig
-from siftforge.knowledge.handbooks import (
+from mailforge.config import SiteConfig
+from mailforge.knowledge.handbooks import (
     build_site_handbooks,
     read_site_handbook,
     sync_site_handbook_to_openclaw,
     sync_site_handbooks_to_openclaw,
     write_site_handbooks,
 )
-from siftforge.knowledge.sync import managed_sites
+from mailforge.knowledge.sync import managed_sites
 
 _POLICY = """# {NAME} Email Response Handbook
 

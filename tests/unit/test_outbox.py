@@ -12,10 +12,10 @@ import hashlib
 
 import pytest
 
-from siftforge.bridge_cli import BridgeInputError, _do_agent_send, _prepare_send
-from siftforge.config import Settings
-from siftforge.db.store import open_store, register_sites
-from siftforge.ui.pages.outbox import collect_rows, status_of
+from mailforge.bridge_cli import BridgeInputError, _do_agent_send, _prepare_send
+from mailforge.config import Settings
+from mailforge.db.store import open_store, register_sites
+from mailforge.ui.pages.outbox import collect_rows, status_of
 
 
 @pytest.fixture(autouse=True)
@@ -165,7 +165,7 @@ def test_consumed_token_without_a_transmission_is_unknown_not_sent(tmp_path):
         did = _seed_reply_draft(store)
         out = _prepare_send({"draft_id": did}, "main", store, _settings())
         token_hash = hashlib.sha256(out["send_token"].encode()).hexdigest()
-        from siftforge.bridge_cli import content_digest
+        from mailforge.bridge_cli import content_digest
 
         store.consume_send_authorization(
             did, token_hash, content_digest(out["subject"], out["body"])
@@ -200,13 +200,13 @@ def test_recorded_transmission_supersedes_its_authorization(tmp_path):
 # The bridge send path writes the log
 # --------------------------------------------------------------------------- #
 def test_agent_send_records_the_transmission(tmp_path, monkeypatch):
-    from siftforge.mail.smtp_sender import SendResult
+    from mailforge.mail.smtp_sender import SendResult
 
     def _fake_send_email(**kwargs):
         return SendResult(message_id="<sent-1@example.test>", raw=b"")
 
-    import siftforge.mail.smtp_sender as smtp_sender
-    import siftforge.secrets as secret_store
+    import mailforge.mail.smtp_sender as smtp_sender
+    import mailforge.secrets as secret_store
 
     monkeypatch.setattr(smtp_sender, "send_email", _fake_send_email)
 
@@ -238,8 +238,8 @@ def test_agent_send_failure_is_recorded_as_failed(tmp_path, monkeypatch):
     def _boom(**kwargs):
         raise RuntimeError("relay refused")
 
-    import siftforge.mail.smtp_sender as smtp_sender
-    import siftforge.secrets as secret_store
+    import mailforge.mail.smtp_sender as smtp_sender
+    import mailforge.secrets as secret_store
 
     monkeypatch.setattr(smtp_sender, "send_email", _boom)
 
@@ -316,7 +316,7 @@ def test_collect_rows_merges_and_filters(tmp_path):
 def test_outbox_page_renders_both_populations(tmp_path):
     from nicegui import ui
 
-    from siftforge.ui.pages import outbox as outbox_page
+    from mailforge.ui.pages import outbox as outbox_page
 
     with open_store(tmp_path / "m.db") as store:
         _seed_both_populations(store)
@@ -331,7 +331,7 @@ def test_outbox_page_renders_both_populations(tmp_path):
 def test_outbox_page_empty_state(tmp_path):
     from nicegui import ui
 
-    from siftforge.ui.pages import outbox as outbox_page
+    from mailforge.ui.pages import outbox as outbox_page
 
     with open_store(tmp_path / "n.db") as store:
         with ui.column() as container:
@@ -342,7 +342,7 @@ def test_outbox_page_empty_state(tmp_path):
 def test_outbox_detail_shows_verbatim_body_and_no_send_control(tmp_path):
     from nicegui import ui
 
-    from siftforge.ui.pages import outbox as outbox_page
+    from mailforge.ui.pages import outbox as outbox_page
 
     with open_store(tmp_path / "o.db") as store:
         did = _seed_reply_draft(store)
@@ -365,7 +365,7 @@ def test_outbox_detail_shows_verbatim_body_and_no_send_control(tmp_path):
 
 
 def test_demo_seeds_a_staged_and_a_sent_example(tmp_path):
-    from siftforge.demo import seed_demo
+    from mailforge.demo import seed_demo
 
     with open_store(tmp_path / "p.db") as store:
         seed_demo(store)
@@ -379,7 +379,7 @@ def test_demo_seeds_a_staged_and_a_sent_example(tmp_path):
 
 
 def test_outbox_is_reachable_from_the_main_nav():
-    from siftforge.ui import theme
+    from mailforge.ui import theme
 
     keys = [entry[0] for entry in theme.NAV]
     assert "outbox" in keys

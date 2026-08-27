@@ -7,14 +7,14 @@
 Steps, in order, each of which aborts the build on failure:
 
 1. **Copy an ALLOWLIST** of paths into ``--out`` (default
-   ``~/Projects/siftforge-public``), skipping a DENY list of runtime,
+   ``~/Projects/mailforge-public``), skipping a DENY list of runtime,
    secret, and build artefacts. Nothing outside the allowlist can leak, because
    nothing outside it is ever read.
 2. **Scrub gate** — run ``scrub_check.py`` over the produced tree.
 3. **Tests** — ``uv run --extra dev pytest -q`` *inside* the produced tree, so
    the thing that ships is the thing that was tested.
 4. **Zip** — deterministic ordering, fixed timestamps, one top-level
-   ``siftforge-<version>/`` folder. Prints size + sha256.
+   ``mailforge-<version>/`` folder. Prints size + sha256.
 5. **Report** — ``<out>-PUBLISH-REPORT.md`` (beside the tree) with file count, hash, results.
 
 Every subprocess is invoked with a fixed argv list; there is no shell.
@@ -153,7 +153,7 @@ def test(out: Path) -> subprocess.CompletedProcess[str]:
 
 
 def build_zip(out: Path, files: list[Path], zip_path: Path, version: str) -> tuple[str, int]:
-    top = f"siftforge-{version}"
+    top = f"mailforge-{version}"
     zip_path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for relative in sorted(files):
@@ -174,7 +174,7 @@ def write_report(
     report.write_text(
         "\n".join(
             [
-                f"# SiftForge {version} — publish report",
+                f"# MailForge {version} — publish report",
                 "",
                 f"- Built (UTC): {datetime.now(timezone.utc).isoformat(timespec='seconds')}",
                 f"- Files: {len(files)}",
@@ -209,7 +209,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--repo", type=Path, default=REPO_ROOT, help="Source repository.")
     parser.add_argument(
-        "--out", type=Path, default=Path.home() / "Projects" / "siftforge-public",
+        "--out", type=Path, default=Path.home() / "Projects" / "mailforge-public",
         help="Output tree (REPLACED on --go).",
     )
     parser.add_argument("--zip", dest="zip_path", type=Path, default=None, help="Archive path.")
@@ -223,11 +223,11 @@ def main(argv: list[str] | None = None) -> int:
     zip_path: Path = (
         args.zip_path.expanduser().resolve()
         if args.zip_path
-        else out.parent / f"siftforge-{version}.zip"
+        else out.parent / f"mailforge-{version}.zip"
     )
     files = plan_files(repo)
 
-    print(f"siftforge {version}")
+    print(f"mailforge {version}")
     print(f"  source : {repo}")
     print(f"  output : {out}")
     print(f"  archive: {zip_path}")

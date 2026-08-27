@@ -1,5 +1,5 @@
 [project]
-name = "siftforge"
+name = "mailforge"
 version = "0.4.0"
 description = "Self-contained, cross-platform local-LLM email triage & auto-draft assistant (no auto-send)."
 readme = "README.md"
@@ -56,7 +56,7 @@ redteam = ["garak>=0.9", "promptfoo>=0.1"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.5"]
 
 [project.scripts]
-siftforge = "siftforge.cli:app"
+mailforge = "mailforge.cli:app"
 
 [build-system]
 requires = ["uv_build>=0.11.2,<0.12.0"]

@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-SCANNED = ("src/siftforge", "tests", "scripts")
+SCANNED = ("src/mailforge", "tests", "scripts")
 
 #: Text-mode readers/writers whose default encoding is the locale's — cp1252
 #: on a Windows runner, so any non-ASCII byte raises UnicodeDecodeError.
@@ -165,7 +165,7 @@ def test_detect_secrets_bridge_writes_utf8_and_closes_before_scanning(tmp_path, 
     import tempfile
     import types
 
-    from siftforge.security import secrets_scan
+    from mailforge.security import secrets_scan
 
     seen: dict[str, object] = {}
     real = tempfile.NamedTemporaryFile
@@ -217,7 +217,7 @@ def test_atomic_private_write_survives_a_missing_os_fchmod(tmp_path, monkeypatch
     """
     import os as os_module
 
-    from siftforge.knowledge import handbooks
+    from mailforge.knowledge import handbooks
 
     monkeypatch.delattr(os_module, "fchmod", raising=True)
 

@@ -5,6 +5,14 @@ Published by Laser Lloyd — https://www.laserlloyd.com
 
 ## Unreleased
 
+### Changed
+- **Renamed SiftForge to MailForge** (2026-08-27). The project, CLI, package,
+  systemd unit, and every path moved to the new name: command `mailforge`,
+  env var `MAILFORGE_HOME`, config `~/.config/mailforge/`, data
+  `~/.local/share/mailforge/`, keyring services `mailforge.imap.<label>` and
+  `mailforge.smtp.<username>`. Existing installs need their config, data, and
+  keyring entries migrated; nothing is moved automatically.
+
 ### Added
 - **Outbox & Sent page** (sidebar) — every outgoing message in one list, newest
   first: those an agent staged for approval and those that were transmitted.
@@ -23,7 +31,7 @@ Published by Laser Lloyd — https://www.laserlloyd.com
   so a crash mid-send is visible rather than silent.
 - **Sent mail is appended to the account's IMAP Sent folder** after a
   successful send (folder discovered per account, `Sent` as fallback), so mail
-  sent from SiftForge shows up in every other mail client. Best effort by
+  sent from MailForge shows up in every other mail client. Best effort by
   design: a failed append is noted on the outbox row and never turns a
   delivered message into a failed one.
 - **Header chip** beside "Mail checked" counting messages awaiting approval and
@@ -47,7 +55,7 @@ Published by Laser Lloyd — https://www.laserlloyd.com
 - **Retention policy.** Spam and scam mail is deleted immediately; everything
   else you delete is held in the local Trash for `[security]
   trash_retention_days` (60) and then permanently removed, locally and at the
-  provider. A background sweep runs every six hours; `siftforge
+  provider. A background sweep runs every six hours; `mailforge
   purge-trash` reports the queue and (with `--yes`) runs it by hand.
 - New `messages` columns: `trashed_at`, `purged_at`, `server_deleted_at`,
   `server_delete_error`. Existing trash has its retention clock started at
@@ -71,7 +79,7 @@ Published by Laser Lloyd — https://www.laserlloyd.com
 ## 0.3.1 — 2026-08-19
 
 ### Added
-- **Demo mode** — `siftforge demo` builds a throwaway application home,
+- **Demo mode** — `mailforge demo` builds a throwaway application home,
   seeds ~25 fictional messages across two example sites, and opens the normal
   UI. No mailbox is configured, and your real config/database are never opened.
 - **Live sync chip + Refresh** in the UI header: per-account listener state
@@ -83,7 +91,7 @@ Published by Laser Lloyd — https://www.laserlloyd.com
 - **Public edition tooling** — `scripts/scrub_check.py` (standalone denylist
   scanner with `--self-test`) and `scripts/publish_public.py` (allowlisted sync
   → scrub gate → tests → reproducible zip + `PUBLISH-REPORT.md`).
-- `SIFTFORGE_HOME` relocates config and data together; `run_serve()` and
+- `MAILFORGE_HOME` relocates config and data together; `run_serve()` and
   `run_ui()` accept an explicit UI port.
 - `[compose] signature` configures the name used by templates and the composer.
 
