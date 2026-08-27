@@ -62,6 +62,9 @@ DENY_PATTERNS: tuple[str, ...] = (
     # exactly what must never ship, so neither it nor its tests nor this
     # script nor the private doc are part of the public tree.
     "scrub_check.py", "publish_public.py", "test_scrub_check.py", "PRIVATE-PUBLISHING.md",
+    # Tests for that tooling drive the scanner and the hooks directly, so they
+    # cannot run in a tree that ships neither.
+    "test_pre_push_hook.py",
     # ...and above all the fork's private identifier list, which is nothing but
     # the words that must never ship.
     "scrub-rules.local.txt",
