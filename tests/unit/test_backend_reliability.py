@@ -7,14 +7,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from siftforge.llm import bridge as bridge_module
-from siftforge.llm.bridge import LMStudioBridge
+from mailforge.llm import bridge as bridge_module
+from mailforge.llm.bridge import LMStudioBridge
 
-from siftforge.agent import worker
-from siftforge.agent.graph import AgentGraph
-from siftforge.config import Settings
-from siftforge.db.store import Store, open_store
-from siftforge.mail.imap_listener import IMAPListener
+from mailforge.agent import worker
+from mailforge.agent.graph import AgentGraph
+from mailforge.config import Settings
+from mailforge.db.store import Store, open_store
+from mailforge.mail.imap_listener import IMAPListener
 
 
 class _CaptureBridge:
@@ -152,8 +152,8 @@ def test_embedding_failed_batch_splits_before_failing_document(monkeypatch):
 
 
 def test_cli_ingest_awaits_async_ingester(monkeypatch):
-    from siftforge import cli
-    from siftforge.rag import embedder
+    from mailforge import cli
+    from mailforge.rag import embedder
 
     called = []
 
@@ -162,7 +162,7 @@ def test_cli_ingest_awaits_async_ingester(monkeypatch):
         return 7
 
     monkeypatch.setattr(embedder, "ingest_documents", fake_ingest)
-    monkeypatch.setattr("siftforge.config.load_settings", lambda: object())
+    monkeypatch.setattr("mailforge.config.load_settings", lambda: object())
     cli.ingest(style=True, context=False)
     assert called == [(True, False)]
 
@@ -375,7 +375,7 @@ def test_knn_site_scope_overfetches_past_globally_closer_other_site():
 
 
 def test_reference_delete_removes_chunks_and_only_app_owned_file(tmp_path, monkeypatch):
-    from siftforge import paths
+    from mailforge import paths
 
     data = tmp_path / "data"
     library = data / "references" / "main"
@@ -399,8 +399,8 @@ def test_reference_delete_removes_chunks_and_only_app_owned_file(tmp_path, monke
 
 
 def test_revision_refuses_immutable_sent_draft(tmp_path):
-    from siftforge.agent.revisions import revise_draft
-    from siftforge.config import Settings
+    from mailforge.agent.revisions import revise_draft
+    from mailforge.config import Settings
 
     store = open_store(tmp_path / "immutable.db")
     message_id = _insert_message(store)
@@ -416,7 +416,7 @@ def test_revision_refuses_immutable_sent_draft(tmp_path):
 
 
 def test_bridge_rejects_unknown_site_before_opening_database(monkeypatch, capsys):
-    from siftforge.bridge_cli import run_bridge
+    from mailforge.bridge_cli import run_bridge
 
     monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
     assert run_bridge("status", "not-a-site") == 2

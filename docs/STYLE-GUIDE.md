@@ -1,8 +1,8 @@
-# SiftForge — UI Style Guide
+# MailForge — UI Style Guide
 
-Canonical style guide for the NiceGUI frontend in `src/siftforge/ui/`.
+Canonical style guide for the NiceGUI frontend in `src/mailforge/ui/`.
 The single source of truth for tokens and CSS is
-`src/siftforge/ui/theme.py` — this document explains how to use it.
+`src/mailforge/ui/theme.py` — this document explains how to use it.
 If code and this guide disagree, fix whichever one is wrong.
 
 ---

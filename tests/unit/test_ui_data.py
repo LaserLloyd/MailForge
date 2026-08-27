@@ -10,7 +10,7 @@ All run on a temp SQLite DB with no network and no optional deps.
 
 from __future__ import annotations
 
-from siftforge.db.store import open_store
+from mailforge.db.store import open_store
 
 
 def _seed(store):
@@ -88,7 +88,7 @@ def test_recent_audit_newest_first(tmp_path):
 
 
 def test_inbox_rows_filter_and_search(tmp_path):
-    from siftforge.ui.pages import inbox
+    from mailforge.ui.pages import inbox
 
     store = open_store(tmp_path / "t.db")
     _seed(store)

@@ -6,8 +6,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from siftforge import demo
-from siftforge.db.store import open_store
+from mailforge import demo
+from mailforge.db.store import open_store
 
 
 @pytest.fixture()
@@ -100,7 +100,7 @@ def test_demo_config_uses_fictional_mailboxes_and_a_local_llm(tmp_path):
     text = (home / "config" / "config.toml").read_text(encoding="utf-8")
     cfg = tomllib.loads(text)
     # Mailboxes exist only so Compose has a From; every host is an example domain
-    # and the CLI disables listeners (SIFTFORGE_NO_LISTENERS=1).
+    # and the CLI disables listeners (MAILFORGE_NO_LISTENERS=1).
     hosts = {a["host"] for a in cfg["imap_accounts"]} | {a["smtp_host"] for a in cfg["imap_accounts"]}
     assert hosts and all(h.endswith((".example.com", ".example.net")) for h in hosts)
     assert "127.0.0.1:1234" in text
@@ -108,7 +108,7 @@ def test_demo_config_uses_fictional_mailboxes_and_a_local_llm(tmp_path):
 
 
 def test_demo_home_is_isolated_from_the_real_paths(tmp_path, monkeypatch):
-    from siftforge import paths
+    from mailforge import paths
 
     monkeypatch.setenv(paths.HOME_ENV, str(tmp_path / "demo-home"))
     assert paths.data_dir() == (tmp_path / "demo-home" / "data").resolve()
@@ -122,8 +122,8 @@ def test_demo_home_is_isolated_from_the_real_paths(tmp_path, monkeypatch):
 def test_simulated_mailbox_reports_and_honours_refresh():
     import time
 
-    from siftforge.demo import SimulatedMailbox
-    from siftforge.mail.sync_state import registry
+    from mailforge.demo import SimulatedMailbox
+    from mailforge.mail.sync_state import registry
 
     box = SimulatedMailbox(name="test-sim", period_s=60)
     try:

@@ -352,7 +352,7 @@ wheels = [
 ]
 
 [[package]]
-name = "siftforge"
+name = "mailforge"
 version = "0.4.0"
 source = { editable = "." }
 dependencies = [

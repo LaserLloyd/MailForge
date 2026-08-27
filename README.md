@@ -1,4 +1,4 @@
-# SiftForge
+# MailForge
 
 A **self-contained, cross-platform (Linux + Windows) local-LLM email assistant**.
 It watches your mailbox, screens and classifies what arrives, and writes *draft*
@@ -12,7 +12,7 @@ click **Approve** before anything is ever sent.
 Try it in one command, with fictional data and no mailbox:
 
 ```bash
-uv run siftforge demo
+uv run mailforge demo
 ```
 
 ---
@@ -83,16 +83,16 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 uv tool install .
 
 # 3. look around first, with fictional data and no mailbox
-siftforge demo
+mailforge demo
 
 # 4. set up your real account — stores credentials in your OS keyring
-siftforge setup-wizard
+mailforge setup-wizard
 
 # 5. run it
-siftforge serve
+mailforge serve
 
 # 6. (optional) install as a background service that survives reboot
-siftforge service install
+mailforge service install
 ```
 
 ### Windows (PowerShell)
@@ -100,8 +100,8 @@ siftforge service install
 ```powershell
 irm https://astral.sh/uv/install.ps1 | iex
 uv tool install .
-siftforge service install        # installs a Windows service via WinSW
-siftforge setup-wizard
+mailforge service install        # installs a Windows service via WinSW
+mailforge setup-wizard
 ```
 
 Then open the `http://127.0.0.1:<port>/?token=…` URL it prints — the token is
@@ -119,7 +119,7 @@ uv tool install ".[policy,redteam]"   # offline flow policy + garak/promptfoo CI
 ### Working from a checkout
 
 ```bash
-uv run siftforge demo            # no install needed
+uv run mailforge demo            # no install needed
 uv run --extra dev pytest -q          # the test suite
 uv run ruff check src tests scripts   # lint
 ```
@@ -130,24 +130,24 @@ uv run ruff check src tests scripts   # lint
 
 | Command | What it does |
 |---|---|
-| `siftforge demo` | Throwaway install seeded with fictional mail — nothing real is touched |
-| `siftforge setup-wizard` | Interactive account / credential / config / DB setup |
-| `siftforge account-add` | Add another mailbox without replacing existing configuration |
-| `siftforge account-list` / `account-remove` | Inspect / detach mailboxes (history is kept) |
-| `siftforge serve` | Run the listener + agent + web UI |
-| `siftforge serve --no-ui` | Headless (e.g. under the service) |
-| `siftforge open` | Open an authenticated browser session to the running UI |
-| `siftforge ingest` | Embed your style guides / context docs for retrieval |
-| `siftforge references-refresh` | Rebuild the managed per-site knowledge handbooks |
-| `siftforge bridge <action> --site <id>` | Site-bound JSON stdin/stdout bridge for a local agent |
-| `siftforge purge-trash` | Report the deletion queue; `--yes` runs the sweep now |
-| `siftforge audit-verify` | Verify the audit hash chain is intact |
-| `siftforge service install\|start\|stop\|desktop` | Manage the background service / launcher |
-| `siftforge redteam` | Run offline red-team suites (garak / promptfoo) |
+| `mailforge demo` | Throwaway install seeded with fictional mail — nothing real is touched |
+| `mailforge setup-wizard` | Interactive account / credential / config / DB setup |
+| `mailforge account-add` | Add another mailbox without replacing existing configuration |
+| `mailforge account-list` / `account-remove` | Inspect / detach mailboxes (history is kept) |
+| `mailforge serve` | Run the listener + agent + web UI |
+| `mailforge serve --no-ui` | Headless (e.g. under the service) |
+| `mailforge open` | Open an authenticated browser session to the running UI |
+| `mailforge ingest` | Embed your style guides / context docs for retrieval |
+| `mailforge references-refresh` | Rebuild the managed per-site knowledge handbooks |
+| `mailforge bridge <action> --site <id>` | Site-bound JSON stdin/stdout bridge for a local agent |
+| `mailforge purge-trash` | Report the deletion queue; `--yes` runs the sweep now |
+| `mailforge audit-verify` | Verify the audit hash chain is intact |
+| `mailforge service install\|start\|stop\|desktop` | Manage the background service / launcher |
+| `mailforge redteam` | Run offline red-team suites (garak / promptfoo) |
 
 ### Demo mode
 
-`siftforge demo [--port N] [--no-browser] [--keep]` creates a temporary
+`mailforge demo [--port N] [--no-browser] [--keep]` creates a temporary
 application home (config + database) under your system temp directory, seeds ~25
 fictional messages across two sites, and starts the normal UI against it. It
 configures **no** IMAP account, so no mail is ever fetched or sent, and it never
@@ -237,13 +237,13 @@ Everything lives in one TOML file:
 
 | OS | Path |
 |---|---|
-| Linux | `~/.config/siftforge/config.toml` (data in `~/.local/share/siftforge/`) |
-| Windows | `%APPDATA%\siftforge\config.toml` (data in `%LOCALAPPDATA%`) |
+| Linux | `~/.config/mailforge/config.toml` (data in `~/.local/share/mailforge/`) |
+| Windows | `%APPDATA%\mailforge\config.toml` (data in `%LOCALAPPDATA%`) |
 
-Set `SIFTFORGE_HOME=/some/dir` to relocate both (`<dir>/config`,
+Set `MAILFORGE_HOME=/some/dir` to relocate both (`<dir>/config`,
 `<dir>/data`) — that is how demo mode isolates itself. Any setting can also come
-from the environment with the `SIFTFORGE_` prefix and `__` nesting
-(`SIFTFORGE_SECURITY__QUARANTINE_THRESHOLD=0.9`). **Passwords are never
+from the environment with the `MAILFORGE_` prefix and `__` nesting
+(`MAILFORGE_SECURITY__QUARANTINE_THRESHOLD=0.9`). **Passwords are never
 stored here** — they go to the OS keyring.
 
 ```toml
@@ -301,7 +301,7 @@ trash_retention_days = 60        # how long deleted mail is kept before it is
                                  # destroyed (spam/scam is never held)
 
 [style]
-style_guide_paths = []           # documents embedded by `siftforge ingest`
+style_guide_paths = []           # documents embedded by `mailforge ingest`
 context_doc_paths = []
 tone = "professional"
 
@@ -310,7 +310,7 @@ enabled = true
 prompt_override_dir = ""         # default: <config dir>/prompts
 heavy_lift_base_url = ""         # any OpenAI-compatible endpoint; "" => local only
 heavy_lift_model = ""
-heavy_lift_key_env = "SIFTFORGE_HEAVY_KEY"
+heavy_lift_key_env = "MAILFORGE_HEAVY_KEY"
 agent_send_enabled = false       # prompt-gated agent-relayed send; ships OFF
 agent_send_per_hour = 10
 agent_send_token_ttl_s = 900
@@ -332,7 +332,7 @@ screening_mode = "content_only"
 ```
 
 Sites also carry the knowledge-handbook keys used by
-`siftforge references-refresh`, which builds one canonical, indexed
+`mailforge references-refresh`, which builds one canonical, indexed
 handbook per site from your own source material:
 
 | Key | Meaning |
@@ -353,12 +353,12 @@ fully functional on your local LLM server. When one is present:
 
 - **Prompt updates** — drop updated `<name>.txt` templates (`system_planner`,
   `system_worker`, `classify`, `draft`, `revise`) into the prompt-override dir
-  (`<config dir>/prompts/`, or `SIFTFORGE_PROMPT_DIR`); they win over the
+  (`<config dir>/prompts/`, or `MAILFORGE_PROMPT_DIR`); they win over the
   packaged defaults with no restart. `openclaw.enabled = false` ignores them.
 - **Heavy lifting when online** — point `heavy_lift_base_url` at any
   OpenAI-compatible endpoint; when set *and reachable* the draft step uses it,
   and on any error it falls back to the local model.
-- **The bridge** — `siftforge bridge <action> --site <id>` speaks JSON on
+- **The bridge** — `mailforge bridge <action> --site <id>` speaks JSON on
   stdin/stdout: `status`, `list`, `get`, `propose`, `revise`, `daily-brief`,
   `weekly-summary`, `reference-search`, `notes`, `note-add`. Quarantined and
   screened-out messages are **metadata only**; eligible bodies come wrapped in
@@ -375,7 +375,7 @@ fully functional on your local LLM server. When one is present:
 
 ## Architecture
 
-`src/siftforge/`: `config.py`/`secrets.py` (settings + keyring), `db/`
+`src/mailforge/`: `config.py`/`secrets.py` (settings + keyring), `db/`
 (schema + the only place SQL lives), `mail/` (IMAP/SMTP, sanitize, normalize),
 `llm/` (bridge + structured output), `rag/` (chunk/embed/retrieve), `agent/`
 (deterministic graph, planner, quarantined worker, restricted tools),
@@ -384,7 +384,7 @@ fully functional on your local LLM server. When one is present:
 
 Paths resolve per-OS through `platformdirs`, so the same build behaves correctly
 on Linux and Windows. `packaging/pyinstaller.spec` (folder mode, never one-file)
-plus `installer/inno/siftforge.iss` produce a double-click Windows
+plus `installer/inno/mailforge.iss` produce a double-click Windows
 installer for machines with no Python.
 
 ---

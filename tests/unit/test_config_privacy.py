@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from siftforge import __version__
-from siftforge.config import Settings
+from mailforge import __version__
+from mailforge.config import Settings
 
 
 def test_version_matches_package_metadata():

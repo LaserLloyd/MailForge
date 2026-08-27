@@ -6,8 +6,8 @@ import sqlite3
 
 import pytest
 
-from siftforge.db.store import Store, open_store
-from siftforge.response_templates import EXAMPLE_TEMPLATES
+from mailforge.db.store import Store, open_store
+from mailforge.response_templates import EXAMPLE_TEMPLATES
 
 
 def _message(store: Store, *, site_id: str = "main", uid: int = 1) -> int:
