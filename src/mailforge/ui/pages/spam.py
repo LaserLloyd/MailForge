@@ -212,7 +212,7 @@ def _render_row(
                     ).classes("bb-clip-1").style("font-weight: 700; font-size: 12.5px")
                     ui.space()
                     ui.label(_short_time(_value(row, "received_at"))).style(
-                        "font-size: 10.5px; color: var(--text-muted); flex-shrink: 0"
+                        "font-size: 10.5px; color: var(--text-tertiary); flex-shrink: 0"
                     )
                 theme.subject_label(
                     _value(row, "subject"), style="font-size: 13px; font-weight: 650"
@@ -221,10 +221,10 @@ def _render_row(
                 if text:
                     with ui.row().classes("w-full items-start no-wrap").style("gap: 5px"):
                         ui.icon("schedule" if text_tone == "warning" else "info", size="13px").style(
-                            f"color: var(--{text_tone}); margin-top: 2px; flex-shrink: 0"
+                            f"color: {theme.tone_text(text_tone)}; margin-top: 2px; flex-shrink: 0"
                         )
                         ui.label(text).style(
-                            f"font-size: 11.5px; color: var(--{text_tone}); "
+                            f"font-size: 11.5px; color: {theme.tone_text(text_tone)}; "
                             "overflow-wrap: anywhere"
                         )
                 with ui.row().classes("w-full items-center").style("gap: 4px"):
@@ -241,7 +241,7 @@ def _render_row(
                     if _value(row, "server_delete_error"):
                         theme.badge("server delete failed", "error")
                     if _value(row, "has_attachments", 0):
-                        ui.icon("attach_file", size="14px").style("color: var(--text-muted)")
+                        ui.icon("attach_file", size="14px").style("color: var(--text-tertiary)")
                     ui.space()
                     open_btn = ui.button(
                         icon="open_in_new",
@@ -253,8 +253,8 @@ def _render_row(
                     open_btn.tooltip("Open the full message in a new tab")
                 body = str(_value(row, "sanitized_text", "") or "")
                 preview = ui.label(_snippet(body, 700) if body else "(no preview here)").style(
-                    "font-size: 11.5px; color: var(--text-muted); white-space: pre-wrap; "
-                    "overflow-wrap: anywhere; border-left: 2px solid var(--border-light); "
+                    "font-size: 11.5px; color: var(--text-tertiary); white-space: pre-wrap; "
+                    "overflow-wrap: anywhere; border-left: 2px solid var(--border-strong); "
                     "padding-left: 9px; margin-top: 4px"
                 )
                 preview.set_visibility(False)
@@ -287,11 +287,11 @@ def _box(
     syncing = False
 
     with ui.card().classes("w-full bb-card").style(
-        f"padding: 0; gap: 0; border-color: var(--{tone})"
+        f"padding: 0; gap: 0; border-color: {theme.tone_border(tone)}"
     ):
         with ui.column().classes("w-full").style("padding: 13px 15px 10px; gap: 3px"):
             with ui.row().classes("w-full items-center no-wrap").style("gap: 9px"):
-                ui.icon(icon, size="21px").style(f"color: var(--{tone})")
+                ui.icon(icon, size="21px").style(f"color: {theme.tone_text(tone)}")
                 ui.label(title).style("font-size: 16px; font-weight: 800")
                 theme.badge(
                     f"{len(rows)}{'+' if len(rows) >= _LIMIT else ''}",
@@ -303,7 +303,7 @@ def _box(
 
         if not rows:
             with ui.column().classes("w-full items-center").style("padding: 16px"):
-                ui.icon("check_circle", size="24px").style("color: var(--success)")
+                ui.icon("check_circle", size="24px").style("color: var(--success-text)")
                 ui.label(empty_text).style("font-size: 12.5px; color: var(--text-secondary)")
             return
 
@@ -347,7 +347,7 @@ def _box(
             ui.row()
             .classes("w-full items-center bb-toolbar")
             .style(
-                "gap: 6px; padding: 7px 12px; background: var(--bg-secondary); "
+                "gap: 6px; padding: 7px 12px; background: var(--surface-1); "
                 "border-top: 1px solid var(--border); border-bottom: 1px solid var(--border)"
             )
         ):
@@ -357,7 +357,7 @@ def _box(
             )
             ui.label("shift-click for a range · click a row to preview").classes(
                 "bb-header-note"
-            ).style("font-size: 11px; color: var(--text-muted)")
+            ).style("font-size: 11px; color: var(--text-tertiary)")
             ui.space()
             bulk_buttons.extend(actions(lambda: selection.ids, rows) or [])
 
@@ -511,7 +511,7 @@ def render(store: object, settings: object, account: str = "") -> None:
             ui.label(
                 f"Spam and scam mail is deleted immediately. Anything else you delete is "
                 f"held for {days} days, then removed automatically. {server_note}"
-            ).style("font-size: 12px; color: var(--text-muted)")
+            ).style("font-size: 12px; color: var(--text-tertiary)")
         ui.space()
         if accounts:
             ui.select(
@@ -609,4 +609,4 @@ def render(store: object, settings: object, account: str = "") -> None:
     ui.label(
         "Links in these messages are never loaded or clickable. For any account, "
         "payment, renewal, or security claim, open the provider's site yourself."
-    ).style("font-size: 11.5px; color: var(--text-muted)")
+    ).style("font-size: 11.5px; color: var(--text-tertiary)")

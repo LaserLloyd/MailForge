@@ -16,7 +16,7 @@ def render(site_id: str, settings: object, *, full: bool = False) -> None:
     site = str(site_id).strip().lower()
     sites = getattr(settings, "sites", None) or {}
     if site not in sites:
-        ui.label("Unknown knowledge site.").style("color: var(--error)")
+        ui.label("Unknown knowledge site.").style("color: var(--danger-text)")
         return
     site_name = getattr(sites[site], "name", site)
     if not str(getattr(sites[site], "knowledge_root", "") or "").strip():
@@ -35,7 +35,7 @@ def render(site_id: str, settings: object, *, full: bool = False) -> None:
         except Exception as e:  # noqa: BLE001
             log.exception("could not generate handbook for %s", site)
             ui.label(f"Handbook could not be generated: {e}").style(
-                "color: var(--error)"
+                "color: var(--danger-text)"
             )
             return
 

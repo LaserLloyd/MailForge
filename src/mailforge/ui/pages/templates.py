@@ -99,7 +99,7 @@ def render(
                 ui.label(
                     "Allowed placeholders: {{first_name}}, {{site_name}}, {{signature}}, "
                     "{{today}}, {{question}}, {{next_step}}"
-                ).style("font-size: 11.5px; color: var(--text-muted)")
+                ).style("font-size: 11.5px; color: var(--text-tertiary)")
 
                 def _save() -> None:
                     try:
@@ -163,7 +163,7 @@ def render(
                                 "font-weight: 800"
                             )
                             ui.label(str(_value(row, "category", "General"))).style(
-                                "font-size: 11.5px; color: var(--text-muted)"
+                                "font-size: 11.5px; color: var(--text-tertiary)"
                             )
                         if _value(row, "is_system", 0):
                             theme.badge("BUILT IN", "accent")

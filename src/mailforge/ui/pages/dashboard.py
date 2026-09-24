@@ -48,7 +48,7 @@ def _stat(value: int, label: str, *, color: str = "", href: str = "") -> None:
         chip.style("cursor: pointer").on("click", lambda h=href: ui.navigate.to(h))
     with chip:
         ui.label(str(value)).classes("bb-stat-n").style(
-            f"color: var(--{color})" if color else ""
+            f"color: {theme.tone_text(color)}" if color else ""
         )
         ui.label(label).classes("bb-stat-l")
 
@@ -63,7 +63,7 @@ def _metric(value: int, label: str, href: str, *, color: str = "") -> None:
     cell.on("click", lambda h=href: ui.navigate.to(h))
     with cell:
         ui.label(str(value)).classes("bb-metric-n").style(
-            f"color: var(--{color})" if color and value else ""
+            f"color: {theme.tone_text(color)}" if color and value else ""
         )
         ui.label(label).classes("bb-metric-l")
 
@@ -74,13 +74,13 @@ def _inbox_tile(metrics: dict[str, Any], site_labels: dict[str, str]) -> None:
     site_id = str(metrics.get("site_id", "") or "")
     with ui.card().classes("bb-card bb-inbox-tile"):
         with ui.row().classes("w-full items-center no-wrap").style("gap: 8px"):
-            ui.icon("inbox", size="19px").style("color: var(--accent-hover)")
+            ui.icon("inbox", size="19px").style("color: var(--text-link)")
             with ui.column().classes("col").style("gap: 0; min-width: 0"):
                 ui.label(account or "(unnamed inbox)").classes("bb-clip-1").style(
                     "font-weight: 800; font-size: 15px"
                 )
                 ui.label(str(metrics.get("username", "") or "")).classes("bb-clip-1").style(
-                    "font-size: 11.5px; color: var(--text-muted)"
+                    "font-size: 11.5px; color: var(--text-tertiary)"
                 )
             if site_id:
                 theme.badge(site_labels.get(site_id, site_id), "accent")
@@ -92,7 +92,7 @@ def _inbox_tile(metrics: dict[str, Any], site_labels: dict[str, str]) -> None:
                 _metric(count, label, _inbox_url(account, view), color=color)
         with ui.row().classes("w-full items-center no-wrap").style("gap: 6px"):
             ui.label(f"{int(metrics.get('total', 0) or 0)} in this inbox").style(
-                "font-size: 11.5px; color: var(--text-muted)"
+                "font-size: 11.5px; color: var(--text-tertiary)"
             )
             ui.space()
             ui.link("Open inbox", _inbox_url(account)).style("font-size: 12px")
@@ -223,7 +223,7 @@ class _BulkSelection:
                 "font-size: 12px; color: var(--text-secondary)"
             )
             ui.label("shift-click for a range").classes("bb-header-note").style(
-                "font-size: 11px; color: var(--text-muted)"
+                "font-size: 11px; color: var(--text-tertiary)"
             )
             ui.space()
             self.buttons = [
@@ -279,7 +279,7 @@ def _message_row(
             ui.icon(
                 "mark_email_unread" if not _value(row, "seen", 0) else "mail",
                 size="18px",
-            ).style("color: var(--accent-hover); margin-top: 3px")
+            ).style("color: var(--text-link); margin-top: 3px")
             with ui.column().classes("col").style("gap: 2px; min-width: 0"):
                 with ui.row().classes("w-full items-center no-wrap").style("gap: 8px"):
                     ui.label(
@@ -291,7 +291,7 @@ def _message_row(
                     ).classes("bb-clip-1").style("font-weight: 700")
                     ui.space()
                     ui.label(_short_time(_value(row, "received_at"))).style(
-                        "font-size: 11px; color: var(--text-muted); flex-shrink: 0"
+                        "font-size: 11px; color: var(--text-tertiary); flex-shrink: 0"
                     )
                 theme.subject_label(
                     _value(row, "subject", ""),
@@ -303,7 +303,7 @@ def _message_row(
                 ).upper() in {"POTENTIAL_SPAM", "POTENTIAL_ISSUE", "SPAM"}
                 if snippet and not _value(row, "quarantined", 0) and not withheld:
                     ui.label(snippet).classes("bb-clip-1").style(
-                        "font-size: 11.5px; color: var(--text-muted)"
+                        "font-size: 11.5px; color: var(--text-tertiary)"
                     )
                 with ui.row().classes("items-center").style("gap: 5px"):
                     if _value(row, "quarantined", 0):
@@ -392,7 +392,7 @@ def refresh(store: object, settings: object) -> None:
             "padding: 14px; flex: 1 1 400px; min-width: 0"
         ):
             with ui.row().classes("w-full items-center"):
-                ui.icon("reply", size="18px").style("color: var(--warning)")
+                ui.icon("reply", size="18px").style("color: var(--warning-text)")
                 ui.label("Needs a reply").style("font-size: 16px; font-weight: 800")
                 ui.space()
                 ui.link("View all", "/mail?filter=needs-reply").style("font-size: 12px")
@@ -408,7 +408,7 @@ def refresh(store: object, settings: object) -> None:
             "padding: 14px; flex: 1 1 400px; min-width: 0"
         ):
             with ui.row().classes("w-full items-center"):
-                ui.icon("pending_actions", size="18px").style("color: var(--accent-hover)")
+                ui.icon("pending_actions", size="18px").style("color: var(--text-link)")
                 ui.label("Needs your action").style("font-size: 16px; font-weight: 800")
                 ui.space()
                 ui.link("Open AI Review", "/drafts").style("font-size: 12px")
@@ -436,7 +436,7 @@ def refresh(store: object, settings: object) -> None:
                             ui.label(
                                 f"→ {_value(row, 'recipient', '') or ''}"
                             ).classes("bb-clip-1").style(
-                                "font-size: 11.5px; color: var(--text-muted)"
+                                "font-size: 11.5px; color: var(--text-tertiary)"
                             )
                         theme.state_badge(str(_value(row, "state", "")))
 

@@ -1,8 +1,9 @@
 # MailForge — UI Style Guide
 
 Canonical style guide for the NiceGUI frontend in `src/mailforge/ui/`.
-The single source of truth for tokens and CSS is
-`src/mailforge/ui/theme.py` — this document explains how to use it.
+Colours come from the shared theme folder `src/mailforge/ui/static/ui-theme/`
+(see §2); layout and component CSS live in `src/mailforge/ui/theme.py` —
+this document explains how to use both.
 If code and this guide disagree, fix whichever one is wrong.
 
 ---
@@ -16,16 +17,17 @@ If code and this guide disagree, fix whichever one is wrong.
   Code', ui-monospace, monospace`) — if those fonts aren't installed
   locally, the browser falls back silently. Never add a `@font-face` that
   points at a URL.
-- **Dark-first.** `theme.apply()` calls `ui.dark_mode().enable()`
-  unconditionally. There is no light theme.
-- **One accent color.** `--accent` (`#6366f1`, indigo) is the only brand
-  hue. Green/red/amber/cyan are reserved for state only — never
+- **Themes are picked, not coded.** The user picks a theme in the sidebar
+  (dark and light ones); Quasar's dark mode follows it. Never assume a dark
+  background.
+- **One accent color.** `--accent` (whatever the theme makes it) is the only
+  brand hue. Status colours are reserved for state only — never
   decorative. Reuse `--accent` for new features instead of adding a color.
 - **Flat cards, 1px borders.** `.bb-card` uses `box-shadow: none`; depth
-  comes from a 1px `var(--border)` line plus `var(--bg-tertiary)` on
-  `var(--bg-primary)`, not shadows or gradients.
+  comes from a 1px `var(--border)` line plus `var(--surface-2)` on
+  `var(--surface-0)`, not shadows or gradients.
 - **Security states are always visually loud.** Quarantine and
-  blocked/rejected states use the red (`--error`) family with an icon
+  blocked/rejected states use the danger (`--danger*`) family with an icon
   (`gpp_maybe`) — never a quiet gray badge.
 - **Human-approval messaging stays visible.** `theme.shell()` renders
   "human approval — nothing sends without you" in the header on every page
@@ -35,39 +37,46 @@ If code and this guide disagree, fix whichever one is wrong.
 
 ---
 
-## 2. Design tokens
+## 2. Themes and design tokens
 
-All tokens live in `_CSS`'s `:root` block in `theme.py`. **Change colors
-only by editing these variables** — never hard-code a hex value in a page
-file; add a new variable + table row together if you need a new semantic
-color.
+MailForge does not define colours. They come from the **shared theme
+folder** `src/mailforge/ui/static/ui-theme/`, a verbatim copy of the drop-in
+folder every app uses: the theme runtime, the tokens for every theme, the
+NiceGUI/Quasar adapter, and `VERSION` (`ui-theme <revision date> <digest>`,
+the marker a theme update is checked against). **Never edit a file in that
+folder.** To update the themes, replace the whole folder with a newer copy —
+from the theme repository, `python tools/sync_theme.py status` shows whether
+MailForge is behind and `update --apply` copies the newer folder in. Nothing
+else changes: it is served at `/mf-theme/` with `no-cache`, so a new copy is
+live on the next page load.
 
-| Variable | Value | Usage |
-|---|---|---|
-| `--bg-primary` | `#0b1121` | Page/body background, full-window reader background. |
-| `--bg-secondary` | `#101830` | Header, sidebar drawer, AI drawer, reader sticky header. |
-| `--bg-tertiary` | `#16203f` | Cards (`.bb-card`), rows (`.bb-row`), stat chips. Same value as `--bot-bubble`. |
-| `--bg-hover` | `#1d2a52` | Hover state for nav buttons/rows; badge default background. |
-| `--bg-input` | `#131c38` | Quasar outlined-field background. |
-| `--text-primary` | `#e7ecf8` | Body copy. |
-| `--text-secondary` | `#93a1c4` | Metadata, secondary labels, default nav text, badge default text. |
-| `--text-muted` | `#5a6a94` | Timestamps, muted icons, inactive health dot. |
-| `--accent` | `#6366f1` | Active-nav border, selected-row border, `color=primary`. |
-| `--accent-hover` | `#818cf8` | Hover/active tint, links, unread-mail icon. |
-| `--accent-muted` | `rgba(99, 102, 241, 0.16)` | Active-nav background, accent badge background. |
-| `--border` | `#24304f` | Default 1px border on cards/rows/dividers. |
-| `--border-light` | `#2f3d66` | Hover border, badge default border, scrollbar thumb. |
-| `--user-bubble` | `rgba(99, 102, 241, 0.20)` | Outbound/user chat bubble fill. |
-| `--bot-bubble` | `#16203f` | Inbound/assistant chat bubble fill. |
-| `--success` | `#34d399` | SENT/APPROVED, "known recipient", Quasar `positive`. |
-| `--error` | `#f87171` | BLOCKED/REJECTED, quarantine, "NEW EXTERNAL", Quasar `negative`. |
-| `--warning` | `#fbbf24` | DEFERRED, mid-risk injection score, Quasar `warning`. |
-| `--info` | `#22d3ee` | Wired to Quasar `info`; no `.bb-*` consumer yet — available for a future info-only badge. |
-| `--radius-sm` | `6px` | Reserved — no current consumer. |
-| `--radius-md` | `12px` | Standard radius: cards, rows, buttons, inputs, bubbles, expansions. |
-| `--radius-lg` | `16px` | Reserved — no current consumer. |
-| `--font-sans` | `'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif` | All UI chrome and body text. |
-| `--font-mono` | `'JetBrains Mono', 'Fira Code', ui-monospace, monospace` | Code blocks, `.bb-mono`, `<code>`/`<pre>`. |
+MailForge's own settings are `THEME_SETTINGS` in `theme.py`: the picker's
+themes and order (the six core themes plus Night Red), the default for a new
+browser (`midnight-gold`) and the storage key (`mailforge.theme`). A theme
+added there needs a service restart.
+
+Component CSS in `theme.py` and inline styles in page files read **contract
+tokens only**, never a literal colour:
+
+| Token | Usage |
+|---|---|
+| `--surface-0` | Page/body background, full-window reader background. |
+| `--surface-1` | Header, sidebar drawer, AI drawer, reader sticky header, metric cells. |
+| `--surface-2` | Cards (`.bb-card`), rows (`.bb-row`), stat chips, sync chip. |
+| `--surface-3` | Hover state for nav buttons/rows; badge default background. |
+| `--surface-sunken` | Quasar outlined-field background, theme picker. |
+| `--text-primary` / `--text-secondary` / `--text-tertiary` | Body copy / metadata and labels / timestamps and muted icons. Make text quieter with a lower tier, never with opacity. |
+| `--text-link` | Links, accent-tinted text and icons. |
+| `--accent`, `--accent-subtle` | Active-nav and selected-row borders, `color=primary` / their wash backgrounds. |
+| `--border`, `--border-strong` | Default 1px border / hover border, badge border, dividers. |
+| `--bubble-user-*`, `--bubble-assistant-*` | Chat bubbles (bg, text, border). |
+| `--success*`, `--warning*`, `--danger*`, `--info*` | State colours: the bare token is a fill, `-text` is for text and icons, `-subtle` a background, `-border` an edge. |
+| `--radius-sm` / `--radius-md` / `--radius-lg` | Radii; `--radius-md` is the standard. |
+| `--font-sans` / `--font-mono` | UI text / code blocks, `.bb-mono`, `<code>`/`<pre>`. |
+
+Pages that pass a status tone by name (`"warning"`, `"error"`, `"success"`,
+`"accent-hover"`, ...) resolve it with `theme.tone_text(tone)` for text or an
+icon and `theme.tone_border(tone)` for an edge, so light themes stay readable.
 
 ---
 
@@ -158,7 +167,7 @@ button. Follow this pattern for any new split-pane view.
 
 ## 5. Components
 
-**`.bb-card`** — base surface (`var(--bg-tertiary)`, 1px border, 12px
+**`.bb-card`** — base surface (`var(--surface-2)`, 1px border, 12px
 radius, no shadow). Use for any self-contained block.
 
 ```python
@@ -167,7 +176,7 @@ with ui.card().classes("w-full bb-card").style("padding: 12px; gap: 6px"):
 ```
 
 **`.bb-row`** — clickable list row (inbox rows, dashboard mini-rows). Same
-surface as a card plus pointer cursor and hover (`--bg-hover` /
+surface as a card plus pointer cursor and hover (`--surface-3` /
 `--border-light`). Add `.bb-row--selected` for the open row (accent border
 + tinted background). Build on `ui.element("div")`, not `ui.card()` — cards
 carry Quasar shadow/ripple assumptions that fight the flat style.
@@ -311,10 +320,9 @@ kinds = {
 ```
 
 (`DEFERRED_NO_LLM` displays as "DEFERRED".) Pending work is accent
-("needs you"); anything sent or explicitly approved is `--success` green;
+("needs you"); anything sent or explicitly approved is `--success`;
 anything that cannot proceed (rejected, or blocked by a guardrail) is
-`--error` red; anything waiting on an unavailable resource is `--warning`
-amber. `DRAFT` (untouched) gets the neutral badge — it hasn't earned a
+`--danger`; anything waiting on an unavailable resource is `--warning`. `DRAFT` (untouched) gets the neutral badge — it hasn't earned a
 color yet.
 
 ### Quarantine
@@ -323,10 +331,10 @@ Always the error family, always paired with the `gpp_maybe` icon and an
 explanation — never a silent badge:
 
 ```python
-with ui.card().classes("w-full bb-card").style("padding: 12px; border-color: var(--error)"):
-    ui.icon("gpp_maybe", size="22px").style("color: var(--error)")
+with ui.card().classes("w-full bb-card").style("padding: 12px; border-color: var(--danger-border)"):
+    ui.icon("gpp_maybe", size="22px").style("color: var(--danger-text)")
     ui.label("Quarantined — suspected prompt injection").style(
-        "font-weight: 800; color: var(--error)"
+        "font-weight: 800; color: var(--danger-text)"
     )
 ```
 
@@ -394,11 +402,12 @@ security actions, the user opens the provider's known site independently.
 
 ## 9. Accessibility
 
-- **Contrast is a chosen pairing.** The standard body/card pairing is
-  `--text-secondary` (`#93a1c4`) on `--bg-tertiary` (`#16203f`) — roughly
-  7.4:1. `--text-muted` (`#5a6a94`, ~3.9:1 on `--bg-tertiary`) is for
-  genuinely secondary decoration only (timestamps, muted icons, disabled
-  affordances) — never the sole copy of an important fact.
+- **Contrast comes from the theme, not from this app.** Every theme's text
+  tiers are contrast-checked on its surfaces by the theme repository, so use
+  the tiers as meant: `--text-secondary` on `--surface-2` is the standard
+  body/card pairing; `--text-tertiary` is for genuinely secondary decoration
+  only (timestamps, muted icons, disabled affordances) — never the sole copy
+  of an important fact. State text uses the `-text` tier (`theme.tone_text`).
 - **Tooltips carry the full content whenever something is clamped.** This
   is load-bearing for `.bb-subject`'s 2-line clamp: `subject_label()`
   always attaches a `ui.tooltip(text)` with the untruncated subject in list

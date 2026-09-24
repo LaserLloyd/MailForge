@@ -208,7 +208,7 @@ def _gate(token: str | None) -> bool:
 def _denied() -> None:
     theme.apply()
     with ui.column().classes("absolute-center items-center").style("gap: 10px"):
-        ui.icon("lock", size="42px").style("color: var(--error)")
+        ui.icon("lock", size="42px").style("color: var(--danger-text)")
         ui.label("Access denied").classes("text-h5").style("font-weight:700")
         ui.label(
             "Open the URL printed to the console (it carries a one-shot launch "
@@ -264,6 +264,50 @@ def _install_host_guard(port: int) -> None:
                 await send({"type": "websocket.close", "code": 1008})
 
     nicegui_app.add_middleware(_HostHeaderGuard)
+
+
+# --------------------------------------------------------------------------- #
+# Theme folder
+# --------------------------------------------------------------------------- #
+_THEME_INSTALLED = False
+
+
+def _install_theme_files() -> None:
+    """Serve the shared theme folder (ui/static/ui-theme/) at theme.THEME_URL.
+
+    Its URLs carry no version, because replacing the folder is the whole theme
+    update; so every response is sent `no-cache` (revalidate, a cheap 304) and
+    a new copy is live on the next page load. Idempotent."""
+    global _THEME_INSTALLED
+    if _THEME_INSTALLED:
+        return
+    _THEME_INSTALLED = True
+    if not theme.THEME_DIR.is_dir():
+        log.warning("theme folder missing (%s); pages render unthemed", theme.THEME_DIR)
+        return
+    nicegui_app.add_static_files(theme.THEME_URL, str(theme.THEME_DIR))
+    prefix = theme.THEME_URL + "/"
+
+    class _ThemeNoCache:
+        def __init__(self, app: Any) -> None:
+            self.app = app
+
+        async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+            if scope.get("type") != "http" or not scope.get("path", "").startswith(prefix):
+                await self.app(scope, receive, send)
+                return
+
+            async def _send(message: Any) -> None:
+                if message.get("type") == "http.response.start":
+                    headers = [(k, v) for k, v in message.get("headers", [])
+                               if k.lower() != b"cache-control"]
+                    headers.append((b"cache-control", b"no-cache"))
+                    message = {**message, "headers": headers}
+                await send(message)
+
+            await self.app(scope, receive, _send)
+
+    nicegui_app.add_middleware(_ThemeNoCache)
 
 
 # --------------------------------------------------------------------------- #
@@ -521,6 +565,7 @@ def build_app(
     storage_secret = _load_or_create_storage_secret()
 
     _install_host_guard(_PORT)
+    _install_theme_files()
     _register_pages(store, settings, bridge)
 
     return {

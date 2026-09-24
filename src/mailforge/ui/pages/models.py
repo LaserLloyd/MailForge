@@ -28,11 +28,11 @@ def _model_key(m: Any) -> str:
 
 def _down_banner() -> None:
     """Red LM-Studio-down banner with recovery guidance (spec §6)."""
-    with ui.card().classes("bb-card w-full").style("border-color: var(--error)"):
+    with ui.card().classes("bb-card w-full").style("border-color: var(--danger-text)"):
         with ui.row().classes("items-center").style("gap: 8px"):
-            ui.icon("cloud_off", size="22px").style("color: var(--error)")
+            ui.icon("cloud_off", size="22px").style("color: var(--danger-text)")
             ui.label("LM Studio is DOWN").classes("text-h6").style(
-                "color: var(--error); font-weight: 700"
+                "color: var(--danger-text); font-weight: 700"
             )
         ui.label(
             "Drafts will be deferred (DEFERRED_NO_LLM) until it returns — no mail "
@@ -45,7 +45,7 @@ def _down_banner() -> None:
 def render(bridge: object | None) -> None:
     """Render immediately, then populate the remote inventory in the background."""
     if bridge is None:
-        with ui.card().classes("bb-card w-full").style("border-color: var(--warning)"):
+        with ui.card().classes("bb-card w-full").style("border-color: var(--warning-text)"):
             ui.label("No LM Studio bridge configured.").classes("text-weight-bold")
             ui.label(
                 "Install the 'llm' extra and configure llm.lm_studio_host to enable "
@@ -58,7 +58,7 @@ def render(bridge: object | None) -> None:
 
     with ui.card().classes("bb-card w-full"):
         ui.label("Configured (loaded) models").classes("text-subtitle1 text-weight-bold").style(
-            "color: var(--accent-hover)"
+            "color: var(--text-link)"
         )
         ui.label(f"Chat: {chat_id or '?'}")
         ui.label(f"Embedding: {embed_id or '?'}")
@@ -66,7 +66,7 @@ def render(bridge: object | None) -> None:
     inventory = ui.card().classes("bb-card w-full q-mt-md")
     with inventory:
         ui.label("Downloaded / on-disk models").classes("text-subtitle1 text-weight-bold").style(
-            "color: var(--accent-hover)"
+            "color: var(--text-link)"
         )
         with ui.row().classes("items-center").style("gap: 10px"):
             ui.spinner(size="20px")
@@ -99,7 +99,7 @@ def render(bridge: object | None) -> None:
             with inventory:
                 ui.label("Downloaded / on-disk models").classes(
                     "text-subtitle1 text-weight-bold"
-                ).style("color: var(--accent-hover)")
+                ).style("color: var(--text-link)")
                 if not models:
                     ui.label("No models reported by LM Studio.").classes("text-grey")
                     return

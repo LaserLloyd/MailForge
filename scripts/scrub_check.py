@@ -229,6 +229,18 @@ class Hit(NamedTuple):
         return f"{shown}:{self.line_no}: {self.category}: {self.match}"
 
 
+#: The shared theme folder, vendored verbatim (replaced wholesale on a theme
+#: update, so it cannot carry pragmas). It names two of the shared themes by
+#: their brand slug, which is a local identifier here; that one category is
+#: exempt inside the folder. Every other rule (secrets, hosts, paths, ...)
+#: still scans it. Owner decision 2026-09-24.
+VENDORED_THEME = "src/mailforge/ui/static/ui-theme/"
+
+
+def _is_vendored_theme(path: Path) -> bool:
+    return VENDORED_THEME in path.as_posix() + ("/" if path.is_dir() else "")
+
+
 def _is_local_rules(path: Path) -> bool:
     """The private identifier list is git-ignored; scanning it is all noise."""
     return path.name == LOCAL_RULES_PATH.name
@@ -260,6 +272,7 @@ def scan_text(text: str, path: Path = Path("<text>"),
         rules = active_rules()
     hits: list[Hit] = []
     exempt_region = False
+    vendored_theme = _is_vendored_theme(path)
     for line_no, line in enumerate(text.splitlines(), start=1):
         if REGION_BEGIN in line:
             exempt_region = True
@@ -278,6 +291,8 @@ def scan_text(text: str, path: Path = Path("<text>"),
                 continue
             if rule.category == LOCAL_CATEGORY and licence_notice:
                 continue  # a copyright holder is published on purpose
+            if rule.category == LOCAL_CATEGORY and vendored_theme:
+                continue  # the shared theme folder's slugs (VENDORED_THEME)
             if rule.category == "secret-assignment" and _SAFE_VALUE.search(line):
                 continue
             hits.append(Hit(path, line_no, rule.category, match.group(0)[:80]))

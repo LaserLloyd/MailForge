@@ -227,11 +227,11 @@ def render_drawer(
         ).classes("bb-ai-drawer")
     with drawer:
         with ui.row().classes("w-full items-center no-wrap q-pa-sm"):
-            ui.icon("auto_awesome", size="22px").style("color: var(--accent-hover)")
+            ui.icon("auto_awesome", size="22px").style("color: var(--text-link)")
             with ui.column().style("gap: 0"):
                 ui.label("AI response workshop").style("font-weight: 800")
                 ui.label(f"{site_id} references only · {model_used}").style(
-                    "font-size: 11px; color: var(--text-muted)"
+                    "font-size: 11px; color: var(--text-tertiary)"
                 )
             ui.space()
             ui.button(icon="close", on_click=drawer.hide).props("flat round dense")
@@ -258,7 +258,7 @@ def render_drawer(
                         "w-full items-end" if role == "user" else "w-full items-start"
                     ).style("gap: 4px"):
                         ui.label("You" if role == "user" else "AI").style(
-                            "font-size: 11px; color: var(--text-muted)"
+                            "font-size: 11px; color: var(--text-tertiary)"
                         )
                         if role == "assistant":
                             with ui.element("div").classes(
@@ -295,7 +295,7 @@ def render_drawer(
             placeholder="Draft a response, or tell the AI what to revise…",
         ).props("outlined autogrow").classes("w-full q-px-sm")
         status = ui.label("").classes("q-px-sm").style(
-            "font-size: 11.5px; color: var(--text-muted)"
+            "font-size: 11.5px; color: var(--text-tertiary)"
         )
 
         async def _generate() -> None:

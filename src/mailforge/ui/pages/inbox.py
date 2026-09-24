@@ -130,17 +130,17 @@ def _render_row(row: dict[str, Any], show_state: bool) -> None:
                 with ui.row().classes("items-center no-wrap").style("gap: 6px"):
                     ui.label(f"→ {row['recipient']}").style(
                         "font-size: 12px; "
-                        + ("color: var(--error); font-weight: 700"
-                           if row["external"] else "color: var(--text-muted)")
+                        + ("color: var(--danger-text); font-weight: 700"
+                           if row["external"] else "color: var(--text-tertiary)")
                     )
                     if row["external"]:
                         theme.badge("external", "error")
                 if row["preview"]:
                     ui.label(row["preview"]).classes("bb-clip-1").style(
-                        "color: var(--text-muted); font-size: 12.5px; max-width: 640px"
+                        "color: var(--text-tertiary); font-size: 12.5px; max-width: 640px"
                     )
             with ui.column().classes("items-end").style("gap: 5px; flex-shrink: 0"):
-                ui.label(row["time"]).style("font-size: 11.5px; color: var(--text-muted)")
+                ui.label(row["time"]).style("font-size: 11.5px; color: var(--text-tertiary)")
                 with ui.row().classes("items-center").style("gap: 5px"):
                     if row["category"]:
                         theme.badge(row["category"], "accent")
@@ -161,7 +161,7 @@ def _inbox_body(store: object) -> None:
     deferred = int(counts.get("DEFERRED_NO_LLM", 0) or 0)
     with ui.element("div").classes("bb-card w-full q-pa-md"):
         with ui.row().classes("w-full items-center bb-toolbar").style("gap: 8px"):
-            ui.icon("account_tree", size="21px").style("color: var(--accent-hover)")
+            ui.icon("account_tree", size="21px").style("color: var(--text-link)")
             ui.label("Receive → sanitize/classify → site context → draft/revise → approve → send").style(
                 "font-size: 12.5px; font-weight: 650"
             )
@@ -173,22 +173,22 @@ def _inbox_body(store: object) -> None:
             if deferred
             else "Deferred retry queue is clear. You remain the final send authority."
         ).style(
-            "font-size: 11.5px; color: var(--warning)" if deferred
+            "font-size: 11.5px; color: var(--warning-text)" if deferred
             else "font-size: 11.5px; color: var(--text-secondary)"
         )
 
     with ui.row().classes("w-full bb-toolbar").style("gap: 10px"):
-        _stat_chip("Pending", counts.get("PENDING", 0), "var(--accent-hover)")
-        _stat_chip("Blocked", counts.get("BLOCKED", 0), "var(--error)")
-        _stat_chip("Deferred", counts.get("DEFERRED_NO_LLM", 0), "var(--warning)")
-        _stat_chip("Sent", counts.get("SENT", 0), "var(--success)")
+        _stat_chip("Pending", counts.get("PENDING", 0), "var(--text-link)")
+        _stat_chip("Blocked", counts.get("BLOCKED", 0), "var(--danger-text)")
+        _stat_chip("Deferred", counts.get("DEFERRED_NO_LLM", 0), "var(--warning-text)")
+        _stat_chip("Sent", counts.get("SENT", 0), "var(--success-text)")
 
     rows = rows_for_view(store, _view["tab"], _view["q"])
     show_state = _view["tab"] == "all"
 
     if not rows:
         with ui.column().classes("w-full items-center q-pa-xl").style("gap: 6px"):
-            ui.icon("mark_email_read", size="40px").style("color: var(--text-muted)")
+            ui.icon("mark_email_read", size="40px").style("color: var(--text-tertiary)")
             label = "No matching drafts." if _view["q"] else "Nothing here — all clear."
             ui.label(label).style("color: var(--text-secondary)")
         return

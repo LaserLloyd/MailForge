@@ -221,3 +221,19 @@ def test_bad_regex_in_local_rules_is_fatal(tmp_path):
     with pytest.raises(SystemExit) as e:
         scrub.load_local_rules(bad)
     assert e.value.code == 2
+
+
+# --------------------------------------------------------------------------- #
+# The vendored theme folder: only the local-identifier category is exempt.
+# --------------------------------------------------------------------------- #
+def test_vendored_theme_folder_exempts_only_local_identifiers():
+    rules = (
+        scrub.Rule(scrub.LOCAL_CATEGORY, scrub._rx(r"\bexamplebrand\b")),
+        scrub.Rule("private-ip", scrub._rx(r"\b192\.168\.\d+\.\d+\b")),
+    )
+    text = '[data-palette="examplebrand"] { }\nhost 192.168.9.9\n'  # scrub-check: allow
+    vendored = Path("src/mailforge/ui/static/ui-theme/ui-theme.css")
+    elsewhere = Path("src/mailforge/ui/theme.py")
+    assert [h.category for h in scrub.scan_text(text, vendored, rules)] == ["private-ip"]
+    assert sorted(h.category for h in scrub.scan_text(text, elsewhere, rules)) == [
+        scrub.LOCAL_CATEGORY, "private-ip"]

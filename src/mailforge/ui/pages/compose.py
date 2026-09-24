@@ -240,7 +240,7 @@ def render(
     """
     usernames = _account_usernames(settings)
     if not usernames:
-        ui.label("No mailbox configured — finish setup first.").style("color: var(--error)")
+        ui.label("No mailbox configured — finish setup first.").style("color: var(--danger-text)")
         return
 
     replied: Any = None
@@ -435,7 +435,7 @@ def render(
                 ui.label(
                     "Use headings, lists, links, emphasis, code blocks, and tables. "
                     "Recipients receive plain text plus a safe formatted HTML version."
-                ).style("font-size: 11.5px; color: var(--text-muted)")
+                ).style("font-size: 11.5px; color: var(--text-tertiary)")
             with ui.tab_panel("preview").classes("q-pa-sm"):
                 @ui.refreshable
                 def _preview() -> None:
@@ -448,7 +448,7 @@ def render(
                         )
 
                 _preview()
-        warn = ui.label("").style("font-size: 12.5px; color: var(--warning)")
+        warn = ui.label("").style("font-size: 12.5px; color: var(--warning-text)")
 
         def _values() -> tuple[str, str, str, str]:
             return (
@@ -579,7 +579,7 @@ def render(
                     "font-size: 13px; color: var(--text-secondary); overflow-wrap: anywhere"
                 )
                 ui.label("This is the only action that transmits the message.").style(
-                    "font-size: 12px; color: var(--warning)"
+                    "font-size: 12px; color: var(--warning-text)"
                 )
                 with ui.row().classes("w-full justify-end").style("gap: 8px"):
                     ui.button("Cancel", on_click=dialog.close).props("flat no-caps")
@@ -596,7 +596,7 @@ def render(
 
         with ui.row().classes("w-full justify-end bb-toolbar").style("gap: 8px"):
             ui.label("Saved drafts stay local. Nothing auto-sends.").style(
-                "font-size: 11.5px; color: var(--text-muted); align-self: center"
+                "font-size: 11.5px; color: var(--text-tertiary); align-self: center"
             )
             ui.space()
             ui.button("Save Draft", icon="save", on_click=_save).props(
@@ -643,7 +643,7 @@ def render(
                             ui.label(
                                 f"To: {str(_value(row, 'recipient', '') or '(not set)')} · "
                                 f"{str(_value(row, 'updated_at', '') or '')[:19].replace('T', ' ')}"
-                            ).style("font-size: 11.5px; color: var(--text-muted)")
+                            ).style("font-size: 11.5px; color: var(--text-tertiary)")
                         ui.button(
                             icon="delete", on_click=lambda _e, i=did: _delete(i)
                         ).props("flat round dense color=negative")
@@ -671,12 +671,12 @@ def render(
                         "col bb-clip-1"
                     )
                     ui.label(str(_value(row, "recipient", "") or "")).style(
-                        "font-size: 11.5px; color: var(--text-muted)"
+                        "font-size: 11.5px; color: var(--text-tertiary)"
                     )
                     theme.badge("SENT", "success")
                     ui.label(
                         str(_value(row, "sent_at", "") or _value(row, "updated_at", ""))[:19]
                         .replace("T", " ")
-                    ).style("font-size: 11px; color: var(--text-muted)")
+                    ).style("font-size: 11px; color: var(--text-tertiary)")
 
     _sent_history()

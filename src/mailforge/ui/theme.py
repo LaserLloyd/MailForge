@@ -1,10 +1,11 @@
 """Shared UI theme + app shell — see docs/STYLE-GUIDE.md (the canonical guide).
 
-Modern dark "slate + indigo" system: deep blue-slate surfaces, a single indigo
-accent, Inter/JetBrains-Mono font stacks (system fallbacks only — the UI must
-work fully offline), 12px radii, a labeled navigation drawer, and flat cards
-with 1px borders. Change colors ONLY by editing the CSS variables below and
-the matching table in docs/STYLE-GUIDE.md.
+Colours come from the shared theme folder static/ui-theme/ (every theme the
+picker offers; generated files, replaced wholesale to update — never edited
+here). This module writes only layout and component styles, and those read
+contract tokens alone, so they follow whichever theme is picked. A labeled
+navigation drawer (with the theme picker at its foot), flat cards with 1px
+borders, system font fallbacks (the UI must work fully offline).
 
 Pages wrap their content in :func:`shell`:
 
@@ -21,6 +22,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any, Iterator
 
 from nicegui import background_tasks, ui
@@ -42,45 +44,54 @@ NAV: list[tuple[str, str, str, str]] = [
     ("settings", "Settings", "settings", "/settings"),
 ]
 
-ACCENT = "#6366f1"
-
-_CSS = """
-:root {
-  --bg-primary: #0b1121;
-  --bg-secondary: #101830;
-  --bg-tertiary: #16203f;
-  --bg-hover: #1d2a52;
-  --bg-input: #131c38;
-
-  --text-primary: #e7ecf8;
-  --text-secondary: #93a1c4;
-  --text-muted: #5a6a94;
-
-  --accent: #6366f1;
-  --accent-hover: #818cf8;
-  --accent-muted: rgba(99, 102, 241, 0.16);
-
-  --border: #24304f;
-  --border-light: #2f3d66;
-
-  --user-bubble: rgba(99, 102, 241, 0.20);
-  --bot-bubble: #16203f;
-
-  --success: #34d399;
-  --error: #f87171;
-  --warning: #fbbf24;
-  --info: #22d3ee;
-
-  --radius-sm: 6px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+# The themes come from the shared drop-in folder static/ui-theme/ (generated
+# files, never edited here: to update the themes, replace the whole folder, see
+# docs/STYLE-GUIDE.md "Themes"). It is served at THEME_URL with no-cache, so a
+# replaced folder is live on the next page load. MailForge's own settings for it
+# are THEME_SETTINGS, written onto the runtime's <script> tag; a theme added to
+# that list needs a restart.
+THEME_DIR = Path(__file__).resolve().parent / "static" / "ui-theme"
+THEME_URL = "/mf-theme"
+THEME_SETTINGS = {
+    "themes": ["midnight-gold", "glacier", "forest", "purple", "paper", "daylight", "night-red"],
+    "default": "midnight-gold",
+    "storage_key": "mailforge.theme",
 }
 
+
+def theme_version() -> str:
+    """The VERSION line of the theme folder this build carries ('' if missing)."""
+    try:
+        return (THEME_DIR / "VERSION").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def _theme_head() -> str:
+    """Head tags for the theme folder: runtime first (blocking, so the theme is
+    painted before anything else), then the base layer, the Quasar adapter,
+    MailForge's own CSS, and the tokens + Quasar mapping last so they win ties."""
+    v = THEME_SETTINGS
+    return (
+        f'<script src="{THEME_URL}/ui-theme.js"'
+        f' data-themes="{",".join(v["themes"])}"'
+        f' data-default="{v["default"]}"'
+        f' data-storage-key="{v["storage_key"]}"></script>\n'
+        f'<script src="{THEME_URL}/adapters/quasar.js"></script>\n'
+        f'<link rel="stylesheet" href="{THEME_URL}/ui-theme-base.css">\n'
+        f"<style>{_CSS}</style>\n"
+        f'<link rel="stylesheet" href="{THEME_URL}/ui-theme.css">\n'
+        f'<link rel="stylesheet" href="{THEME_URL}/adapters/quasar.css">\n'
+    )
+
+
+# MailForge's layout and component styles. Colours come ONLY from the theme
+# folder's contract tokens (surface-*, text-*, accent*, border*, status
+# *-text/-subtle/-border ...), so every theme drives them; never put a literal
+# colour here.
+_CSS = """
 body, .q-page, .nicegui-content {
-  background: var(--bg-primary) !important;
+  background: var(--surface-0) !important;
   color: var(--text-primary);
   font-family: var(--font-sans);
 }
@@ -90,7 +101,7 @@ html, body, .q-page-container, .nicegui-content { max-width: 100vw; }
 .bb-header-note { white-space: nowrap; }
 .bb-toolbar { gap: 12px; }
 .bb-ai-drawer {
-  background: var(--bg-secondary) !important;
+  background: var(--surface-1) !important;
   border-left: 1px solid var(--border);
 }
 .bb-chat-scroll { height: calc(100vh - 260px); overflow-y: auto; }
@@ -101,22 +112,34 @@ html, body, .q-page-container, .nicegui-content { max-width: 100vw; }
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.bb-chat-message--user { background: var(--user-bubble); }
-.bb-chat-message--assistant { background: var(--bot-bubble); }
+.bb-chat-message--user { background: var(--bubble-user-bg); color: var(--bubble-user-text); }
+.bb-chat-message--assistant { background: var(--bubble-assistant-bg); color: var(--bubble-assistant-text); }
+
+/* theme picker (drawer foot) */
+.bb-theme-picker {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--text-secondary);
+}
+.bb-theme-picker select {
+  flex: 1; min-width: 0;
+  background: var(--surface-sunken); color: var(--text-primary);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  padding: 4px 6px; font: inherit;
+}
 
 /* scrollbars */
 ::-webkit-scrollbar { width: 7px; height: 7px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
 
 /* header + sidebar chrome */
 .q-header.bb-header {
-  background: var(--bg-secondary) !important;
+  background: var(--surface-1) !important;
   border-bottom: 1px solid var(--border);
 }
 .q-drawer {
-  background: var(--bg-secondary) !important;
+  background: var(--surface-1) !important;
   border-right: 1px solid var(--border);
 }
 .bb-nav-btn {
@@ -128,19 +151,19 @@ html, body, .q-page-container, .nicegui-content { max-width: 100vw; }
   justify-content: flex-start;
   padding: 0 12px;
 }
-.bb-nav-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.bb-nav-btn:hover { background: var(--surface-3); color: var(--text-primary); }
 .bb-nav-btn--active {
-  background: var(--accent-muted);
+  background: var(--accent-subtle);
   border-color: var(--accent);
-  color: var(--accent-hover);
-  box-shadow: 0 0 10px rgba(99, 102, 241, 0.35);
+  color: var(--text-link);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 .bb-logo {
   width: 42px; height: 42px;
   border-radius: var(--radius-md);
-  background: linear-gradient(135deg, var(--accent) 0%, #8b5cf6 100%);
+  background: var(--cta-gradient);
   display: flex; align-items: center; justify-content: center;
-  font-weight: 800; font-size: 19px; color: white;
+  font-weight: 800; font-size: 19px; color: var(--on-cta);
   user-select: none;
 }
 .bb-brand-name { font-weight: 800; letter-spacing: -0.02em; }
@@ -165,15 +188,15 @@ html, body, .q-page-container, .nicegui-content { max-width: 100vw; }
   max-height: calc(100vh - 160px);
   padding: 16px 20px 96px; /* room for the sticky action bar */
 }
-.bb-row--selected { border-color: var(--accent); background: var(--accent-muted); }
+.bb-row--selected { border-color: var(--accent); background: var(--accent-subtle); }
 .bb-reader-window {
-  background: var(--bg-primary) !important;
+  background: var(--surface-0) !important;
   color: var(--text-primary);
   padding: 0 !important;
 }
 .bb-reader-window-header {
   position: sticky; top: 0; z-index: 2;
-  background: var(--bg-secondary);
+  background: var(--surface-1);
   border-bottom: 1px solid var(--border);
 }
 .bb-reader-window-content { max-width: 920px; margin: 0 auto; }
@@ -186,7 +209,7 @@ html, body, .q-page-container, .nicegui-content { max-width: 100vw; }
 .bb-markdown ul { list-style: disc; padding-left: 1.5em; margin: .5em 0; }
 .bb-markdown ol { list-style: decimal; padding-left: 1.5em; margin: .5em 0; }
 .bb-markdown blockquote {
-  border-left: 3px solid var(--border-light);
+  border-left: 3px solid var(--border-strong);
   padding-left: 12px; margin: .6em 0;
   color: var(--text-secondary);
 }
@@ -195,7 +218,7 @@ html, body, .q-page-container, .nicegui-content { max-width: 100vw; }
 .bb-markdown th, .bb-markdown td { border: 1px solid var(--border); padding: 7px 9px; }
 .bb-sticky-actions {
   position: sticky; bottom: 8px; z-index: 2;
-  background: rgba(16,24,48,.96);
+  background: color-mix(in srgb, var(--surface-1) 96%, transparent);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 9px 12px;
@@ -203,7 +226,7 @@ html, body, .q-page-container, .nicegui-content { max-width: 100vw; }
 
 /* cards */
 .bb-card {
-  background: var(--bg-tertiary);
+  background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: none;
@@ -214,7 +237,7 @@ html, body, .q-page-container, .nicegui-content { max-width: 100vw; }
 
 /* list rows (inbox) */
 .bb-row {
-  background: var(--bg-tertiary);
+  background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 12px 16px;
@@ -222,7 +245,7 @@ html, body, .q-page-container, .nicegui-content { max-width: 100vw; }
   overflow: hidden;
   transition: background 0.12s ease, border-color 0.12s ease;
 }
-.bb-row:hover { background: var(--bg-hover); border-color: var(--border-light); }
+.bb-row:hover { background: var(--surface-3); border-color: var(--border-strong); }
 .bb-row .col, .bb-row .q-column { min-width: 0; }
 .bb-row .q-label { max-width: 100%; }
 
@@ -249,10 +272,11 @@ html, body, .q-page-container, .nicegui-content { max-width: 100vw; }
   padding: 12px 15px;
   max-width: 100%;
 }
-.bb-bubble--bot { background: var(--bot-bubble); border-bottom-left-radius: 4px; }
+.bb-bubble--bot { background: var(--bubble-assistant-bg); color: var(--bubble-assistant-text); border-bottom-left-radius: 4px; }
 .bb-bubble--user {
-  background: var(--user-bubble);
-  border-color: rgba(99, 102, 241, 0.45);
+  background: var(--bubble-user-bg);
+  color: var(--bubble-user-text);
+  border-color: var(--bubble-user-border);
   border-bottom-right-radius: 4px;
 }
 
@@ -263,19 +287,19 @@ html, body, .q-page-container, .nicegui-content { max-width: 100vw; }
   border-radius: 999px;
   font-size: 11.5px; font-weight: 600;
   letter-spacing: 0.02em;
-  border: 1px solid var(--border-light);
-  background: var(--bg-hover);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-3);
   color: var(--text-secondary);
   white-space: nowrap;
 }
-.bb-badge--accent  { background: var(--accent-muted); border-color: var(--accent); color: var(--accent-hover); }
-.bb-badge--success { background: rgba(52,211,153,0.12); border-color: var(--success); color: var(--success); }
-.bb-badge--error   { background: rgba(248,113,113,0.12); border-color: var(--error); color: var(--error); }
-.bb-badge--warning { background: rgba(251,191,36,0.12);  border-color: var(--warning); color: var(--warning); }
+.bb-badge--accent  { background: var(--accent-subtle); border-color: var(--accent); color: var(--text-link); }
+.bb-badge--success { background: var(--success-subtle); border-color: var(--success-border); color: var(--success-text); }
+.bb-badge--error   { background: var(--danger-subtle); border-color: var(--danger-border); color: var(--danger-text); }
+.bb-badge--warning { background: var(--warning-subtle); border-color: var(--warning-border); color: var(--warning-text); }
 
 /* stat chips */
 .bb-stat {
-  background: var(--bg-tertiary);
+  background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 10px 18px;
@@ -293,7 +317,7 @@ html, body, .q-page-container, .nicegui-content { max-width: 100vw; }
   width: 100%;
 }
 .bb-metric {
-  background: var(--bg-secondary);
+  background: var(--surface-1);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 8px 10px;
@@ -301,7 +325,7 @@ html, body, .q-page-container, .nicegui-content { max-width: 100vw; }
   cursor: pointer;
   transition: background 0.12s ease, border-color 0.12s ease;
 }
-.bb-metric:hover { background: var(--bg-hover); border-color: var(--accent); }
+.bb-metric:hover { background: var(--surface-3); border-color: var(--accent); }
 .bb-metric .bb-metric-n { font-size: 19px; font-weight: 700; line-height: 1.15; }
 /* labels wrap to a second line rather than ellipsizing: "Needs r…" tells the
    reader nothing, and these six labels are the whole point of the tile. */
@@ -312,13 +336,13 @@ html, body, .q-page-container, .nicegui-content { max-width: 100vw; }
 }
 /* an empty metric still navigates, but must not compete for attention */
 .bb-metric--zero { opacity: 0.66; }
-.bb-metric--zero .bb-metric-n { color: var(--text-muted); }
+.bb-metric--zero .bb-metric-n { color: var(--text-tertiary); }
 
 /* health dot */
-.bb-dot { width: 11px; height: 11px; border-radius: 50%; background: var(--text-muted); }
-.bb-dot--up   { background: var(--success); box-shadow: 0 0 7px rgba(52,211,153,0.7); }
-.bb-dot--down { background: var(--error);   box-shadow: 0 0 7px rgba(248,113,113,0.7); }
-.bb-dot--warn { background: var(--warning); box-shadow: 0 0 7px rgba(251,191,36,0.7); }
+.bb-dot { width: 11px; height: 11px; border-radius: 50%; background: var(--text-tertiary); }
+.bb-dot--up   { background: var(--success); box-shadow: 0 0 7px color-mix(in srgb, var(--success) 70%, transparent); }
+.bb-dot--down { background: var(--danger);  box-shadow: 0 0 7px color-mix(in srgb, var(--danger) 70%, transparent); }
+.bb-dot--warn { background: var(--warning); box-shadow: 0 0 7px color-mix(in srgb, var(--warning) 70%, transparent); }
 .bb-dot--busy { background: var(--accent-hover); animation: bb-pulse 1s ease-in-out infinite; }
 @keyframes bb-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
 
@@ -330,37 +354,37 @@ html, body, .q-page-container, .nicegui-content { max-width: 100vw; }
 .bb-sync {
   display: inline-flex; align-items: center; gap: 7px;
   padding: 2px 4px 2px 9px; border-radius: 999px;
-  border: 1px solid var(--border-light); background: var(--bg-tertiary);
+  border: 1px solid var(--border-strong); background: var(--surface-2);
 }
 .bb-sync .bb-sync-text {
   font-size: 11.5px; color: var(--text-secondary); white-space: nowrap;
   max-width: 260px; overflow: hidden; text-overflow: ellipsis;
 }
-.bb-sync--error .bb-sync-text { color: var(--error); font-weight: 600; }
-.bb-sync--warn  .bb-sync-text { color: var(--warning); font-weight: 600; }
+.bb-sync--error .bb-sync-text { color: var(--danger-text); font-weight: 600; }
+.bb-sync--warn  .bb-sync-text { color: var(--warning-text); font-weight: 600; }
 .bb-sync--new { cursor: pointer; border-color: var(--accent); }
-.bb-sync--new .bb-sync-text { color: var(--accent-hover); font-weight: 700; }
+.bb-sync--new .bb-sync-text { color: var(--text-link); font-weight: 700; }
 @media (max-width: 760px) { .bb-sync .bb-sync-text { display: none; } }
 
 /* quasar component re-skin */
 .q-field--outlined .q-field__control {
-  background: var(--bg-input);
+  background: var(--surface-sunken);
   border-radius: var(--radius-md);
 }
-.q-field--outlined .q-field__control:before { border-color: var(--border-light); }
+.q-field--outlined .q-field__control:before { border-color: var(--border-strong); }
 .q-textarea .q-field__native, .q-field__native, .q-field__input { color: var(--text-primary); }
-.q-table { background: var(--bg-tertiary); border-radius: var(--radius-md); }
+.q-table { background: var(--surface-2); border-radius: var(--radius-md); }
 .q-table th { color: var(--text-secondary); }
 .q-tab { text-transform: none; font-weight: 600; }
 .q-btn { text-transform: none; border-radius: var(--radius-md); font-weight: 600; }
 .q-expansion-item, .q-expansion-item__container { border-radius: var(--radius-md); }
 code, pre, .q-code, .bb-mono { font-family: var(--font-mono); }
 .nicegui-markdown pre, .nicegui-code, .q-card pre {
-  background: #0d1117 !important;
+  background: var(--code-bg) !important;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
 }
-a { color: var(--accent-hover); }
+a { color: var(--text-link); }
 
 @media (max-width: 760px) {
   html, body, .q-page-container, .nicegui-content { overflow-x: hidden !important; }
@@ -387,19 +411,55 @@ a { color: var(--accent-hover); }
 
 
 def apply() -> None:
-    """Apply palette + dark mode + Quasar brand colors to the current page."""
-    ui.dark_mode().enable()
-    ui.colors(
-        primary=ACCENT,
-        secondary="#16203f",
-        accent="#818cf8",
-        dark="#101830",
-        positive="#34d399",
-        negative="#f87171",
-        warning="#fbbf24",
-        info="#22d3ee",
+    """Load the theme folder and MailForge's styles into the current page.
+
+    Quasar's dark mode and brand colours are NOT set here: the theme's Quasar
+    adapter keeps both in step with whichever theme the user picked."""
+    ui.add_head_html(_theme_head())
+
+
+def theme_picker() -> None:
+    """A theme <select> the runtime fills and keeps in sync (UITheme.mountPicker).
+
+    The element is created by Vue after the runtime's own DOMContentLoaded
+    scan has run, so it is mounted explicitly once it exists."""
+    with ui.element("label").classes("bb-theme-picker"):
+        ui.label("Theme")
+        ui.element("select").props('data-ui-theme-picker aria-label="Theme"')
+    ui.timer(
+        0.05,
+        lambda: ui.run_javascript(
+            "window.UITheme && document.querySelectorAll('select[data-ui-theme-picker]')"
+            ".forEach(function (s) { if (!s.options.length) window.UITheme.mountPicker(s); });"
+        ),
+        once=True,
     )
-    ui.add_head_html(f"<style>{_CSS}</style>")
+
+
+# Status tones, named the way pages pass them ("warning", "error", ...), resolved
+# to the contract token for each use. Text uses the *-text tier (readable on
+# every theme's surfaces, light ones included); a border or edge uses *-border.
+_TONE_TEXT = {
+    "warning": "--warning-text", "error": "--danger-text", "danger": "--danger-text",
+    "success": "--success-text", "info": "--info-text",
+    "accent": "--text-link", "accent-hover": "--text-link",
+    "text-muted": "--text-tertiary", "muted": "--text-tertiary",
+}
+_TONE_BORDER = {
+    "warning": "--warning-border", "error": "--danger-border", "danger": "--danger-border",
+    "success": "--success-border", "info": "--info-border",
+    "accent": "--accent", "accent-hover": "--accent",
+}
+
+
+def tone_text(tone: str) -> str:
+    """CSS colour for text (or an icon) in a status tone."""
+    return f"var({_TONE_TEXT.get(tone, '--text-secondary')})"
+
+
+def tone_border(tone: str) -> str:
+    """CSS colour for a border or edge in a status tone."""
+    return f"var({_TONE_BORDER.get(tone, '--border-strong')})"
 
 
 def badge(text: str, kind: str = "") -> ui.html:
@@ -695,7 +755,7 @@ def shell(
                     ui.html("&#9993;")  # envelope glyph
                 ui.label("MailForge").classes("bb-brand-name")
             ui.element("div").style(
-                "height:1px;width:100%;background:var(--border-light)"
+                "height:1px;width:100%;background:var(--border-strong)"
             )
             for key, label, icon, route in NAV:
                 btn = (
@@ -705,6 +765,11 @@ def shell(
                 )
                 if key == active:
                     btn.classes(add="bb-nav-btn--active")
+            ui.element("div").style(
+                "height:1px;width:100%;background:var(--border-strong);margin-top:6px"
+            )
+            with ui.element("div").classes("w-full q-px-sm"):
+                theme_picker()
 
     with ui.header(elevated=False).classes("bb-header items-center q-px-md q-py-sm"):
         ui.button(icon="menu", on_click=drawer.toggle).props("flat round dense").classes(

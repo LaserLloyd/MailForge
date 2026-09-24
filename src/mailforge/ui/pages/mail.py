@@ -292,7 +292,7 @@ def _render_row(
                     )
                 checkbox.tooltip("Select message — shift-click to select a range")
             ui.icon("circle", size="8px").style(
-                "color: var(--accent-hover); margin-top: 7px"
+                "color: var(--text-link); margin-top: 7px"
                 if unseen
                 else "color: transparent; margin-top: 7px"
             )
@@ -309,7 +309,7 @@ def _render_row(
                     )
                     ui.space()
                     ui.label(_short_time(_value(row, "received_at"))).style(
-                        "font-size: 10.5px; color: var(--text-muted); flex-shrink: 0"
+                        "font-size: 10.5px; color: var(--text-tertiary); flex-shrink: 0"
                     )
                 theme.subject_label(
                     _value(row, "subject"),
@@ -319,7 +319,7 @@ def _render_row(
                 if not quarantined:
                     ui.label(_snippet(_value(row, "sanitized_text"), 96)).classes(
                         "bb-clip-1"
-                    ).style("font-size: 11.5px; color: var(--text-muted)")
+                    ).style("font-size: 11.5px; color: var(--text-tertiary)")
                 with ui.row().classes("items-center").style("gap: 4px"):
                     if quarantined:
                         theme.quarantine_badge()
@@ -332,7 +332,7 @@ def _render_row(
                     if category:
                         theme.badge(category)
                     if _value(row, "has_attachments", 0):
-                        ui.icon("attach_file", size="14px").style("color: var(--text-muted)")
+                        ui.icon("attach_file", size="14px").style("color: var(--text-tertiary)")
                     if _value(row, "draft_id"):
                         theme.badge(
                             str(_value(row, "draft_state", "DRAFT") or "DRAFT"),
@@ -372,7 +372,7 @@ def _attachments_card(store: object, message_id: int, has_flag: bool) -> None:
             ui.label(
                 "This message reported attachments, but it was received before "
                 "attachment storage existed — files were not downloaded."
-            ).style("font-size: 12px; color: var(--text-muted)")
+            ).style("font-size: 12px; color: var(--text-tertiary)")
             return
         for att in rows:
             path = _value(att, "stored_path")
@@ -383,14 +383,14 @@ def _attachments_card(store: object, message_id: int, has_flag: bool) -> None:
                     if str(_value(att, "content_type", "") or "").startswith("image/")
                     else "description",
                     size="17px",
-                ).style("color: var(--accent-hover)")
+                ).style("color: var(--text-link)")
                 ui.label(str(_value(att, "filename", "attachment"))).classes("bb-clip-1").style(
                     "font-weight: 600; font-size: 13px"
                 )
                 ui.label(
                     f"{_size_label(int(_value(att, 'size_bytes', 0) or 0))}"
                     + (f" · {_value(att, 'content_type')}" if _value(att, "content_type") else "")
-                ).style("font-size: 11.5px; color: var(--text-muted); flex-shrink: 0")
+                ).style("font-size: 11.5px; color: var(--text-tertiary); flex-shrink: 0")
                 ui.space()
                 if skipped or not path:
                     theme.badge(str(skipped or "not stored"), "warning")
@@ -412,7 +412,7 @@ def _attachments_card(store: object, message_id: int, has_flag: bool) -> None:
         ui.label(
             "Attachments are stored locally and are never read by any AI. "
             "Open them only if you trust the sender."
-        ).style("font-size: 11px; color: var(--text-muted)")
+        ).style("font-size: 11px; color: var(--text-tertiary)")
 
 
 def _message_reader(
@@ -437,7 +437,7 @@ def _message_reader(
         msg = None
     if msg is None:
         with ui.column().classes("w-full items-center q-pa-xl"):
-            ui.icon("search_off", size="42px").style("color: var(--text-muted)")
+            ui.icon("search_off", size="42px").style("color: var(--text-tertiary)")
             ui.label("Message not found.").style("color: var(--text-secondary)")
         return
 
@@ -643,13 +643,13 @@ def _message_reader(
 
     if quarantined:
         with (
-            ui.card().classes("w-full bb-card").style("padding: 12px; border-color: var(--error)")
+            ui.card().classes("w-full bb-card").style("padding: 12px; border-color: var(--danger-text)")
         ):
             with ui.row().classes("w-full items-center").style("gap: 8px"):
-                ui.icon("gpp_maybe", size="22px").style("color: var(--error)")
+                ui.icon("gpp_maybe", size="22px").style("color: var(--danger-text)")
                 with ui.column().classes("col").style("gap: 1px"):
                     ui.label("Quarantined — suspected prompt injection").style(
-                        "font-weight: 800; color: var(--error)"
+                        "font-weight: 800; color: var(--danger-text)"
                     )
                     ui.label(
                         str(_value(msg, "quarantine_reason", "") or "")
@@ -688,13 +688,13 @@ def _message_reader(
         with (
             ui.card()
             .classes("w-full bb-card")
-            .style(f"padding: 12px; border-color: var(--{'error' if severe else 'warning'})")
+            .style(f"padding: 12px; border-color: {theme.tone_border('error' if severe else 'warning')}")
         ):
             with ui.row().classes("w-full items-center").style("gap: 8px"):
                 ui.icon(
                     "gpp_maybe" if screening_status == "POTENTIAL_ISSUE" else "report",
                     size="22px",
-                ).style(f"color: var(--{'error' if severe else 'warning'})")
+                ).style(f"color: {theme.tone_text('error' if severe else 'warning')}")
                 with ui.column().classes("col").style("gap: 2px"):
                     theme.screening_badge(screening_status)
                     ui.label(str(_value(msg, "screening_reason", "") or "")).style(
@@ -718,7 +718,7 @@ def _message_reader(
 
     with ui.card().classes("w-full bb-card").style("padding: 10px; gap: 4px"):
         with ui.row().classes("items-center").style("gap: 7px"):
-            ui.icon("link_off", size="19px").style("color: var(--warning)")
+            ui.icon("link_off", size="19px").style("color: var(--warning-text)")
             ui.label("Embedded links are disabled").style("font-weight: 800")
         ui.label(
             "For logins, account alerts, payments, renewals, or security checks, open "
@@ -735,7 +735,7 @@ def _message_reader(
             )
         ).style("font-size: 13px; font-weight: 700; overflow-wrap: anywhere")
         ui.label(f"To: {_value(msg, 'to_addrs', '') or ''}").style(
-            "font-size: 11.5px; color: var(--text-muted); overflow-wrap: anywhere"
+            "font-size: 11.5px; color: var(--text-tertiary); overflow-wrap: anywhere"
         )
 
     markdown_ui.reader(
@@ -752,7 +752,7 @@ def _message_reader(
     if working is not None:
         with ui.card().classes("w-full bb-card").style("padding: 11px"):
             with ui.row().classes("w-full items-center"):
-                ui.icon("edit_note", size="20px").style("color: var(--accent-hover)")
+                ui.icon("edit_note", size="20px").style("color: var(--text-link)")
                 ui.label("A response draft already exists.").style("color: var(--text-secondary)")
                 ui.space()
                 theme.state_badge(str(_value(working, "state", "DRAFT")))
@@ -1138,7 +1138,7 @@ def render(
         )
         ui.label("shift-click for a range · j/k next/prev · / search").classes(
             "bb-header-note"
-        ).style("font-size: 11px; color: var(--text-muted)")
+        ).style("font-size: 11px; color: var(--text-tertiary)")
         ui.space()
         bulk_buttons.extend(
             [
@@ -1183,7 +1183,7 @@ def render(
         with ui.column().classes("bb-mail-list").style("gap: 7px; padding: 10px"):
             if not rows:
                 with ui.column().classes("items-center q-pa-xl"):
-                    ui.icon("inbox", size="38px").style("color: var(--text-muted)")
+                    ui.icon("inbox", size="38px").style("color: var(--text-tertiary)")
                     ui.label("No matching messages.").style("color: var(--text-secondary)")
             for row in rows:
                 row_id = int(_value(row, "id"))
@@ -1208,7 +1208,7 @@ def render(
                         newer.props("disable")
                     ui.label(
                         f"Page {page + 1} · {len(rows)} shown"
-                    ).style("font-size: 11.5px; color: var(--text-muted)")
+                    ).style("font-size: 11.5px; color: var(--text-tertiary)")
                     older = ui.button(
                         "Older", icon="chevron_right", on_click=lambda: _go(page=str(page + 1))
                     ).props("flat dense no-caps")
@@ -1217,7 +1217,7 @@ def render(
         with ui.column().classes("bb-mail-pane").style("gap: 12px"):
             if message_id is None:
                 with ui.column().classes("w-full items-center q-pa-xl"):
-                    ui.icon("drafts", size="52px").style("color: var(--text-muted)")
+                    ui.icon("drafts", size="52px").style("color: var(--text-tertiary)")
                     ui.label("Select a message to read").style("font-size: 17px; font-weight: 700")
                     ui.label("On a phone, the message opens as a full reading pane.").style(
                         "color: var(--text-secondary)"

@@ -39,21 +39,21 @@ def _verify_banner(store: object) -> None:
         ok, checked, bad_index = verify_chain(store.db_path)  # type: ignore[attr-defined]
     except Exception as e:
         log.warning("audit chain verify failed to run: %s", e)
-        ui.label(f"Chain verification unavailable: {e}").style("color: var(--warning)")
+        ui.label(f"Chain verification unavailable: {e}").style("color: var(--warning-text)")
         return
 
     with ui.row().classes("w-full items-center bb-card q-pa-md").style("gap: 10px"):
         if ok:
-            ui.icon("verified", size="22px").style("color: var(--success)")
+            ui.icon("verified", size="22px").style("color: var(--success-text)")
             ui.label(f"Hash chain verified — {checked} event(s), no tampering detected.").style(
-                "color: var(--success); font-weight: 600"
+                "color: var(--success-text); font-weight: 600"
             )
         else:
-            ui.icon("gpp_bad", size="22px").style("color: var(--error)")
+            ui.icon("gpp_bad", size="22px").style("color: var(--danger-text)")
             ui.label(
                 f"HASH CHAIN BROKEN at entry index {bad_index} — the audit log "
                 "was modified outside the app."
-            ).style("color: var(--error); font-weight: 700")
+            ).style("color: var(--danger-text); font-weight: 700")
 
 
 @ui.refreshable
@@ -73,7 +73,7 @@ def _event_list(store: object) -> None:
 
     if not shown:
         with ui.column().classes("w-full items-center q-pa-xl").style("gap: 6px"):
-            ui.icon("history", size="40px").style("color: var(--text-muted)")
+            ui.icon("history", size="40px").style("color: var(--text-tertiary)")
             ui.label("No audit events match.").style("color: var(--text-secondary)")
         return
 
@@ -93,11 +93,11 @@ def _event_list(store: object) -> None:
                         )
                     detail = (r["detail_json"] or "")[:140]
                     ui.label(detail).classes("bb-mono col").style(
-                        "font-size: 12px; color: var(--text-muted); white-space: nowrap; "
+                        "font-size: 12px; color: var(--text-tertiary); white-space: nowrap; "
                         "overflow: hidden; text-overflow: ellipsis"
                     )
                     ui.label((r["ts"] or "")[:19].replace("T", " ")).style(
-                        "font-size: 11.5px; color: var(--text-muted); flex-shrink: 0"
+                        "font-size: 11.5px; color: var(--text-tertiary); flex-shrink: 0"
                     )
 
 
@@ -146,7 +146,7 @@ def _agent_notes(store: object) -> None:
                         )
                         ui.label(
                             f"{r['author']} · {(r['created_at'] or '')[:19].replace('T', ' ')}"
-                        ).style("font-size: 11px; color: var(--text-muted)")
+                        ).style("font-size: 11px; color: var(--text-tertiary)")
 
 
 def render(store: object) -> None:
@@ -172,7 +172,7 @@ def render(store: object) -> None:
         ).props("dense outlined").classes("w-40")
         ui.space()
         ui.label(f"showing the last {_LIMIT} events").style(
-            "font-size: 12px; color: var(--text-muted)"
+            "font-size: 12px; color: var(--text-tertiary)"
         )
 
     _event_list(store)

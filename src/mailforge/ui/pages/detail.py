@@ -214,7 +214,7 @@ def _do_send(store: object, settings: object, draft: Any, body: str, approval: A
 
 
 def _bubble_meta(text: str) -> None:
-    ui.label(text).style("font-size: 11.5px; color: var(--text-muted)")
+    ui.label(text).style("font-size: 11.5px; color: var(--text-tertiary)")
 
 
 def _restore_retryable_after_send_failure(
@@ -271,7 +271,7 @@ def render(
 
     if draft is None:
         with ui.column().classes("w-full items-center q-pa-xl").style("gap: 8px"):
-            ui.icon("search_off", size="40px").style("color: var(--text-muted)")
+            ui.icon("search_off", size="40px").style("color: var(--text-tertiary)")
             ui.label(f"Draft {draft_id} not found.").classes("text-h6")
             ui.button("Back to AI Review", on_click=lambda: ui.navigate.to("/drafts")).props(
                 "flat"
@@ -340,7 +340,7 @@ def render(
                     ui.label(
                         "Embedded links are disabled. For account or security actions, "
                         "open the provider's known site directly."
-                    ).style("font-size: 11px; color: var(--text-muted)")
+                    ).style("font-size: 11px; color: var(--text-tertiary)")
                     markdown_ui.plain_text(orig["sanitized_text"] or "")
             else:
                 with ui.element("div").classes("bb-bubble bb-bubble--bot w-full"):
@@ -388,7 +388,7 @@ def render(
             ui.icon("outbox", size="20px").style("color: var(--text-secondary)")
             ui.label("Send as:").style("color: var(--text-secondary)")
             ui.label(source_identity).style(
-                "font-weight: 700; color: var(--error)"
+                "font-weight: 700; color: var(--danger-text)"
                 if source_identity == "unresolved"
                 else "font-weight: 700"
             )
@@ -402,7 +402,7 @@ def render(
             ui.icon("person", size="20px").style("color: var(--text-secondary)")
             ui.label("Reply goes to:").style("color: var(--text-secondary)")
             ui.label(recipient).style(
-                "color: var(--error); font-weight: 700" if is_external else "font-weight: 600"
+                "color: var(--danger-text); font-weight: 700" if is_external else "font-weight: 600"
             )
             if is_external:
                 theme.badge("NEW EXTERNAL", "error")
@@ -412,7 +412,7 @@ def render(
             ui.label(
                 "This is a new / external recipient. Re-type the exact address "
                 "to enable Approve & Send (invariant §0.4)."
-            ).style("font-size: 12px; color: var(--error); margin-top: 4px")
+            ).style("font-size: 12px; color: var(--danger-text); margin-top: 4px")
             confirm = ui.input("Re-type recipient address").props("dense outlined").classes(
                 "w-96"
             )
@@ -458,7 +458,7 @@ def render(
                         _draft_preview()
             guard_box = ui.column().classes("w-full")
         ui.icon("edit_note", size="26px").style(
-            "color: var(--accent-hover); margin-top: 6px"
+            "color: var(--text-link); margin-top: 6px"
         )
 
     def _apply_ai_body(body: str, _draft_id: int) -> None:
@@ -539,10 +539,10 @@ def render(
             _audit(store, "guardrail", "block", draft["id"], {"reasons": report.reasons})
             with guard_box:
                 ui.label("Guardrails blocked this version — not sent.").style(
-                    "color: var(--error); font-weight: 700"
+                    "color: var(--danger-text); font-weight: 700"
                 )
                 for reason in report.reasons:
-                    ui.label(f"• {reason}").style("color: var(--error); font-size: 13px")
+                    ui.label(f"• {reason}").style("color: var(--danger-text); font-size: 13px")
                 ui.code(json.dumps(report.flags, indent=2, default=str)).classes("w-full")
             ui.notify("Current draft is blocked by guardrails.", type="negative")
             return None
@@ -639,7 +639,7 @@ def render(
         ui.label(
             "AI drafting was deferred and this body is empty. Use AI Revise or write and Save "
             "Changes before approval; an empty draft can never send."
-        ).style("font-size: 12px; color: var(--warning)")
+        ).style("font-size: 12px; color: var(--warning-text)")
 
     with ui.row().classes(
         "w-full justify-end q-mt-sm bb-toolbar bb-sticky-actions"

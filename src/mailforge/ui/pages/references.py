@@ -97,7 +97,7 @@ def render(store: object, settings: object, bridge: object | None) -> None:
 
     with ui.card().classes("bb-card w-full").style("padding: 14px"):
         with ui.row().classes("items-center no-wrap").style("gap: 10px"):
-            ui.icon("shield", size="22px").style("color: var(--accent-hover)")
+            ui.icon("shield", size="22px").style("color: var(--text-link)")
             with ui.column().style("gap: 2px"):
                 ui.label("Site-isolated AI knowledge").style("font-weight: 800")
                 ui.label(
@@ -108,7 +108,7 @@ def render(store: object, settings: object, bridge: object | None) -> None:
             ui.label(
                 "Semantic reference search is unavailable because sqlite-vec is not loaded. "
                 "Uploads remain local and can be reindexed after the RAG component is installed."
-            ).style("font-size: 12px; color: var(--warning); margin-top: 8px")
+            ).style("font-size: 12px; color: var(--warning-text); margin-top: 8px")
 
     async def _refresh_handbooks() -> None:
         from ...knowledge.sync import refresh_managed_knowledge
@@ -188,7 +188,7 @@ def render(store: object, settings: object, bridge: object | None) -> None:
 
         if not rows:
             with ui.column().classes("w-full items-center q-pa-lg").style("gap: 6px"):
-                ui.icon("library_books", size="38px").style("color: var(--text-muted)")
+                ui.icon("library_books", size="38px").style("color: var(--text-tertiary)")
                 ui.label(f"No {sites.get(site_id, site_id)} reference documents yet.").style(
                     "color: var(--text-secondary)"
                 )
@@ -243,11 +243,11 @@ def render(store: object, settings: object, bridge: object | None) -> None:
                                 f"{_size_label(_value(row, 'size_bytes', 0))} · "
                                 f"{int(_value(row, 'chunk_count', 0) or 0)} chunk(s) · "
                                 f"{str(_value(row, 'updated_at', '') or '')[:19].replace('T', ' ')}"
-                            ).style("font-size: 11.5px; color: var(--text-muted)")
+                            ).style("font-size: 11.5px; color: var(--text-tertiary)")
                             error = str(_value(row, "error_text", "") or "")
                             if error:
                                 ui.label(error).style(
-                                    "font-size: 11.5px; color: var(--error); overflow-wrap: anywhere"
+                                    "font-size: 11.5px; color: var(--danger-text); overflow-wrap: anywhere"
                                 )
                         theme.badge(status, _status_kind(status))
                         if managed:

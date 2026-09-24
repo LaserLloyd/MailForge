@@ -89,7 +89,7 @@ def render(store: object, settings: object) -> None:
 
     with ui.card().classes("bb-card w-full"):
         ui.label("Inbox Coverage").classes("text-subtitle1 text-weight-bold").style(
-            "color: var(--accent-hover)"
+            "color: var(--text-link)"
         )
         ui.label(
             "Mailboxes the agent will start a listener for, from config.toml. These labels show "
@@ -108,7 +108,7 @@ def render(store: object, settings: object) -> None:
                                 .style("font-size: 12px; overflow-wrap: anywhere")
                     else:
                         ui.label("No active inbox configured").style(
-                            "font-size: 12px; color: var(--error); font-weight: 700"
+                            "font-size: 12px; color: var(--danger-text); font-weight: 700"
                         )
         # Any configured site with no listener is a real gap: mail to that brand
         # is being silently ignored. Reported per-site rather than hardcoded, so
@@ -116,19 +116,19 @@ def render(store: object, settings: object) -> None:
         uncovered = [label for sid, label in site_options.items() if not by_site.get(sid)]
         if uncovered:
             with ui.row().classes("w-full items-center q-pa-sm").style(
-                "gap: 8px; border: 1px solid var(--error); border-radius: var(--radius-md)"
+                "gap: 8px; border: 1px solid var(--danger-text); border-radius: var(--radius-md)"
             ):
-                ui.icon("warning", size="21px").style("color: var(--error)")
+                ui.icon("warning", size="21px").style("color: var(--danger-text)")
                 ui.label(
                     f"NO INBOX CONFIGURED FOR: {', '.join(uncovered)} — mail to "
                     f"{'these brands is' if len(uncovered) > 1 else 'this brand is'} not being "
                     "collected. Use 'Add mailbox' below to connect one."
-                ).style("font-size: 12.5px; color: var(--error); font-weight: 800")
+                ).style("font-size: 12.5px; color: var(--danger-text); font-weight: 800")
 
     # --- IMAP accounts (display + editable host/port/username) ---------------
     imap_inputs: list[dict[str, Any]] = []
     with ui.card().classes("bb-card w-full"):
-        ui.label("IMAP accounts").classes("text-subtitle1 text-weight-bold").style("color: var(--accent-hover)")
+        ui.label("IMAP accounts").classes("text-subtitle1 text-weight-bold").style("color: var(--text-link)")
         accounts = list(getattr(settings, "imap_accounts", []) or [])
         if not accounts:
             ui.label("No IMAP accounts configured — add one below.").classes("text-grey")
@@ -164,7 +164,7 @@ def render(store: object, settings: object) -> None:
     # credential tooling uses.
     with ui.card().classes("bb-card w-full q-mt-md"):
         ui.label("Add mailbox").classes("text-subtitle1 text-weight-bold").style(
-            "color: var(--accent-hover)"
+            "color: var(--text-link)"
         )
         ui.label(
             "The password goes straight to the OS keyring — never into config.toml, and it is "
@@ -306,7 +306,7 @@ def render(store: object, settings: object) -> None:
     smtp_inputs: dict[str, Any] = {}
     smtp = getattr(settings, "smtp", None)
     with ui.card().classes("bb-card w-full q-mt-md"):
-        ui.label("SMTP account").classes("text-subtitle1 text-weight-bold").style("color: var(--accent-hover)")
+        ui.label("SMTP account").classes("text-subtitle1 text-weight-bold").style("color: var(--text-link)")
         if smtp is None:
             ui.label("No SMTP account configured (run setup-wizard).").classes("text-grey")
         else:
@@ -321,7 +321,7 @@ def render(store: object, settings: object) -> None:
     # --- Style / context docs / signature / tone -----------------------------
     style_inputs: dict[str, Any] = {}
     with ui.card().classes("bb-card w-full q-mt-md"):
-        ui.label("Style & context").classes("text-subtitle1 text-weight-bold").style("color: var(--accent-hover)")
+        ui.label("Style & context").classes("text-subtitle1 text-weight-bold").style("color: var(--text-link)")
         style_inputs["style_paths"] = ui.input(
             "Style-guide paths (comma-separated)",
             value=_csv(getattr(style, "style_guide_paths", []) if style else []),
@@ -340,7 +340,7 @@ def render(store: object, settings: object) -> None:
     # --- Allowlists / block domains ------------------------------------------
     allow_inputs: dict[str, Any] = {}
     with ui.card().classes("bb-card w-full q-mt-md"):
-        ui.label("Allowlists & block domains").classes("text-subtitle1 text-weight-bold").style("color: var(--accent-hover)")
+        ui.label("Allowlists & block domains").classes("text-subtitle1 text-weight-bold").style("color: var(--text-link)")
         allow_inputs["recipient_allow"] = ui.input(
             "Recipient allowlist domains (comma-separated)",
             value=_csv(getattr(sec, "recipient_allowlist_domains", set()) if sec else set()),
@@ -357,7 +357,7 @@ def render(store: object, settings: object) -> None:
     # --- Security & quarantine (read-only) ------------------------------------
     with ui.card().classes("bb-card w-full q-mt-md"):
         ui.label("Security & quarantine").classes("text-subtitle1 text-weight-bold").style(
-            "color: var(--accent-hover)"
+            "color: var(--text-link)"
         )
         ui.label(
             "Quarantined messages are never shown to any AI — the local LLM or the OpenClaw "
@@ -403,13 +403,13 @@ def render(store: object, settings: object) -> None:
                 ui.label("Currently quarantined").style("font-weight: 800")
                 ui.label(
                     str(quarantined_now) if quarantined_now is not None else "unavailable"
-                ).style("font-size: 20px; font-weight: 800; color: var(--accent-hover)")
+                ).style("font-size: 20px; font-weight: 800; color: var(--text-link)")
 
     # --- Deleting mail --------------------------------------------------------
     delete_inputs: dict[str, Any] = {}
     with ui.card().classes("bb-card w-full q-mt-md"):
         ui.label("Deleting mail").classes("text-subtitle1 text-weight-bold").style(
-            "color: var(--accent-hover)"
+            "color: var(--text-link)"
         )
         ui.label(
             "Deleting a message always removes it from this app. These settings decide "
@@ -440,14 +440,14 @@ def render(store: object, settings: object) -> None:
             held = len(store.trash_queue(retention_days=_days(settings)))  # type: ignore[attr-defined]
             ui.label(
                 f"{held} message(s) are currently waiting to be deleted — see Spam & Deletion."
-            ).style("font-size: 12px; color: var(--text-muted)")
+            ).style("font-size: 12px; color: var(--text-tertiary)")
         except Exception as e:  # noqa: BLE001
             log.debug("trash queue count unavailable: %s", e)
 
     # --- Sites (read-only) -----------------------------------------------------
     with ui.card().classes("bb-card w-full q-mt-md"):
         ui.label("Sites").classes("text-subtitle1 text-weight-bold").style(
-            "color: var(--accent-hover)"
+            "color: var(--text-link)"
         )
         ui.label(
             "New sites are added via a [sites.<id>] entry in config.toml, then appear in the "

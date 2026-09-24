@@ -164,16 +164,16 @@ def _append_note(row: Any) -> tuple[str, str] | None:
     folder = str(_value(row, "imap_folder", "") or "")
     note = str(_value(row, "imap_note", "") or "")
     if status == "OK":
-        return (f"Copy saved to the “{folder or 'Sent'}” folder.", "var(--text-muted)")
+        return (f"Copy saved to the “{folder or 'Sent'}” folder.", "var(--text-tertiary)")
     if status == "FAILED":
         return (
             f"Mail was sent, but the Sent-folder copy failed{f': {note}' if note else ''}.",
-            "var(--warning)",
+            "var(--warning-text)",
         )
     if status == "SKIPPED":
         return (
             f"No Sent-folder copy{f' ({note})' if note else ''}.",
-            "var(--text-muted)",
+            "var(--text-tertiary)",
         )
     return None
 
@@ -214,17 +214,17 @@ def render(store: object, settings: object, *, view: str = "all", page: int = 0)
         ).props("dense outlined options-dense").classes("w-52 bb-toolbar-grow")
         ui.space()
         for label, key, colour in (
-            ("Awaiting approval", "staged", "var(--warning)"),
-            ("Unresolved", "unknown", "var(--error)"),
-            ("Sent", "sent", "var(--success)"),
-            ("Failed", "failed", "var(--error)"),
+            ("Awaiting approval", "staged", "var(--warning-text)"),
+            ("Unresolved", "unknown", "var(--danger-text)"),
+            ("Sent", "sent", "var(--success-text)"),
+            ("Failed", "failed", "var(--danger-text)"),
         ):
             n = int(counts.get(key, 0) or 0)
             if key == "unknown":
                 n += int(counts.get("in_flight", 0) or 0)
             with ui.element("div").classes("bb-stat"):
                 ui.label(str(n)).classes("bb-stat-n").style(
-                    f"color: {colour}" if n else "color: var(--text-muted)"
+                    f"color: {colour}" if n else "color: var(--text-tertiary)"
                 )
                 ui.label(label).classes("bb-stat-l")
 
@@ -253,7 +253,7 @@ def render(store: object, settings: object, *, view: str = "all", page: int = 0)
 
     if not window:
         with ui.column().classes("w-full items-center q-pa-xl"):
-            ui.icon("outbox", size="52px").style("color: var(--text-muted)")
+            ui.icon("outbox", size="52px").style("color: var(--text-tertiary)")
             ui.label("Nothing here yet").style("font-size: 17px; font-weight: 700")
             ui.label(
                 "Messages appear the moment an agent stages one for approval, "
@@ -274,7 +274,7 @@ def render(store: object, settings: object, *, view: str = "all", page: int = 0)
                 if not page:
                     newer.props("disable")
                 ui.label(f"Page {page + 1} · {len(window)} of {len(entries)}").style(
-                    "font-size: 11.5px; color: var(--text-muted)"
+                    "font-size: 11.5px; color: var(--text-tertiary)"
                 )
                 older = ui.button(
                     "Older", icon="chevron_right", on_click=lambda: _go(page=str(page + 1))
@@ -295,10 +295,10 @@ def _render_row(kind: str, row: Any) -> None:
                 ui.label(
                     f"To: {_recipients(kind, row) or '(none)'} · "
                     f"From: {_from_addr(kind, row) or '(unknown)'}"
-                ).classes("bb-clip-1").style("font-size: 11.5px; color: var(--text-muted)")
+                ).classes("bb-clip-1").style("font-size: 11.5px; color: var(--text-tertiary)")
                 ui.label(
                     f"{_origin_label(kind, row)} · {_local(_value(row, 'created_at'))}"
-                ).style("font-size: 11px; color: var(--text-muted)")
+                ).style("font-size: 11px; color: var(--text-tertiary)")
             with ui.column().classes("items-end").style("gap: 4px"):
                 theme.badge(label, badge_kind)
                 if kind == "sent":
@@ -313,7 +313,7 @@ def _render_row(kind: str, row: Any) -> None:
 def render_detail(store: object, settings: object, kind: str, row_id: int) -> None:
     """One outbox row in full: verbatim content, identity, and what happened."""
     if kind not in {"staged", "sent"}:
-        ui.label("Unknown outbox row.").style("color: var(--error)")
+        ui.label("Unknown outbox row.").style("color: var(--danger-text)")
         return
     getter = store.get_staged_send if kind == "staged" else store.get_sent_message  # type: ignore[attr-defined]
     try:
@@ -346,7 +346,7 @@ def render_detail(store: object, settings: object, kind: str, row_id: int) -> No
         ):
             with ui.row().classes("w-full no-wrap").style("gap: 8px"):
                 ui.label(caption).style(
-                    "font-size: 11.5px; color: var(--text-muted); min-width: 168px"
+                    "font-size: 11.5px; color: var(--text-tertiary); min-width: 168px"
                 )
                 ui.label(str(value)).style("font-size: 12.5px; overflow-wrap: anywhere")
 
@@ -358,7 +358,7 @@ def render_detail(store: object, settings: object, kind: str, row_id: int) -> No
             ):
                 with ui.row().classes("w-full no-wrap").style("gap: 8px"):
                     ui.label(caption).style(
-                        "font-size: 11.5px; color: var(--text-muted); min-width: 168px"
+                        "font-size: 11.5px; color: var(--text-tertiary); min-width: 168px"
                     )
                     ui.label(str(value)).classes("bb-mono").style(
                         "font-size: 12px; overflow-wrap: anywhere"
@@ -369,26 +369,26 @@ def render_detail(store: object, settings: object, kind: str, row_id: int) -> No
             if state == "FAILED":
                 ui.label(
                     f"SMTP error: {str(_value(row, 'error_text', '') or '')}"
-                ).style("font-size: 12.5px; color: var(--error); overflow-wrap: anywhere")
+                ).style("font-size: 12.5px; color: var(--danger-text); overflow-wrap: anywhere")
             if state == "IN_FLIGHT":
                 ui.label(
                     "This transmission was started but its result was never written "
                     "back — MailForge stopped between handing the message to SMTP and "
                     "recording the outcome. Check the mailbox's Sent folder at the "
                     "provider before resending."
-                ).style("font-size: 12.5px; color: var(--error)")
+                ).style("font-size: 12.5px; color: var(--danger-text)")
         else:
             expires = _local(_value(row, "expires_at"))
             with ui.row().classes("w-full no-wrap").style("gap: 8px"):
                 ui.label("Authorisation expires").style(
-                    "font-size: 11.5px; color: var(--text-muted); min-width: 168px"
+                    "font-size: 11.5px; color: var(--text-tertiary); min-width: 168px"
                 )
                 ui.label(expires or "—").style("font-size: 12.5px")
             if state == "STAGED":
                 ui.label(
                     "Nothing has been transmitted. To send it, open the draft and use "
                     "Approve & Send there — the same approval you use today."
-                ).style("font-size: 12.5px; color: var(--warning)")
+                ).style("font-size: 12.5px; color: var(--warning-text)")
                 draft_id = _value(row, "draft_id")
                 if draft_id is not None:
                     ui.button(
@@ -406,7 +406,7 @@ def render_detail(store: object, settings: object, kind: str, row_id: int) -> No
                     "The one-time token was consumed but no transmission was recorded. "
                     "Treat the outcome as unknown and check the provider's Sent folder "
                     "before resending."
-                ).style("font-size: 12.5px; color: var(--error)")
+                ).style("font-size: 12.5px; color: var(--danger-text)")
 
     with ui.card().classes("w-full bb-card").style("gap: 6px"):
         ui.label(
@@ -414,9 +414,9 @@ def render_detail(store: object, settings: object, kind: str, row_id: int) -> No
         ).style("font-weight: 700")
         ui.label(
             "Shown exactly as recorded — never re-rendered or re-generated."
-        ).style("font-size: 11.5px; color: var(--text-muted)")
+        ).style("font-size: 11.5px; color: var(--text-tertiary)")
         ui.label(_body(kind, row) or "(empty)").style(
             "white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); "
-            "font-size: 12.5px; background: var(--bg-secondary); border: 1px solid var(--border); "
+            "font-size: 12.5px; background: var(--surface-1); border: 1px solid var(--border); "
             "border-radius: var(--radius-sm); padding: 12px"
         )
