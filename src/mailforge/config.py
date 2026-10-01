@@ -119,10 +119,9 @@ class SMTPAccount(BaseModel):
 
 
 class LLMSettings(BaseModel):
-    # Shares the local LM Studio endpoint that OpenClaw's "vllm" provider uses
-    # (127.0.0.1:1234). Defaults below are model IDs actually served there so a
-    # fresh install talks to a real model out of the box; override via the
-    # Models page or config.toml.
+    # Any local OpenAI-compatible server (LM Studio's default port shown).
+    # The model IDs below are only starting points from the public LM Studio
+    # catalogue; set your own via the Models page or config.toml.
     lm_studio_host: str = "localhost:1234"
     chat_model: str = "qwen/qwen3.6-35b-a3b"
     embedding_model: str = "text-embedding-nomic-embed-text-v1.5"

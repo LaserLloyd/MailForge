@@ -23,11 +23,9 @@ source file or test, that is the signal it belongs in config instead.
 
 ## Producing the public edition
 
-The maintainer builds the downloadable ZIP from this repository with an
-allowlisted copy, a leak scanner, and a test run *inside* the produced tree,
-then zips it with fixed timestamps. That tooling (and the scanner's word list)
-is maintainer-private and is not part of this distribution — the contract it
-enforces is the one stated above: examples and fixtures use documentation
+Anything published from this repository is checked by
+`scripts/scrub_check.py` (the same scanner the hooks and CI run) before it
+ships. The contract it enforces is the one stated above: examples and fixtures use documentation
 namespaces (`example.com`, `example.net`, `.test`, `.invalid`), people are
 `Alex Example` / `Sam Rivera`, organisations are `Northwind Studio` /
 `Acme Workshop`, sites are `main` / `shop` / `studio`, hosts are
@@ -90,5 +88,4 @@ never reaching a model or the bridge.
 
 Bump `version` in `pyproject.toml`, add a `CHANGELOG.md` entry saying what
 changed and anything an existing install must do, and check the suite and lint
-are green. The build and publishing steps that produce a release from this
-repository are maintainer-private and are not part of this distribution.
+are green, and that `python3 scripts/scrub_check.py` reports clean.

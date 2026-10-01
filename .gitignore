@@ -31,3 +31,27 @@ wheels/
 # list of words that must never be published is its own leak — the rules IN
 # the repo are generic shapes; the literals live here and never ship.
 scripts/scrub-rules.local.txt
+
+# Maintainer-private release tooling: kept locally, never published.
+docs/PRIVATE-PUBLISHING.md
+scripts/publish_public.py
+
+# Runtime data, mail and credentials must never be committed.
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.eml
+*.mbox
+config.toml
+attachments/
+ui_port
+ui_launcher_key
+ui_storage_secret
+*.pem
+*.key
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+memory/

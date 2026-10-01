@@ -111,8 +111,11 @@ RULES: tuple[Rule, ...] = (
     Rule("personal-path", _rx(r"/(?:var/)?home/(?!user\b|youruser\b|<)[a-z_][a-z0-9_.-]{1,31}")),
     # --- infrastructure ----------------------------------------------------
     Rule("infra-host", _rx(r"\btailscale\b|\b[a-z0-9-]+\.ts\.net\b")),
-    Rule("infra-host", _rx(r"\bdreamhost\b|\b(?:imap|smtp|pop|mail)\.dreamhost\.com\b")),
-    Rule("infra-host", _rx(r"\bdh_[a-z0-9]{6,}\b")),
+    # A concrete mail-server hostname names the provider a deployment uses.
+    # Matched by SHAPE (imap./smtp./pop./mail. + a real-looking domain); the
+    # documentation namespace example.* stays clean. A fork's own provider and
+    # account-name shapes belong in scrub-rules.local.txt, not here.
+    Rule("infra-host", _rx(r"\b(?:imap|smtp|pop3?|mail)\.(?!example\.)[a-z0-9-]+\.(?:com|net|org|co)\b")),
     Rule("infra-file", _rx(r"\bopenclaw\.json\b")),
     Rule("infra-model", _rx(r"\bNSFW\b")),
     Rule("private-ip", _rx(r"\b(?:192\.168|10\.\d{1,3}|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7]))\.\d{1,3}\.\d{1,3}\b")),
@@ -380,10 +383,9 @@ def scan_commit_range(range_spec: str) -> list[Hit]:
 SELF_TEST_CASES: tuple[tuple[str, str], ...] = (
     ("personal-path", "home = '/home/mallory/notes'"),
     ("personal-path", "root = '/var/home/mallory/projects'"),
-    ("infra-host", "host = 'imap.dreamhost.com'"),
+    ("infra-host", "host = 'imap.provider-x.net'"),
     ("infra-host", "url = 'http://workstation-7.tailnet-fictional.ts.net:9700/mcp'"),
     ("infra-host", "cmd = 'tailscale status'"),
-    ("infra-host", "user = 'dh_qz84mn'"),
     ("private-ip", "endpoint = 'http://192.168.222.11:9700'"),
     ("private-ip", "peer = '100.99.88.77'"),
     ("email-address", "contact: someone@realdomain.co"),

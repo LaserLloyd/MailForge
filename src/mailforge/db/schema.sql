@@ -80,7 +80,8 @@ CREATE INDEX IF NOT EXISTS attachments_msg ON attachments(message_id);
 
 -- Durable agent memory: what automated agents (OpenClaw bridge callers) and
 -- humans observed/did, so a later session never re-diagnoses its own past
--- actions as an incident (e.g. self-caused GitHub verification bursts).
+-- actions as an incident (e.g. a burst of
+-- confirmation mails the operator's own actions triggered).
 -- One-time authorizations for agent-relayed sends ("send it" flow): issued by
 -- the bridge prepare-send op AFTER guardrails pass, consumed exactly once by
 -- send. The token itself is never stored — only its sha256.

@@ -88,9 +88,8 @@ Published by Laser Lloyd — https://www.laserlloyd.com
 - **Dashboard bulk actions** — multi-select with Read / Unread / Archive /
   Delete / Restore across the triage lists; Delete is a reversible *local*
   trash and never changes the server mailbox.
-- **Public edition tooling** — `scripts/scrub_check.py` (standalone denylist
-  scanner with `--self-test`) and `scripts/publish_public.py` (allowlisted sync
-  → scrub gate → tests → reproducible zip + `PUBLISH-REPORT.md`).
+- **Publication gate** — `scripts/scrub_check.py` (standalone denylist
+  scanner with `--self-test`).
 - `MAILFORGE_HOME` relocates config and data together; `run_serve()` and
   `run_ui()` accept an explicit UI port.
 - `[compose] signature` configures the name used by templates and the composer.

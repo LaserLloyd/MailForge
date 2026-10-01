@@ -45,11 +45,11 @@ def screen(subject: str, text: str = "", frm: str = "someone@example.com", **kw)
     "frm, subject",
     [
         ("admin@example.net", "Account security update for you@acmeworkshop.example"),
-        ("l.laurie@example.com", "acmeworkshop.example: Ready to Show Up on Google?"),
-        ("s.lee@example.com", "acmeworkshop.example : Gave your website a fresh look (concept)"),
-        ("r.kashyap@example.net", "acmeworkshop.example :Gave your website a fresh look"),
+        ("sender1@example.com", "acmeworkshop.example: Ready to Show Up on Google?"),
+        ("sender2@example.com", "acmeworkshop.example : Gave your website a fresh look (concept)"),
+        ("sender3@example.net", "acmeworkshop.example :Gave your website a fresh look"),
         ("hello@example.org", "Designer / Developer"),
-        ("a.brown@example.net", "Re: rankings.?"),
+        ("sender4@example.net", "Re: rankings.?"),
     ],
 )
 def test_spam_shapes_never_reach_the_model(frm, subject):

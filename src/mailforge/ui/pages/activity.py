@@ -113,7 +113,8 @@ def _agent_notes(store: object) -> None:
     """Durable agent-notes log: what automated agents observed/did and why.
 
     This is the memory that stops OpenClaw from re-diagnosing its own past
-    actions (e.g. a self-caused GitHub verification burst) as an incident."""
+    actions (e.g. a burst of confirmation mails its own
+    actions triggered) as an incident."""
     try:
         rows = list(store.list_agent_notes(limit=30))  # type: ignore[attr-defined]
     except Exception as e:  # noqa: BLE001

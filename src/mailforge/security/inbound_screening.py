@@ -26,7 +26,7 @@ _NON_WORD = re.compile(r"[^a-z0-9]+")
 
 # How much of the body each rule may look at.  Bodies are mostly boilerplate:
 # scanning 12k of a marketing footer for "sign in to your account" produced
-# POTENTIAL_ISSUE for PayPal newsletters, which trained the human to ignore the
+# POTENTIAL_ISSUE for ordinary payment-provider newsletters, which trained the human to ignore the
 # one status that means "stop and check this".  The subject is what the sender
 # actually chose to say, so it carries the weight; the body only corroborates.
 _BODY_SCAN_CHARS = 2000

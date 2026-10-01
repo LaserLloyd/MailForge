@@ -1,8 +1,7 @@
 """The publication gate must catch what it claims to catch.
 
 ``scripts/scrub_check.py`` is stdlib-only and lives outside the package, so it
-is loaded here by path — exactly how ``publish_public.py`` runs it inside a
-freshly produced tree.
+is loaded here by path — exactly how the hooks and CI run it.
 """
 
 from __future__ import annotations
@@ -44,10 +43,10 @@ def test_clean_samples_do_not_trip(sample):
 
 def test_scan_reports_path_and_line(tmp_path):
     target = tmp_path / "leak.py"
-    target.write_text("ok = 1\nhost = 'imap.dreamhost.com'\n", encoding="utf-8")  # scrub-check: allow
+    target.write_text("ok = 1\nhost = 'imap.provider-x.net'\n", encoding="utf-8")  # scrub-check: allow
     hits = scrub.scan_paths([tmp_path])
     assert [(h.line_no, h.category) for h in hits] == [(2, "infra-host")]
-    assert hits[0].render(tmp_path) == "leak.py:2: infra-host: imap.dreamhost.com"  # scrub-check: allow
+    assert hits[0].render(tmp_path) == "leak.py:2: infra-host: imap.provider-x.net"  # scrub-check: allow
 
 
 def test_skips_vcs_venv_and_binaries(tmp_path):
@@ -55,15 +54,15 @@ def test_skips_vcs_venv_and_binaries(tmp_path):
         skipped = tmp_path / name
         skipped.mkdir()
         (skipped / "x.py").write_text(
-            "host = 'imap.dreamhost.com'\n", encoding="utf-8")  # scrub-check: allow
-    (tmp_path / "image.png").write_bytes(b"imap.dreamhost.com")  # scrub-check: allow
+            "host = 'imap.provider-x.net'\n", encoding="utf-8")  # scrub-check: allow
+    (tmp_path / "image.png").write_bytes(b"imap.provider-x.net")  # scrub-check: allow
     assert scrub.scan_paths([tmp_path]) == []
 
 
 def test_pragma_and_region_exempt_lines(tmp_path):
     target = tmp_path / "fixtures.py"
     target.write_text(
-        "sample = 'imap.dreamhost.com'  # scrub-check: allow\n"
+        "sample = 'imap.provider-x.net'  # scrub-check: allow\n"
         "# scrub-check: begin-allow\n"
         "other = '/home/mallory/notes'\n"  # scrub-check: allow
         "# scrub-check: end-allow\n"
