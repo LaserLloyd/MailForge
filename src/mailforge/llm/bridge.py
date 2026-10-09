@@ -46,6 +46,37 @@ except Exception:  # ImportError, or SDK import-time errors
 EMBED_DIM = 768
 
 
+def _fit_dim(vectors: list[list[float]], model: str) -> list[list[float]]:
+    """Fit embeddings to the store's ``EMBED_DIM`` column.
+
+    Wider vectors are truncated to the first ``EMBED_DIM`` components and
+    L2-renormalised. That is only meaningful for Matryoshka-trained models
+    (Qwen3-Embedding / Qwen3-VL-Embedding, nomic-embed v1.5 and similar),
+    which is what this app is configured with. Narrower vectors cannot be
+    stored at all, so the whole batch is refused (``[]``) rather than handed
+    to the vec0 table to fail one row at a time.
+    """
+    import math
+
+    out: list[list[float]] = []
+    for v in vectors:
+        if len(v) < EMBED_DIM:
+            log.warning(
+                "embedding dim %d < required %d (model %s); refusing batch",
+                len(v),
+                EMBED_DIM,
+                model,
+            )
+            return []
+        if len(v) > EMBED_DIM:
+            v = v[:EMBED_DIM]
+            norm = math.sqrt(sum(x * x for x in v))
+            if norm > 0:
+                v = [x / norm for x in v]
+        out.append(v)
+    return out
+
+
 def _inline_refs(schema: dict[str, Any]) -> dict[str, Any]:
     """Return a self-contained copy of ``schema`` with ``$ref`` resolved against
     ``$defs`` and the ``$defs`` block removed.
@@ -485,9 +516,24 @@ class LMStudioBridge:
             async with httpx.AsyncClient(timeout=self.timeout) as c:
                 async def _request_batch(batch: list[str]) -> list[list[float]]:
                     try:
-                        payload = {"model": self.embed_id, "input": batch}
-                        r = await c.post(f"{self.base_url}/embeddings", json=payload)
-                        r.raise_for_status()
+                        # ``priority: 3`` declares this as background work.
+                        # It is a hint only: a tier-scheduling backend may
+                        # forward it on /v1/embeddings without acting on it
+                        # (request tiers often cover chat completions only),
+                        # and plain LM Studio ignores it. To keep indexing
+                        # below chat and agent loads, give the embedding model
+                        # a standing background tier in the server's own
+                        # per-model settings.
+                        payload = {"model": self.embed_id, "input": batch, "priority": 3}
+                        r = await c.post(
+                            f"{self.base_url}/embeddings",
+                            json=payload,
+                            headers={"X-SF-Client": "mailforge"},
+                        )
+                        if r.status_code >= 400:
+                            raise RuntimeError(
+                                f"embeddings HTTP {r.status_code}: {r.text[:300]}"
+                            )
                         data = r.json()
                         items = sorted(data["data"], key=lambda d: d.get("index", 0))
                         current = [list(item["embedding"]) for item in items]
@@ -516,15 +562,7 @@ class LMStudioBridge:
                     # Indices are local to each request; append batches in the
                     # original request order.
                     vectors.extend(await _request_batch(batch))
-            for v in vectors:
-                if len(v) != EMBED_DIM:
-                    log.warning(
-                        "embedding dim %d != expected %d (model %s)",
-                        len(v),
-                        EMBED_DIM,
-                        self.embed_id,
-                    )
-            return vectors
+            return _fit_dim(vectors, self.embed_id)
         except Exception as e:
             log.warning("embed() failed (LM Studio down?): %s", e)
             return []

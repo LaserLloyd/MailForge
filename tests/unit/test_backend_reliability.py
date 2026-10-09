@@ -77,8 +77,8 @@ def test_embedding_requests_are_batched_and_ordered(monkeypatch):
         def __init__(self, batch):
             self.batch = batch
 
-        def raise_for_status(self):
-            return None
+        status_code = 200
+        text = ""
 
         def json(self):
             return {
@@ -98,7 +98,7 @@ def test_embedding_requests_are_batched_and_ordered(monkeypatch):
         async def __aexit__(self, *_args):
             return None
 
-        async def post(self, _url, json):
+        async def post(self, _url, json, headers=None):
             batch = list(json["input"])
             requests.append(batch)
             return _Response(batch)
@@ -117,9 +117,11 @@ def test_embedding_failed_batch_splits_before_failing_document(monkeypatch):
         def __init__(self, batch):
             self.batch = batch
 
-        def raise_for_status(self):
-            if len(self.batch) > 8:
-                raise RuntimeError("batch rejected")
+        text = "batch rejected"
+
+        @property
+        def status_code(self):
+            return 400 if len(self.batch) > 8 else 200
 
         def json(self):
             return {
@@ -139,7 +141,7 @@ def test_embedding_failed_batch_splits_before_failing_document(monkeypatch):
         async def __aexit__(self, *_args):
             return None
 
-        async def post(self, _url, json):
+        async def post(self, _url, json, headers=None):
             batch = list(json["input"])
             request_sizes.append(len(batch))
             return _Response(batch)
@@ -149,6 +151,44 @@ def test_embedding_failed_batch_splits_before_failing_document(monkeypatch):
     vectors = asyncio.run(bridge.embed(list(range(20))))
     assert request_sizes == [20, 10, 5, 5, 10, 5, 5]
     assert [vector[0] for vector in vectors] == [float(i) for i in range(20)]
+
+
+def test_embedding_wide_vectors_are_truncated_renormalised_at_background_tier(monkeypatch):
+    seen: list[dict] = []
+
+    class _Response:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            # 2048-dim model output: first 768 components 3.0, the rest 1.0.
+            return {"data": [{"index": 0, "embedding": [3.0] * 768 + [1.0] * 1280}]}
+
+    class _Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, _url, json, headers=None):
+            seen.append({"json": json, "headers": headers})
+            return _Response()
+
+    monkeypatch.setattr(bridge_module.httpx, "AsyncClient", _Client)
+    bridge = LMStudioBridge(host="localhost:1234", model_id="chat", embed_id="embed")
+    vectors = asyncio.run(bridge.embed(["x"]))
+    assert seen[0]["json"]["priority"] == 3
+    assert seen[0]["headers"] == {"X-SF-Client": "mailforge"}
+    assert len(vectors) == 1 and len(vectors[0]) == bridge_module.EMBED_DIM
+    assert abs(sum(x * x for x in vectors[0]) - 1.0) < 1e-9
+
+
+def test_embedding_narrow_vectors_are_refused():
+    assert bridge_module._fit_dim([[1.0] * 384], "small") == []
 
 
 def test_cli_ingest_awaits_async_ingester(monkeypatch):
