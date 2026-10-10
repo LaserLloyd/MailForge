@@ -335,7 +335,9 @@ _COLD_SUBJECT = re.compile(
     r"modernize\s+your\s+website|fresh\s+look|"
     r"more\s+leads|leads?\s+for\s+sale|database\s+for\s+sale|\w+\s+leads\s*,|"
     r"casino|forex|crypto(?:currency)?|betting|whatsapp\s+number|"
-    r"limited[- ]time\s+offer|luxury\s+(?:bags|watches)|replica)\b",
+    r"limited[- ]time\s+offer|luxury\s+(?:bags|watches)|"
+    # Not a bare "replica": database mail says "read replica".
+    r"replica\s+(?:watch|watches|bags?|handbags?|rolex|shoes))\b",
     re.IGNORECASE,
 )
 # "<oursite>.com - quick question?" — cold outreach opens with our own URL.
@@ -394,7 +396,7 @@ _BRAND_DOMAINS: dict[str, tuple[str, ...]] = {
     "amazon": ("amazon.com", "amazon.co.jp", "amazon.co.uk", "amazon.de", "amazonaws.com"),
     "stripe": ("stripe.com",),
     "supabase": ("supabase.com", "supabase.io"),
-    "mozilla": ("mozilla.com", "mozilla.org", "firefox.com"),
+    "mozilla": ("mozilla.com", "mozilla.org", "firefox.com", "thunderbird.net"),
     "voicemail": (),
     "voice mail": (),
     "it governance": (),
@@ -546,7 +548,13 @@ def phishing_signals(
         if hit
     )
     if brand:
-        corroborated = lure or claim or bool(lookalike) or freemail or dmarc_fail
+        strong = lure or bool(lookalike) or freemail or dmarc_fail
+        # A role name ("Helpdesk", "IT Support") has no domain to be spoofed
+        # from, and real ticket desks write "password reset" / "verify" all
+        # day, so an account claim alone only holds it for review there.
+        _, table, _ = _brand_tables(_normalize_brands(brands))
+        role = not table.get(brand)
+        corroborated = strong or (claim and not role)
         return PhishingVerdict(brand, corroborated, hits)
     if lookalike and (lure or claim):
         return PhishingVerdict(lookalike, True, hits)

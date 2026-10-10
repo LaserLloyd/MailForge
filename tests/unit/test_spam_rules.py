@@ -407,3 +407,40 @@ def test_header_facts_tolerate_junk():
     )
     assert facts["dkim"] == "fail" and facts["dmarc"] == "fail"
     assert "dkim_pass_domains" not in facts
+
+
+@pytest.mark.parametrize(
+    "name, frm, subject",
+    [
+        ("Acme Helpdesk", "support@acme-desk.test", "Password reset request [#4411]"),
+        ("IT Support Team", "tickets@desk-client.test", "Re: login issue on your account"),
+    ],
+)
+def test_role_name_with_only_an_account_claim_is_held_not_spam(name, frm, subject):
+    """Real ticket desks are named "Helpdesk" and write about passwords; a role
+    name has no genuine domain to be spoofed from, so a claim alone is not proof."""
+    for mode in ("content_only", "standard"):
+        r = screen(subject, frm=frm, name=name, mode=mode)
+        assert r.status == "POTENTIAL_ISSUE", (mode, r)
+
+
+def test_role_name_with_a_lure_is_still_spam():
+    r = screen("New voice message received", frm="vm@desk-client.test", name="Voicemail",
+               mode="standard")
+    assert r.status == "SPAM"
+
+
+@pytest.mark.parametrize(
+    "subject",
+    ["Your read replica is ready", "Replica lag alert on db-1"],
+)
+def test_database_replica_mail_is_not_cold_outreach(subject):
+    score, _hits = spam_score(from_addr="ops@db-host.test", from_name="", subject=subject,
+                              headers={})
+    assert score == 0
+
+
+def test_replica_goods_are_still_cold_outreach():
+    score, _hits = spam_score(from_addr="x@shop.test", from_name="", subject="Replica watches 70% off",
+                              headers={})
+    assert score >= 4
