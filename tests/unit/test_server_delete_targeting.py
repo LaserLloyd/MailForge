@@ -255,3 +255,38 @@ def test_uid_mismatch_is_not_retried_forever(tmp_path):
     store, mid = _store_with_failed_purge(tmp_path)
     store.record_server_delete([mid], error=store.UID_MISMATCH_ERROR)
     assert store.server_retry_ids() == []
+
+
+def test_mismatch_and_transport_failure_keep_their_own_errors(tmp_path, box):
+    """A UID-mismatch skip must not label a transport failure in the same call
+    (which would stop it being retried), nor the reverse."""
+    store = open_store(tmp_path / "m.db")
+    account = store.upsert_account("a", "imap", "imap.example", 993, "u", "main")
+    ids = []
+    for folder, uid, msgid in (("INBOX", 10, "<a@x>"), ("Archive", 20, "<b@x>")):
+        ids.append(store.insert_message(
+            account_id=account, folder=folder, uid=uid, message_id=msgid, thread_id="t",
+            from_addr="s@x", from_name="S", to_addrs="u", cc_addrs="", subject="s",
+            received_at="2026-07-16T00:00:00+00:00", raw_html=None, sanitized_text="b",
+            has_attachments=0, link_count=0,
+        ))
+    mismatched, broken = ids
+
+    class Box(FakeMailbox):
+        def __init__(self):
+            # UID 10 now holds a different message; the Archive fetch dies.
+            super().__init__(server={10: "<other@x>", 20: "<b@x>"})
+            self.n = 0
+
+        def fetch(self, *a, **k):
+            self.n += 1
+            if self.n == 2:
+                raise imaplib.IMAP4.abort("socket error: EOF")
+            yield from super().fetch(*a, **k)
+
+    box(Box())
+    store.set_messages_trashed(ids, True)
+    retention.purge_now(store, _settings(), ids)
+    assert store.get_message(mismatched)["server_delete_error"] == store.UID_MISMATCH_ERROR
+    assert "abort" in store.get_message(broken)["server_delete_error"]
+    assert store.server_retry_ids() == [broken]

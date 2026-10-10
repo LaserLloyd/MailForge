@@ -56,6 +56,10 @@ NO_TRASH_ERROR = (
 )
 
 
+#: Must equal ``Store.UID_MISMATCH_ERROR``: rows recorded with it are not retried.
+UID_MISMATCH_ERROR = "uid no longer matches the stored message"
+
+
 class DeleteRefused(RuntimeError):
     """The server cannot do a narrowly targeted delete, so nothing was done."""
 
@@ -70,6 +74,10 @@ class DeleteOutcome:
     failed_ids: list[int] = field(default_factory=list)
     error: str = ""
     destination: str = ""
+    #: Per-message error for ``failed_ids`` (``error`` is only the first one).
+    #: A UID-mismatch skip must not share its error with a transport failure
+    #: in the same call: one is never retried, the other must be.
+    errors: dict[int, str] = field(default_factory=dict)
 
 
 def find_trash_folder(mailbox: MailBox) -> str | None:
@@ -188,7 +196,10 @@ def delete_uids(
         return outcome
 
     def _fail(ids: list[int], error: str) -> None:
-        outcome.failed_ids.extend(i for i in ids if i not in outcome.failed_ids)
+        for i in ids:
+            if i not in outcome.failed_ids:
+                outcome.failed_ids.append(i)
+                outcome.errors[i] = error
         outcome.error = outcome.error or error
 
     try:
@@ -215,7 +226,7 @@ def delete_uids(
                             "Provider delete on '%s'/%s skipped %d UID(s) that now hold a "
                             "different message.", account.name, folder, len(mismatched),
                         )
-                        _fail(mismatched, "uid no longer matches the stored message")
+                        _fail(mismatched, UID_MISMATCH_ERROR)
                     if not keep:
                         continue
                     uidset = ",".join(str(uid) for _mid, uid in keep)

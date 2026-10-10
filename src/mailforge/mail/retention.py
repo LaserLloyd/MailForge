@@ -121,9 +121,14 @@ def _server_delete(
             store.record_server_delete(outcome.deleted_ids)
             report.server_deleted += len(outcome.deleted_ids)
         if outcome.failed_ids:
-            store.record_server_delete(
-                outcome.failed_ids, error=outcome.error or "provider delete failed"
-            )
+            # Record each failure with its own error: a UID-mismatch skip is
+            # never retried, a transport failure in the same call must be.
+            by_error: dict[str, list[int]] = {}
+            for mid in outcome.failed_ids:
+                err = outcome.errors.get(mid) or outcome.error or "provider delete failed"
+                by_error.setdefault(err, []).append(mid)
+            for err, ids in by_error.items():
+                store.record_server_delete(ids, error=err)
             report.server_failed += len(outcome.failed_ids)
         if outcome.error:
             report.errors.append(f"{name}: {outcome.error}")
