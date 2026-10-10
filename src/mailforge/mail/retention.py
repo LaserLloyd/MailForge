@@ -89,6 +89,60 @@ def _remove_files(paths: list[str]) -> int:
     return removed
 
 
+def _server_delete(
+    store: Store, settings: Settings, message_ids: list[int], report: PurgeReport
+) -> None:
+    """The provider half of a purge: delete, then record what really happened."""
+    mode = delete_mode(settings)
+    if mode == "off":
+        return
+    accounts = _accounts(settings)
+    by_account: dict[str, dict[str, list[tuple[int, int]]]] = {}
+    expected: dict[str, dict[int, str]] = {}
+    for row in store.server_locators(message_ids):
+        name = str(row["account_name"] or "")
+        if name not in accounts:
+            continue  # mailbox removed from config — nothing to talk to
+        mid = int(row["message_id"])
+        by_account.setdefault(name, {}).setdefault(str(row["folder"]), []).append(
+            (mid, int(row["uid"]))
+        )
+        if row["header_message_id"]:
+            expected.setdefault(name, {})[mid] = str(row["header_message_id"])
+    for name, targets in by_account.items():
+        outcome = delete_uids(
+            accounts[name],  # type: ignore[arg-type]
+            targets,
+            mode=mode,
+            expected_ids=expected.get(name, {}),
+        )
+        report.modes.add(outcome.mode)
+        if outcome.deleted_ids:
+            store.record_server_delete(outcome.deleted_ids)
+            report.server_deleted += len(outcome.deleted_ids)
+        if outcome.failed_ids:
+            store.record_server_delete(
+                outcome.failed_ids, error=outcome.error or "provider delete failed"
+            )
+            report.server_failed += len(outcome.failed_ids)
+        if outcome.error:
+            report.errors.append(f"{name}: {outcome.error}")
+
+
+def retry_server_deletes(store: Store, settings: Settings) -> PurgeReport:
+    """Retry provider deletes that failed after the local copy was purged."""
+    report = PurgeReport()
+    if delete_mode(settings) == "off":
+        return report
+    ids = store.server_retry_ids()
+    if not ids:
+        return report
+    report.requested = len(ids)
+    log.info("Retrying %d provider delete(s) that failed earlier.", len(ids))
+    _server_delete(store, settings, ids, report)
+    return report
+
+
 def purge_now(store: Store, settings: Settings, message_ids: list[int]) -> PurgeReport:
     """Permanently delete these messages — provider first, then locally.
 
@@ -101,30 +155,7 @@ def purge_now(store: Store, settings: Settings, message_ids: list[int]) -> Purge
     if not message_ids:
         return report
 
-    mode = delete_mode(settings)
-    accounts = _accounts(settings)
-    if mode != "off":
-        by_account: dict[str, dict[str, list[tuple[int, int]]]] = {}
-        for row in store.server_locators(message_ids):
-            name = str(row["account_name"] or "")
-            if name not in accounts:
-                continue  # mailbox removed from config — nothing to talk to
-            by_account.setdefault(name, {}).setdefault(str(row["folder"]), []).append(
-                (int(row["message_id"]), int(row["uid"]))
-            )
-        for name, targets in by_account.items():
-            outcome = delete_uids(accounts[name], targets, mode=mode)  # type: ignore[arg-type]
-            report.modes.add(outcome.mode)
-            if outcome.deleted_ids:
-                store.record_server_delete(outcome.deleted_ids)
-                report.server_deleted += len(outcome.deleted_ids)
-            if outcome.failed_ids:
-                store.record_server_delete(
-                    outcome.failed_ids, error=outcome.error or "provider delete failed"
-                )
-                report.server_failed += len(outcome.failed_ids)
-            if outcome.error:
-                report.errors.append(f"{name}: {outcome.error}")
+    _server_delete(store, settings, message_ids, report)
 
     paths = store.attachment_paths(message_ids)
     report.purged = store.purge_messages(message_ids)
@@ -137,12 +168,24 @@ def purge_now(store: Store, settings: Settings, message_ids: list[int]) -> Purge
 
 
 def sweep(store: Store, settings: Settings) -> PurgeReport:
-    """Delete everything whose holding period is up (blocking)."""
+    """Delete everything whose holding period is up (blocking).
+
+    Also retries the provider half of earlier purges whose server delete
+    failed, so "the next sweep retries" is actually true.
+    """
+    retried = PurgeReport()
+    try:
+        retried = retry_server_deletes(store, settings)
+    except Exception:  # noqa: BLE001 — a retry must never block the sweep
+        log.exception("Provider delete retry failed")
     due = store.trash_due_ids(retention_days=retention_days(settings))
     if not due:
-        return PurgeReport()
+        return retried
     log.info("Trash retention sweep: %d message(s) due for permanent deletion.", len(due))
     report = purge_now(store, settings, due)
+    report.server_deleted += retried.server_deleted
+    report.server_failed += retried.server_failed
+    report.errors.extend(retried.errors)
     try:
         from ..audit.log import AuditLog
 

@@ -157,7 +157,8 @@ def test_purge_now_deletes_at_the_provider_then_locally(tmp_path, monkeypatch):
     store.set_message_trashed(message_id)
     seen: dict[str, object] = {}
 
-    def _fake(account, targets, *, mode):
+    def _fake(account, targets, *, mode, expected_ids=None):
+        seen["expected"] = expected_ids
         seen["account"] = account.name
         seen["targets"] = targets
         seen["mode"] = mode
@@ -172,6 +173,7 @@ def test_purge_now_deletes_at_the_provider_then_locally(tmp_path, monkeypatch):
 
     assert seen["mode"] == "trash"
     assert seen["targets"] == {"INBOX": [(message_id, 1)]}
+    assert seen["expected"] == {message_id: "<1@example.test>"}
     assert report.purged == 1 and report.server_deleted == 1 and report.ok
     assert store.get_message(message_id)["server_deleted_at"]
 
@@ -184,7 +186,7 @@ def test_provider_failure_is_recorded_not_hidden(tmp_path, monkeypatch):
     monkeypatch.setattr(
         retention,
         "delete_uids",
-        lambda account, targets, *, mode: DeleteOutcome(
+        lambda account, targets, *, mode, expected_ids=None: DeleteOutcome(
             account=account.name,
             mode=mode,
             failed_ids=[mid for pairs in targets.values() for mid, _ in pairs],
@@ -226,7 +228,7 @@ def test_sweep_takes_only_what_is_due(tmp_path, monkeypatch):
     monkeypatch.setattr(
         retention,
         "delete_uids",
-        lambda account, targets, *, mode: DeleteOutcome(
+        lambda account, targets, *, mode, expected_ids=None: DeleteOutcome(
             account=account.name,
             mode=mode,
             deleted_ids=[mid for pairs in targets.values() for mid, _ in pairs],

@@ -1468,11 +1468,35 @@ class Store:
             return []
         placeholders = ",".join("?" for _ in ids)
         return self.conn.execute(
-            "SELECT m.id AS message_id, m.folder, m.uid, a.name AS account_name "
+            "SELECT m.id AS message_id, m.folder, m.uid, a.name AS account_name, "
+            "m.message_id AS header_message_id "
             f"FROM messages m JOIN accounts a ON a.id=m.account_id WHERE m.id IN ({placeholders}) "
             "AND m.uid IS NOT NULL AND m.server_deleted_at IS NULL",
             tuple(ids),
         ).fetchall()
+
+    #: Recorded when the UID at the provider now holds a different message.
+    #: Retrying cannot help (the original is not at that UID), so such rows
+    #: are left for a human instead of being retried every sweep.
+    UID_MISMATCH_ERROR = "uid no longer matches the stored message"
+
+    def server_retry_ids(self, limit: int = 500) -> list[int]:
+        """Purged locally, but the provider delete failed: retry the server half.
+
+        ``purge_now`` shreds the local copy even when the provider is
+        unreachable, which takes the row out of every trash query — without
+        this the provider copy would survive forever.
+        """
+        return [
+            int(r["id"])
+            for r in self.conn.execute(
+                "SELECT id FROM messages WHERE purged_at IS NOT NULL "
+                "AND server_deleted_at IS NULL AND server_delete_error IS NOT NULL "
+                "AND uid IS NOT NULL AND server_delete_error NOT LIKE ? "
+                "ORDER BY id LIMIT ?",
+                (self.UID_MISMATCH_ERROR + "%", int(limit)),
+            ).fetchall()
+        ]
 
     def record_server_delete(
         self,
