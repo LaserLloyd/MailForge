@@ -32,6 +32,10 @@ log = logging.getLogger(__name__)
 
 # Categories that warrant a drafted reply.
 _REPLYABLE = {"RESPOND", "MEETING"}
+#: A deferred draft whose classification keeps failing is retried once a
+#: minute; after this many failures it is retired for a human instead of
+#: spending a rig LLM call every minute forever.
+MAX_CLASSIFY_ATTEMPTS = 30
 
 
 async def _is_up(bridge) -> bool:
@@ -61,6 +65,40 @@ class AgentGraph:
                 if v:
                     parts |= {a.strip().lower() for a in str(v).split(",") if a.strip()}
         return parts
+
+    def _deferred_draft(self, message_id: int):
+        try:
+            existing = self.store.latest_draft_for_message(message_id)
+        except Exception:  # noqa: BLE001
+            return None
+        if existing is not None and existing["state"] == "DEFERRED_NO_LLM":
+            return existing
+        return None
+
+    def _retire_deferred(self, message_id: int, reason: str) -> None:
+        """Move a DEFERRED_NO_LLM draft out of the once-a-minute resume loop.
+
+        Without this, every early return below left the draft deferred, and
+        the resumer re-ran it (and its LLM calls / audit rows) every minute.
+        """
+        existing = self._deferred_draft(message_id)
+        if existing is None:
+            return
+        self.store.update_draft_state(
+            existing["id"], "REJECTED", guardrail_flags={"reason": reason}
+        )
+
+    def _classify_attempts(self, message_id: int) -> int:
+        existing = self._deferred_draft(message_id)
+        if existing is None:
+            return 0
+        try:
+            import json
+
+            flags = json.loads(existing["guardrail_flags"] or "{}")
+            return int(flags.get("classify_attempts", 1 if flags.get("reason") == "classify_failed" else 0))
+        except (TypeError, ValueError, AttributeError):
+            return 0
 
     def _bind_recipient(self, msg, thread_id: str) -> str | None:
         """A draft recipient MUST come from thread participants / contacts /
@@ -107,6 +145,7 @@ class AgentGraph:
                 "Message %s is QUARANTINED — refusing all AI work until a human "
                 "releases it in the UI.", message_id,
             )
+            self._retire_deferred(message_id, "quarantined")
             return None
 
         # Cynical site screening is a policy gate, separate from prompt-
@@ -126,6 +165,7 @@ class AgentGraph:
                 "Message %s screened %s — refusing AI work until human review.",
                 message_id, screening_status,
             )
+            self._retire_deferred(message_id, f"screened_{screening_status.lower()}")
             return None
 
         site_id = account["site_id"]
@@ -195,11 +235,23 @@ class AgentGraph:
                 subject_table="messages", subject_id=message_id,
             )
             recipient = self._bind_recipient(msg, thread_id) or (msg["from_addr"] or "")
+            attempts = self._classify_attempts(message_id) + 1
+            if attempts >= MAX_CLASSIFY_ATTEMPTS:
+                log.error(
+                    "Classification failed %d times for message %s — leaving it for a human.",
+                    attempts, message_id,
+                )
+                self._retire_deferred(message_id, "classify_failed_repeatedly")
+                return None
             did = tools.propose_draft(
                 self.store, message_id, thread_id, recipient,
                 subject=f"Re: {msg['subject'] or ''}", body="",
                 state="DEFERRED_NO_LLM",
-                guardrail_flags={"injection_risk": injection_risk, "reason": "classify_failed"},
+                guardrail_flags={
+                    "injection_risk": injection_risk,
+                    "reason": "classify_failed",
+                    "classify_attempts": attempts,
+                },
             )
             return did
         tools.propose_label(
@@ -229,6 +281,7 @@ class AgentGraph:
         recipient = self._bind_recipient(msg, thread_id)
         if not recipient:
             log.warning("Message %s has no bindable recipient — skipping draft.", message_id)
+            self._retire_deferred(message_id, "no_bindable_recipient")
             return None
 
         # --- retrieve thread-scoped context (§4/§5: same thread only) ---

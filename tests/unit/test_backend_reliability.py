@@ -506,3 +506,36 @@ def test_anomaly_monitor_does_not_re_report_old_sends_after_restart(tmp_path):
     monitor.seed_seen_sends()
     findings = monitor._check_first_time_external_sends()
     assert len(findings) == 1 and "draft 2" in findings[0]
+
+
+def test_stuck_deferred_draft_is_retired_not_resumed_forever(tmp_path):
+    store = open_store(tmp_path / "deferred.db")
+    message_id = _insert_message(store)
+    did = store.upsert_message_draft(
+        message_id, "t1", "person@example.com", "Re: Hello", "", "DEFERRED_NO_LLM"
+    )
+    graph = AgentGraph(store, Settings(), bridge=None)
+    graph._retire_deferred(message_id, "screened_spam")
+    assert store.get_draft(did)["state"] == "REJECTED"
+    assert [d["id"] for d in store.deferred_drafts()] == []
+    store.close()
+
+
+def test_classify_attempts_are_counted_from_the_deferred_draft(tmp_path):
+    import json
+
+    store = open_store(tmp_path / "attempts.db")
+    message_id = _insert_message(store)
+    graph = AgentGraph(store, Settings(), bridge=None)
+    assert graph._classify_attempts(message_id) == 0
+    did = store.upsert_message_draft(
+        message_id, "t1", "person@example.com", "Re: Hello", "", "DEFERRED_NO_LLM"
+    )
+    store.update_draft_state(
+        did, "DEFERRED_NO_LLM",
+        guardrail_flags={"reason": "classify_failed", "classify_attempts": 7},
+    )
+    assert graph._classify_attempts(message_id) == 8 - 1
+    store.update_draft_state(did, "PENDING", guardrail_flags=json.loads("{}"))
+    assert graph._classify_attempts(message_id) == 0
+    store.close()
