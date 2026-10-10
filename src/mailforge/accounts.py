@@ -155,13 +155,13 @@ def test_imap_login(
     pass here means the listener will connect too — not merely that the host
     resolves.
     """
-    from imap_tools import MailBox
+    from .mail.imap_listener import open_mailbox
 
     if not secret:
         raise AccountError("No password/token to test.")
     checked_port = _norm_port(port, "IMAP port")
     try:
-        with MailBox((host or "").strip(), checked_port, timeout=20) as mailbox:
+        with open_mailbox((host or "").strip(), checked_port, timeout=20) as mailbox:
             if (auth_method or "password").strip().lower() == "xoauth2":
                 mailbox.xoauth2(username, secret)
             else:

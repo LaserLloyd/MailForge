@@ -23,7 +23,7 @@ from imap_tools import MailBox
 from imap_tools.errors import ImapToolsError
 
 from ..config import IMAPAccount
-from .imap_listener import SOCKET_TIMEOUT_S, _login
+from .imap_listener import _login, open_mailbox
 
 log = logging.getLogger(__name__)
 
@@ -89,7 +89,7 @@ def delete_uids(
         outcome.mode = "off"
         return outcome
     try:
-        with MailBox(account.host, account.port, timeout=SOCKET_TIMEOUT_S) as mailbox:
+        with open_mailbox(account.host, account.port) as mailbox:
             _login(mailbox, account)
             trash = find_trash_folder(mailbox) if mode == "trash" else None
             if mode == "trash" and trash is None:

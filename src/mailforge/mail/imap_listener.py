@@ -24,6 +24,7 @@ import hashlib
 import logging
 import os
 import re
+import ssl
 import stat
 import threading
 import time
@@ -141,6 +142,43 @@ def _find_sent_folder(mailbox: MailBox) -> str | None:
     return None
 
 
+def tls_context() -> ssl.SSLContext:
+    """A certificate- and hostname-verifying TLS context.
+
+    imap_tools hands ``ssl_context=None`` straight to ``imaplib.IMAP4_SSL``,
+    which then uses ``ssl._create_stdlib_context`` — on CPython that is the
+    *unverified* context, so any machine-in-the-middle could present its own
+    certificate and collect the mailbox password. Every IMAP connection in
+    this app goes through :func:`open_mailbox` so that cannot happen.
+    """
+    return ssl.create_default_context()
+
+
+def open_mailbox(host: str, port: int, timeout: float | None = SOCKET_TIMEOUT_S) -> MailBox:
+    """``MailBox`` over verified TLS (see :func:`tls_context`)."""
+    return MailBox(host, port, timeout=timeout, ssl_context=tls_context())
+
+
+def refresh_capabilities(mailbox: MailBox) -> tuple[str, ...]:
+    """Re-read CAPABILITY after login.
+
+    imaplib caches the *pre-login* greeting capabilities, and many servers
+    (Dovecot included) only advertise MOVE / UIDPLUS once authenticated. Code
+    that decides how to delete must see the real list, or imap_tools silently
+    falls back to COPY + a folder-wide EXPUNGE.
+    """
+    client = mailbox.client
+    try:
+        typ, dat = client.capability()
+        if typ == "OK" and dat and dat[-1]:
+            raw = dat[-1]
+            text = raw.decode("ascii", "replace") if isinstance(raw, bytes) else str(raw)
+            client.capabilities = tuple(text.upper().split())
+    except Exception as e:  # noqa: BLE001 — keep the greeting list on failure
+        log.debug("CAPABILITY refresh failed: %s", e)
+    return tuple(getattr(client, "capabilities", ()) or ())
+
+
 def _login(mailbox: MailBox, account: IMAPAccount) -> None:
     secret = get_imap_secret(account.name)
     if secret is None:
@@ -150,6 +188,7 @@ def _login(mailbox: MailBox, account: IMAPAccount) -> None:
         mailbox.xoauth2(account.username, token)
     else:
         mailbox.login(account.username, token)
+    refresh_capabilities(mailbox)
 
 
 def bootstrap_allowlist(account: IMAPAccount, store: Store) -> int:
@@ -160,7 +199,7 @@ def bootstrap_allowlist(account: IMAPAccount, store: Store) -> int:
     """
     since = (datetime.now(timezone.utc) - timedelta(days=365)).date()
     recorded = 0
-    with MailBox(account.host, account.port, timeout=SOCKET_TIMEOUT_S) as mailbox:
+    with open_mailbox(account.host, account.port) as mailbox:
         _login(mailbox, account)
         sent = _find_sent_folder(mailbox)
         if not sent:
@@ -294,7 +333,7 @@ class IMAPListener:
         """One connection session; returns on forced reconnect or stop."""
         folder = self.account.folders[0] if self.account.folders else "INBOX"
         self.sync.update(self.account.name, state="connecting")
-        with MailBox(self.account.host, self.account.port, timeout=SOCKET_TIMEOUT_S) as mailbox:
+        with open_mailbox(self.account.host, self.account.port) as mailbox:
             _login(mailbox, self.account)
             mailbox.folder.set(folder)
             log.info("IMAP '%s' connected, IDLE on %s", self.account.name, folder)

@@ -20,8 +20,6 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from imap_tools import MailBox
-
 from ..config import IMAPAccount
 
 log = logging.getLogger(__name__)
@@ -37,12 +35,12 @@ def append_to_sent(account: IMAPAccount, raw: bytes) -> tuple[str, str, str]:
     the caller has already delivered the mail and must not treat this as a
     send failure.
     """
-    from .imap_listener import SOCKET_TIMEOUT_S, _find_sent_folder, _login
+    from .imap_listener import _find_sent_folder, _login, open_mailbox
 
     if not raw:
         return ("SKIPPED", "", "no raw message bytes to append")
     try:
-        with MailBox(account.host, account.port, timeout=SOCKET_TIMEOUT_S) as mailbox:
+        with open_mailbox(account.host, account.port) as mailbox:
             _login(mailbox, account)
             folder = _find_sent_folder(mailbox) or FALLBACK_SENT_FOLDER
             mailbox.append(
