@@ -219,7 +219,9 @@ def test_atomic_private_write_survives_a_missing_os_fchmod(tmp_path, monkeypatch
 
     from mailforge.knowledge import handbooks
 
-    monkeypatch.delattr(os_module, "fchmod", raising=True)
+    # raising=False: on Windows the attribute is already absent, which is the
+    # very platform this simulates.
+    monkeypatch.delattr(os_module, "fchmod", raising=False)
 
     target = tmp_path / "handbook.md"
     written = handbooks._atomic_private_write(target, "body\n")
