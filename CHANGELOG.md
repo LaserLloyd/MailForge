@@ -3,7 +3,7 @@
 All notable changes to this project are documented here. Dates are ISO-8601.
 Published by Laser Lloyd — https://www.laserlloyd.com
 
-## Unreleased
+## 0.5.0 — 2026-10-10
 
 ### Added
 - **Stronger spam and phishing screening.** Scored rules on subject, sender
@@ -18,6 +18,44 @@ Published by Laser Lloyd — https://www.laserlloyd.com
 - **`mailforge rescreen [--site ID] [--apply]`** re-applies screening and
   category rules to stored mail (dry run by default; never overrides a human
   decision or releases withheld mail to AI).
+
+### Fixed
+- **Mark as spam no longer lands on a 500 page.** The View/Tag picker now
+  resolves `tag=spam` / `tag=quarantined` to their views, and any stale tag,
+  unknown account (including a mailbox removed with `account-remove`) or
+  non-numeric page falls back to a valid view instead of crashing. The same
+  guard covers the Activity filters and Compose templates.
+- Action toasts (spam, archive, restore, release, mark unread) survive the
+  navigation that follows them.
+- A message that repeatedly fails ingest is skipped after three attempts
+  instead of blocking its mailbox; a locked database or full disk never
+  counts towards that limit. UIDVALIDITY changes are detected and reported.
+- Background tasks (retention sweep, anomaly monitor) use their own database
+  connections and keep running after an error; the monitor no longer
+  re-reports old sends after a restart.
+- Deferred drafts that can never resume are retired instead of retrying
+  forever.
+
+### Security
+- IMAP connections verify the server certificate and hostname everywhere.
+- Provider deletes target single UIDs (UID MOVE, or UID COPY + STORE + UID
+  EXPUNGE) after checking the stored Message-ID; a folder-wide EXPUNGE is
+  never sent, and a server without MOVE/UIDPLUS is refused.
+- SMTP refuses to authenticate without TLS (loopback relays excepted); port
+  465 uses implicit TLS.
+- The Origin check now covers plain HTTP requests as well as WebSockets.
+- Mail can no longer imitate the untrusted-content markers to close its own
+  block in a model prompt; subject and sender sit inside the block too.
+- One fail-closed gate decides which screening statuses an AI may read.
+- Dependencies upgraded (NiceGUI 3.18, FastAPI 0.143, Starlette 1.7, bleach
+  6.4, python-multipart 0.0.32, cryptography 50); `pip-audit` is clean for
+  the base, `llm` and `rag` installs.
+
+### Upgrading
+- Two additive columns (`messages.header_meta`,
+  `mailbox_cursors.uidvalidity`) are created on first start.
+- Run `mailforge rescreen` (dry run), then `mailforge rescreen --apply`, to
+  apply the new rules and the GitHub category to mail already stored.
 
 ### Changed
 - **Renamed SiftForge to MailForge** (2026-08-27). The project, CLI, package,
