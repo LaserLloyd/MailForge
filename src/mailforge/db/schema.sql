@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS messages (
   screening_status TEXT NOT NULL DEFAULT 'UNSCREENED',
   screening_reason TEXT,
   screening_source TEXT NOT NULL DEFAULT 'AUTO_POLICY',
+  -- Allowlisted header facts (JSON; auth verdicts, list markers). Never free text.
+  header_meta TEXT,
   UNIQUE(account_id, folder, uid));
 CREATE INDEX IF NOT EXISTS msg_thread ON messages(thread_id);
 CREATE INDEX IF NOT EXISTS msg_from   ON messages(from_addr);

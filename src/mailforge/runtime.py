@@ -97,6 +97,7 @@ def run_serve(start_ui: bool = True, ui_port: int | None = None) -> None:
             # ([sites.<id>].content_terms); absent => packaged defaults.
             site_terms=_site_terms(settings, acct.site_id),
             brand_terms=_brand_terms(settings, acct.site_id),
+            category_rules=settings.category_rules,
             # Runs in the listener's own thread: a slow Sent-folder scan used to
             # block ALL listeners (and the UI) from starting.
             bootstrap_allowlist_on_start=True,

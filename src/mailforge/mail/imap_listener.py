@@ -39,7 +39,7 @@ from ..config import IMAPAccount, SecuritySettings
 from ..db.store import Store
 from ..paths import data_dir
 from ..secrets import get_imap_secret
-from . import normalize, sanitize
+from . import header_facts, normalize, sanitize
 from .sync_state import SyncRegistry
 from .sync_state import registry as default_registry
 
@@ -252,6 +252,7 @@ class IMAPListener:
         screening_mode: str = "standard",
         site_terms: "re.Pattern[str] | None" = None,
         brand_terms: "re.Pattern[str] | None" = None,
+        category_rules: "list | tuple" = (),
         sync: SyncRegistry | None = None,
         bootstrap_allowlist_on_start: bool = False,
     ) -> None:
@@ -264,6 +265,8 @@ class IMAPListener:
         # None => the packaged generic defaults (see inbound_screening).
         self.site_terms = site_terms
         self.brand_terms = brand_terms
+        # Deterministic sender rules (e.g. file GitHub notifications).
+        self.category_rules = tuple(category_rules or ())
         # Sent-folder allowlist seeding runs inside this listener's own thread
         # (best-effort) so one slow mailbox cannot delay ingest for the others.
         self._bootstrap_allowlist = bool(bootstrap_allowlist_on_start)
@@ -555,6 +558,11 @@ class IMAPListener:
             return vals[0] if vals else None
 
         message_id = _h("message-id")
+        try:
+            facts = header_facts.extract_header_facts(hdr)
+        except Exception:  # noqa: BLE001 — facts only sharpen screening
+            log.warning("Header fact extraction failed for UID %s", msg.uid, exc_info=True)
+            facts = {}
         in_reply_to = _h("in-reply-to")
         references = _h("references")
         # Unfold the subject: folded headers arrive with embedded CRLF +
@@ -599,6 +607,12 @@ class IMAPListener:
             screening = assess_inbound(
                 mode=self.screening_mode,
                 from_addr=msg.from_ or "",
+                from_name=(msg.from_values.name if msg.from_values else "") or "",
+                headers=facts,
+                category_rules=self.category_rules,
+                site_id=self.account.site_id,
+                learned_spam_domains=self.store.learned_spam_domains(self.account.site_id),
+                brand_domains=self.security.impersonated_brands,
                 subject=subject,
                 text=norm.text or "",
                 link_count=len(norm.links),
@@ -637,6 +651,7 @@ class IMAPListener:
             screening_status=screening.status,
             screening_reason=screening.reason,
             screening_source=screening.source,
+            header_meta=header_facts.dumps(facts),
         )
         if message_pk is None:
             # Duplicate (account,folder,uid) — already ingested. If the first
@@ -657,6 +672,21 @@ class IMAPListener:
                 "Message %d QUARANTINED at ingest (%s) — no LLM/bridge access "
                 "until released in the UI.", message_pk, quarantine_reason,
             )
+        if screening.category:
+            # A category rule matched: record its classification so the Mail
+            # page lists the message under the rule's own View/Tag entry. The
+            # model never classifies FILED mail (it is withheld from AI).
+            try:
+                self.store.upsert_classification(
+                    message_pk,
+                    category=screening.category,
+                    priority=int(screening.priority),
+                    rationale=f"sender rule {screening.rule}",
+                    injection_risk=None,
+                    model_used=f"rule:{screening.rule}",
+                )
+            except Exception:  # noqa: BLE001 — the screening status already contains it
+                log.exception("Rule classification failed for msg %d", message_pk)
         if not ai_may_read(screening.status):
             log.info(
                 "Message %d screened %s (%s) — body withheld from AI.",

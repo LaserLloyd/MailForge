@@ -50,9 +50,36 @@ _TAG_LABELS = {
 }
 
 
+#: Display labels for categories set by deterministic sender rules
+#: (``category:GITHUB`` -> "GitHub"); refreshed from settings on each render.
+_RULE_CATEGORY_LABELS: dict[str, str] = {"category:GITHUB": "GitHub"}
+
+
+def register_rule_categories(settings: object) -> None:
+    """Pick up the configured category rules' labels for the tag picker."""
+    rules = getattr(settings, "category_rules", None)
+    if rules is None:
+        return
+    labels: dict[str, str] = {}
+    for rule in rules:
+        category = str(getattr(rule, "category", "") or "").upper()
+        label = str(getattr(rule, "label", "") or "").strip()
+        if category and label:
+            labels[f"category:{category}"] = label
+    _RULE_CATEGORY_LABELS.clear()
+    _RULE_CATEGORY_LABELS.update(labels)
+
+
+def rule_category_label(tag: str) -> str:
+    """Label when ``tag`` is a sender-rule category, else ''."""
+    return _RULE_CATEGORY_LABELS.get(str(tag or ""), "")
+
+
 def _tag_label(tag: str) -> str:
     if tag in _TAG_LABELS:
         return _TAG_LABELS[tag]
+    if tag in _RULE_CATEGORY_LABELS:
+        return _RULE_CATEGORY_LABELS[tag]
     _kind, _separator, value = str(tag).partition(":")
     return value.replace("_", " ").strip().title() or str(tag)
 
@@ -866,6 +893,7 @@ def render(
     page: int = 0,
 ) -> None:
     """Render route-local filters and a responsive list/reading workspace."""
+    register_rule_categories(settings)
     accounts = _account_options(settings)
     try:
         db_accounts = [
@@ -981,6 +1009,20 @@ def render(
             "Questionable bodies are withheld from every AI until you mark them "
             "content-related or spam."
         ).style("font-size: 12px; color: var(--text-secondary)")
+    elif rule_category_label(tag):
+        rule_label = rule_category_label(tag)
+        with ui.row().classes("w-full items-center").style("gap: 8px"):
+            ui.label(
+                f"{rule_label} mail is filed by a sender rule: kept out of the Inbox "
+                "and away from every AI. Security and account notices are not filed; "
+                "they stay in the Inbox for you to check."
+            ).style("font-size: 12px; color: var(--text-secondary)")
+            ui.space()
+            ui.button(
+                f"Delete all {rule_label}",
+                icon="delete_sweep",
+                on_click=lambda: _delete_all_in_tag(),
+            ).props("flat dense no-caps color=negative")
     elif filter == "trash":
         from ...mail.retention import delete_mode, retention_days
 
@@ -1130,6 +1172,48 @@ def render(
             _notify_then_navigate(notice, _current_url())
         except Exception as e:  # noqa: BLE001
             ui.notify(f"Bulk action failed: {e}", type="negative")
+
+    async def _delete_all_in_tag() -> None:
+        """Move every message under the current rule category to Trash.
+
+        Covers all pages, not just the ticked rows. Reversible (normal Trash
+        holding period), but it can be hundreds of messages, so it asks first.
+        """
+        try:
+            message_ids = store.message_ids_for_tag(  # type: ignore[attr-defined]
+                tag, account_name=account or None
+            )
+        except Exception as e:  # noqa: BLE001
+            ui.notify(f"Could not list messages: {e}", type="negative")
+            return
+        if not message_ids:
+            ui.notify("Nothing to delete.")
+            return
+        label = rule_category_label(tag) or _tag_label(tag)
+        with ui.dialog() as confirm, ui.card().classes("bb-card").style(
+            "width: min(500px, 94vw); padding: 18px; gap: 8px"
+        ):
+            ui.label(f"Delete all {label} mail?").style("font-size: 17px; font-weight: 800")
+            ui.label(
+                f"{len(message_ids)} message(s) will move to Trash"
+                + (f" for {account}" if account else "")
+                + ". You can restore them from Trash until the holding period ends."
+            ).style("font-size: 12.5px; color: var(--text-secondary)")
+            with ui.row().classes("w-full justify-end bb-toolbar"):
+                ui.button("Cancel", on_click=lambda: confirm.submit(False)).props("flat no-caps")
+                ui.button(f"Delete {len(message_ids)}", icon="delete_sweep",
+                          on_click=lambda: confirm.submit(True)).props(
+                    "unelevated no-caps color=negative"
+                )
+        if not await confirm:
+            return
+        try:
+            changed = store.set_messages_trashed(message_ids, True)  # type: ignore[attr-defined]
+        except Exception as e:  # noqa: BLE001
+            ui.notify(f"Delete failed: {e}", type="negative")
+            return
+        _audit_bulk("trash_category", message_ids, changed)
+        _notify_then_navigate(_delete_notice(settings, changed), _current_url(tag=""))
 
     async def _purge_selected() -> None:
         """Skip the holding period for the selected Trash messages.

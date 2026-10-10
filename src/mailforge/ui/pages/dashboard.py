@@ -349,6 +349,17 @@ def refresh(store: object, settings: object) -> None:
                   href="/mail?filter=review")
         if spam:
             _stat(spam, "Filtered spam", color="error", href="/mail?filter=spam")
+        if int(triage.get("filed", 0)):
+            # Mail filed by sender rules (e.g. GitHub): one chip per category.
+            try:
+                tag_counts = store.message_tag_counts()  # type: ignore[attr-defined]
+            except Exception:  # noqa: BLE001
+                tag_counts = {}
+            for rule in getattr(settings, "category_rules", None) or ():
+                count = int(tag_counts.get(f"category:{rule.category}", 0))
+                if count and rule.enabled:
+                    _stat(count, rule.label, color="accent-hover",
+                          href="/mail?" + urlencode({"tag": f"category:{rule.category}"}))
 
     with ui.row().classes("w-full bb-toolbar"):
         ui.button(

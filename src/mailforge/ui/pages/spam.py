@@ -57,8 +57,9 @@ SECTIONS: list[tuple[str, str, str, str, str]] = [
     (
         "confirmed",
         "Confirmed spam",
-        "Already filtered — either you marked it, or it matched a sender or "
-        "subject pattern you taught the screener.",
+        "Already filtered — you marked it, it matched a sender or subject "
+        "pattern you taught the screener, a built-in spam or phishing rule "
+        "caught it, or the model classified it as spam.",
         "SPAM",
         "error",
     ),

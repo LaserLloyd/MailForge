@@ -165,6 +165,108 @@ class SecuritySettings(BaseModel):
     # on the next sweep with no holding period, everything else after this many
     # days — locally AND at the provider, per server_delete_mode above.
     trash_retention_days: int = 60
+    # --- phishing: display-name brand impersonation --------------------------
+    # Extra brands (hosting provider, registrar, bank...) whose name in a
+    # display name is only genuine from the listed domains (or subdomains).
+    # Merged with the packaged list (PayPal, DocuSign, GitHub, ...); an empty
+    # domain list marks a role name no real sender uses ("voicemail").
+    #   [security.impersonated_brands]
+    #   "example hosting" = ["examplehost.com"]
+    impersonated_brands: dict[str, list[str]] = Field(default_factory=dict)
+
+
+# Subject lines GitHub uses for account/credential/security events. These are
+# the mails that signal a compromised account, so the GitHub rule must never
+# file them away with CI noise: they go to POTENTIAL_ISSUE instead.
+GITHUB_SECURITY_SUBJECTS = (
+    r"(?i)^\s*\[github\]\s+(?:a\s+(?:new\s+)?(?:public|ssh|gpg|deploy)\s+key|"
+    r".*(?:personal\s+access\s+token|oauth\s+app(?:lication)?|github\s+app|"
+    r"two-factor|2fa|recovery\s+codes?|password|sign[ -]?in|verify\s+your\s+device|"
+    r"requesting\s+updated\s+permissions|security\s+(?:advisory|alert|key)|"
+    r"email\s+address|third-party|sudo|authenticat))|"
+    r"\b(?:dependabot\s+alert|security\s+advisory|secret\s+scanning|"
+    r"vulnerabilit(?:y|ies)\s+(?:found|alert))"
+)
+
+
+class CategoryRule(BaseModel):
+    """A deterministic sender rule that files mail into its own category.
+
+    Matching mail is stored with screening status FILED (kept out of the
+    Inbox, withheld from every AI path, never sent to the model) and a rule
+    classification with ``category``, which the Mail page lists as its own
+    View/Tag entry. Subjects matching ``exempt_subject_regex`` (security and
+    account notices) are NOT filed: they get ``exempt_status`` instead so a
+    human sees them. Mail whose provider authentication contradicts the
+    sender domain never matches. A ``[[category_rules]]`` table in config.toml
+    REPLACES the default list (which holds only the GitHub rule).
+    """
+
+    name: str
+    label: str
+    category: str
+    from_domains: list[str] = Field(default_factory=list)
+    from_addrs: list[str] = Field(default_factory=list)
+    list_id_suffixes: list[str] = Field(default_factory=list)
+    subject_regex: str = ""
+    exempt_subject_regex: str = ""
+    # X-GitHub-Reason values that are always exempt (e.g. security_alert).
+    exempt_reasons: list[str] = Field(default_factory=list)
+    exempt_status: Literal["POTENTIAL_ISSUE", "POTENTIAL_SPAM"] = "POTENTIAL_ISSUE"
+    priority: int = Field(default=1, ge=0, le=5)
+    require_authenticated: bool = True
+    sites: list[str] = Field(default_factory=list)  # empty = every site
+    enabled: bool = True
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, value: str) -> str:
+        value = str(value or "").strip().lower()
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", value):
+            raise ValueError("category rule name must be a short lowercase identifier")
+        return value
+
+    @field_validator("category")
+    @classmethod
+    def _category(cls, value: str) -> str:
+        value = str(value or "").strip().upper()
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]{1,31}", value):
+            raise ValueError("category must be an upper-case identifier")
+        if value == "SPAM":
+            raise ValueError("use spam screening, not a category rule, for SPAM")
+        return value
+
+    @field_validator("from_domains", "from_addrs", "list_id_suffixes", "sites", "exempt_reasons")
+    @classmethod
+    def _lower_list(cls, value: list[str]) -> list[str]:
+        return [str(v).strip().lower() for v in value or () if str(v).strip()]
+
+    @field_validator("subject_regex", "exempt_subject_regex")
+    @classmethod
+    def _regex(cls, value: str) -> str:
+        value = str(value or "")
+        if value:
+            try:
+                re.compile(value)  # fail at load, not at ingest
+            except re.error as e:
+                raise ValueError(f"invalid regex: {e}") from e
+        return value
+
+
+GITHUB_RULE = CategoryRule(
+    name="github",
+    label="GitHub",
+    category="GITHUB",
+    from_domains=["github.com"],
+    list_id_suffixes=["github.com"],
+    exempt_subject_regex=GITHUB_SECURITY_SUBJECTS,
+    exempt_reasons=["security_alert"],
+    priority=1,
+)
+
+
+def default_category_rules() -> list[CategoryRule]:
+    return [GITHUB_RULE.model_copy(deep=True)]
 
 
 class StyleSettings(BaseModel):
@@ -238,6 +340,7 @@ class Settings(BaseSettings):
     style: StyleSettings = Field(default_factory=StyleSettings)
     compose: ComposeSettings = Field(default_factory=ComposeSettings)
     openclaw: OpenClawSettings = Field(default_factory=OpenClawSettings)
+    category_rules: list[CategoryRule] = Field(default_factory=default_category_rules)
     db_path: str = Field(default_factory=lambda: str(default_db_path()))
 
     @classmethod
@@ -314,8 +417,23 @@ class Settings(BaseSettings):
 
         return Path(os.path.expanduser(os.path.expandvars(self.db_path))).resolve()
 
+    def category_label(self, category: str) -> str:
+        """Display label for a rule category (``GITHUB`` -> ``GitHub``)."""
+        wanted = str(category or "").strip().upper()
+        for rule in self.category_rules:
+            if rule.category == wanted:
+                return rule.label
+        return ""
+
     def to_toml(self) -> str:
-        return tomli_w.dumps(self.model_dump(mode="json", exclude_none=True))
+        data = self.model_dump(mode="json", exclude_none=True)
+        # Keep the packaged default rules out of the file so later releases can
+        # improve them; only a customised list is written.
+        if data.get("category_rules") == [
+            r.model_dump(mode="json", exclude_none=True) for r in default_category_rules()
+        ]:
+            data.pop("category_rules", None)
+        return tomli_w.dumps(data)
 
     def save(self, path: Path | None = None) -> Path:
         import os

@@ -10,9 +10,10 @@ message past account/security danger cues.
 
 from __future__ import annotations
 
+import functools
 import re
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 #: Every status a message may carry. ``FILED`` is mail a deterministic
 #: category rule sorted into its own bucket (e.g. GitHub notifications): it is
@@ -147,7 +148,13 @@ _ISSUE_STRONG = re.compile(
     r"domain\s+(?:renewal|expiration|expires?)|"
     r"hosting\s+(?:renewal|expiration|expires?)|"
     r"copyright\s+(?:claim|notice|infringement)|"
-    r"trademark\s+(?:claim|notice|infringement)|legal\s+notice)\b",
+    r"trademark\s+(?:claim|notice|infringement)|legal\s+notice|"
+    # Credential/key/app grants: a provider telling you something new can now
+    # act as you. These are the alerts that signal a compromised account.
+    r"(?:public|ssh|gpg|deploy)\s+key\s+(?:was\s+|has\s+been\s+)?added|"
+    r"personal\s+access\s+token|"
+    r"oauth\s+(?:application|app)\s+(?:was\s+|has\s+been\s+)?(?:added|authorized)|"
+    r"review\s+this\s+sign[ -]?in|recovery\s+codes?)\b",
     re.IGNORECASE,
 )
 _ISSUE_WEAK = re.compile(
@@ -181,6 +188,11 @@ class ScreeningResult:
     status: str
     reason: str
     source: str = "AUTO_POLICY"
+    #: Set when a category rule matched: the ingest writes a rule
+    #: classification (``model_used='rule:<rule>'``) with this category.
+    category: str = ""
+    rule: str = ""
+    priority: int = 0
 
 
 def sender_domain(address: str | None) -> str:
@@ -227,17 +239,53 @@ def _learned_label(
     return None
 
 
-def impersonates_own_domain(from_addr: str, own_domains: Iterable[str]) -> bool:
+def _domain_matches(domain: str, allowed: Iterable[str]) -> bool:
+    """Exact domain or a subdomain of one of ``allowed``."""
+    domain = str(domain or "").lower().strip(".")
+    if not domain:
+        return False
+    return any(
+        domain == a or domain.endswith("." + a)
+        for a in (str(x or "").lower().strip(".") for x in allowed)
+        if a
+    )
+
+
+def _own_domain_authenticated(
+    domain: str, own_domains: Iterable[str], headers: Mapping[str, Any]
+) -> bool:
+    """A provider-verified DKIM signature by our own domain.
+
+    Only a holder of the domain's signing key can produce one, so own-domain
+    mail that carries it (a site's contact form, say) is genuinely ours. SPF
+    and DMARC alone are not accepted: shared outbound relays can pass SPF for
+    many customers.
+    """
+    own = [d for d in own_domains if d]
+    if not own or not _domain_matches(domain, own):
+        return False
+    signed = headers.get("dkim_pass_domains") or ()
+    return any(_domain_matches(str(d), own) for d in signed)
+
+
+def impersonates_own_domain(
+    from_addr: str,
+    own_domains: Iterable[str],
+    headers: Mapping[str, Any] | None = None,
+) -> bool:
     """True when inbound mail claims to come from one of our own domains.
 
     Genuine mail from ourselves does not arrive over the public MX, so a
     From: that claims our domain is a forged sender — the exact shape of the
-    "Action Required: WebHosting Deactivation" messages in this mailbox.
+    "Action Required: WebHosting Deactivation" messages in this mailbox. The
+    one exception is mail the provider verified as DKIM-signed by our own
+    domain (e.g. the site's own contact form).
     """
+    own = tuple(x.lower() for x in own_domains if x)
     d = sender_domain(from_addr)
-    if not d:
+    if not d or not _domain_matches(d, own):
         return False
-    return any(d == o or d.endswith("." + o) for o in (x.lower() for x in own_domains if x))
+    return not _own_domain_authenticated(d, own, headers or {})
 
 
 def _topical(
@@ -257,6 +305,417 @@ def _topical(
     return bool((site_terms or _CONTENT_TOPICAL).search(scanned))
 
 
+# --------------------------------------------------------------------------- #
+# Scored spam and phishing signals.
+#
+# Measured against a hand-labelled copy of a real public inbox (218 messages):
+# the rules below moved 37 of 38 spam/phishing messages from "potential" to
+# confirmed spam with no legitimate message flagged. They look only at what a
+# sender chose to put in the subject, display name and domain, plus provider-
+# added authentication verdicts — never at body text, which is mostly footer.
+# --------------------------------------------------------------------------- #
+
+#: Score at or above which a content_only site files a message as SPAM.
+SPAM_SCORE = 4
+#: Standard sites (mail goes to the model by default) need more evidence.
+STANDARD_SPAM_SCORE = 6
+#: Score at which a message is at least POTENTIAL_SPAM.
+POTENTIAL_SCORE = 2
+
+# Cold sales/outreach in the SUBJECT. Every alternative is specific enough to
+# be spam on its own: never a bare "crypto\w*" (it matches "cryptography") or
+# a bare "ranking" (benchmark and research mail).
+_COLD_SUBJECT = re.compile(
+    r"\b(?:seo|backlinks?|guest\s+posts?|link\s+building|"
+    r"(?:google|seo)\s+rank\w*|1st\s+page|first\s+page\s+of\s+google|"
+    r"ai\s+search\s+report|"
+    r"mobile\s+app|app\s+(?:proposal|development|developer)|need\s+an\s+app|"
+    r"your\s+idea,?\s+our|building\s+something\s+mobile|designer\s*/\s*developers?|"
+    r"web(?:site)?\s+(?:design|redesign|revamp|development|upgrade)|"
+    r"modernize\s+your\s+website|fresh\s+look|"
+    r"more\s+leads|leads?\s+for\s+sale|database\s+for\s+sale|\w+\s+leads\s*,|"
+    r"casino|forex|crypto(?:currency)?|betting|whatsapp\s+number|"
+    r"limited[- ]time\s+offer|luxury\s+(?:bags|watches)|replica)\b",
+    re.IGNORECASE,
+)
+# "<oursite>.com - quick question?" — cold outreach opens with our own URL.
+_OWN_DOMAIN_HOOK = re.compile(
+    r"quick\s+(?:question|check)|follow(?:ing)?\s*-?\s*up|report|proposal|\?|"
+    r"\bneed\b|\bseo\b|\bapp\b",
+    re.IGNORECASE,
+)
+OWN_URL_HOOK = "subject opens with your own web address"
+# A bare "Re:" (or "Re: meeting") with nothing else: a fake reply to get opened.
+_FAKE_REPLY = re.compile(r"^\s*(?:re\s*:\s*)+(?:meeting)?\s*$", re.IGNORECASE)
+# Google Classroom invitations abused to deliver sales/price spam.
+_CLASSROOM_ABUSE = re.compile(
+    r"class\s+invitation:.*\b(?:interested\s+in\s+your\s+products|prices?|"
+    r"quotation|whatsapp)\b",
+    re.IGNORECASE,
+)
+# Classic phishing lures in the SUBJECT.
+_LURE_SUBJECT = re.compile(
+    r"\b(?:voice\s*mail|voice\s+message|new\s+fax|e-?fax|parcel|shipment|"
+    r"package\s+(?:status|delivery|held)|"
+    r"delivery\s+(?:failed|attempt|status|notification)|re-?auth\w*|"
+    r"mailbox\s+(?:full|quota|storage|upgrade)|storage\s+(?:full|limit|quota)|"
+    r"password\s+expir\w*|shared\s+(?:a\s+)?(?:document|file)s?\s+with\s+you|"
+    r"invoice\s+attached|payment\s+remittance)\b",
+    re.IGNORECASE,
+)
+
+FREEMAIL_DOMAINS = frozenset(
+    {
+        "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com",
+        "msn.com", "yahoo.com", "ymail.com", "icloud.com", "me.com", "aol.com",
+        "proton.me", "protonmail.com", "gmx.com", "gmx.net", "mail.com",
+        "yandex.com", "yandex.ru", "zoho.com",
+    }
+)
+
+# Display-name brand -> the domains that brand really sends from. A display
+# name claiming the brand from any other domain is a spoof. Role names with no
+# domains ("Voicemail", "IT Support") are never a real sender's name.
+# Deliberately absent: "mail delivery"/"postmaster" (real bounces come from
+# relays) and short common words ("ups", "apple") that occur in ordinary names.
+# Sites add their own providers (hosting, registrar, bank) through
+# ``[security].impersonated_brands`` in config.toml.
+_BRAND_DOMAINS: dict[str, tuple[str, ...]] = {
+    "paypal": ("paypal.com", "paypal.co.uk", "paypal.de", "paypal.jp"),
+    "dhl": ("dhl.com", "dhl.de"),
+    "fedex": ("fedex.com",),
+    "usps": ("usps.com", "usps.gov"),
+    "docusign": ("docusign.com", "docusign.net"),
+    "microsoft": ("microsoft.com", "microsoftonline.com", "office.com", "outlook.com"),
+    "office 365": ("microsoft.com", "microsoftonline.com", "office.com"),
+    "github": ("github.com",),
+    "google": ("google.com", "googlemail.com", "youtube.com"),
+    "icloud": ("apple.com", "icloud.com"),
+    "amazon": ("amazon.com", "amazon.co.jp", "amazon.co.uk", "amazon.de", "amazonaws.com"),
+    "stripe": ("stripe.com",),
+    "supabase": ("supabase.com", "supabase.io"),
+    "mozilla": ("mozilla.com", "mozilla.org", "firefox.com"),
+    "voicemail": (),
+    "voice mail": (),
+    "it governance": (),
+    "it support": (),
+    "it helpdesk": (),
+    "help desk": (),
+    "helpdesk": (),
+    "webmail": (),
+    "mail administrator": (),
+    "email administrator": (),
+}
+
+
+def _normalize_brands(
+    extra: Mapping[str, Iterable[str]] | None,
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    merged = dict(_BRAND_DOMAINS)
+    for name, domains in (extra or {}).items():
+        key = " ".join(str(name or "").lower().split())
+        if len(key) < 3:
+            continue
+        merged[key] = tuple(
+            sorted({str(d).lower().strip(".") for d in domains or () if str(d).strip(".")})
+        )
+    return tuple(sorted(merged.items()))
+
+
+@functools.lru_cache(maxsize=16)
+def _brand_tables(
+    brands: tuple[tuple[str, tuple[str, ...]], ...],
+) -> tuple["re.Pattern[str]", dict[str, tuple[str, ...]], tuple[str, ...]]:
+    """(display-name pattern, brand -> domains, lookalike targets)."""
+    table = dict(brands)
+    pattern = re.compile(
+        r"\b(" + "|".join(
+            re.escape(b).replace(r"\ ", r"\s+") for b in sorted(table, key=len, reverse=True)
+        ) + r")\b",
+        re.IGNORECASE,
+    )
+    # Lookalike targets: brand domains whose registrable label is long enough
+    # that one edit is not just another ordinary word (no "dhl.com").
+    targets = tuple(
+        sorted({d for doms in table.values() for d in doms if len(d.split(".")[0]) >= 6})
+    )
+    return pattern, table, targets
+
+_TWO_LEVEL_SUFFIXES = frozenset({"co", "com", "net", "org", "ac", "gov", "ne", "or", "go"})
+
+
+def registrable_domain(domain: str) -> str:
+    """Best-effort registrable domain (``a.b.example.co.uk`` -> ``example.co.uk``)."""
+    labels = [p for p in str(domain or "").lower().strip(".").split(".") if p]
+    if len(labels) <= 2:
+        return ".".join(labels)
+    if labels[-2] in _TWO_LEVEL_SUFFIXES and len(labels[-1]) == 2:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
+
+
+def _edit_distance_at_most_one(a: str, b: str) -> bool:
+    if a == b:
+        return True
+    if abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) > len(b):
+        a, b = b, a
+    i = j = edits = 0
+    while i < len(a) and j < len(b):
+        if a[i] == b[j]:
+            i += 1
+            j += 1
+            continue
+        edits += 1
+        if edits > 1:
+            return False
+        if len(a) == len(b):
+            i += 1
+        j += 1
+    return edits + (len(b) - j) + (len(a) - i) <= 1
+
+
+def lookalike_brand_domain(
+    domain: str, brands: Mapping[str, Iterable[str]] | None = None
+) -> str:
+    """The brand domain ``domain`` imitates by one edit (``docsign.com``), or ''."""
+    reg = registrable_domain(domain)
+    if not reg:
+        return ""
+    _, _, targets = _brand_tables(_normalize_brands(brands))
+    for target in targets:
+        if reg != target and _edit_distance_at_most_one(reg, target):
+            return target
+    return ""
+
+
+def spoofed_brand(
+    from_name: str, domain: str, brands: Mapping[str, Iterable[str]] | None = None
+) -> str:
+    """Brand a display name claims while sending from a foreign domain, or ''."""
+    pattern, table, _ = _brand_tables(_normalize_brands(brands))
+    match = pattern.search(str(from_name or ""))
+    if not match:
+        return ""
+    brand = " ".join(match.group(1).lower().split())
+    allowed = table.get(brand, ())
+    if allowed and _domain_matches(domain, allowed):
+        return ""
+    return brand
+
+
+@dataclass(frozen=True, slots=True)
+class PhishingVerdict:
+    brand: str
+    corroborated: bool
+    hits: tuple[str, ...]
+
+
+def phishing_signals(
+    *,
+    from_name: str,
+    domain: str,
+    subject: str,
+    headers: Mapping[str, Any],
+    brands: Mapping[str, Iterable[str]] | None = None,
+) -> PhishingVerdict | None:
+    """Brand impersonation, judged on display name vs. sending domain.
+
+    A spoofed brand alone is suspicious (POTENTIAL_ISSUE); with a lure, an
+    account/payment claim, a lookalike or freemail domain, or a failed DMARC
+    verdict it is phishing (SPAM). A lookalike domain plus a lure is phishing
+    even without a brand in the display name.
+    """
+    brand = spoofed_brand(from_name, domain, brands)
+    lookalike = lookalike_brand_domain(domain, brands)
+    lure = bool(_LURE_SUBJECT.search(subject))
+    claim = bool(_ISSUE_STRONG.search(subject) or _ISSUE_WEAK.search(subject))
+    freemail = registrable_domain(domain) in FREEMAIL_DOMAINS
+    dmarc_fail = str(headers.get("dmarc") or "") == "fail"
+    hits = tuple(
+        name
+        for name, hit in (
+            (f"display name claims {brand}", bool(brand)),
+            (f"lookalike of {lookalike}", bool(lookalike)),
+            ("lure subject", lure),
+            ("account/payment claim", claim),
+            ("freemail sender", freemail and bool(brand)),
+            ("DMARC fail", dmarc_fail),
+        )
+        if hit
+    )
+    if brand:
+        corroborated = lure or claim or bool(lookalike) or freemail or dmarc_fail
+        return PhishingVerdict(brand, corroborated, hits)
+    if lookalike and (lure or claim):
+        return PhishingVerdict(lookalike, True, hits)
+    return None
+
+
+def spam_score(
+    *,
+    from_addr: str,
+    from_name: str,
+    subject: str,
+    headers: Mapping[str, Any],
+    own_domains: Iterable[str] = (),
+    learned_spam_domains: Iterable[str] = (),
+) -> tuple[int, tuple[str, ...]]:
+    """Additive spam score from subject, sender and header facts."""
+    subject = " ".join(str(subject or "").split())
+    domain = sender_domain(from_addr)
+    reg = registrable_domain(domain)
+    score = 0
+    hits: list[str] = []
+
+    def hit(points: int, name: str) -> None:
+        nonlocal score
+        score += points
+        hits.append(name)
+
+    if _COLD_SUBJECT.search(subject):
+        hit(4, "cold-outreach subject")
+    own_bases = {registrable_domain(d).split(".")[0] for d in own_domains if d}
+    own_bases.discard("")
+    if own_bases:
+        own_url = re.compile(
+            r"\b(?:www\.)?(?:" + "|".join(re.escape(b) for b in sorted(own_bases))
+            + r")\.[a-z]{2,10}\b",
+            re.IGNORECASE,
+        )
+        if own_url.search(subject) and _OWN_DOMAIN_HOOK.search(subject):
+            hit(4, OWN_URL_HOOK)
+    if _FAKE_REPLY.match(subject):
+        hit(3, "empty fake reply")
+    if _CLASSROOM_ABUSE.search(subject):
+        hit(4, "classroom invitation used for sales")
+    learned = {str(d or "").lower() for d in learned_spam_domains}
+    if domain and domain in learned and reg not in FREEMAIL_DOMAINS:
+        hit(4, "domain you marked as spam")
+    if score:
+        # Corroboration only: none of these is spam on its own.
+        if reg in FREEMAIL_DOMAINS:
+            hit(1, "freemail sender")
+        reply_to = str(headers.get("reply_to_domain") or "")
+        if reply_to and registrable_domain(reply_to) != reg:
+            hit(1, "replies go to a different domain")
+    return score, tuple(hits)
+
+
+# --------------------------------------------------------------------------- #
+# Deterministic category rules (e.g. file GitHub notifications).
+# --------------------------------------------------------------------------- #
+def _rule_value(rule: Any, name: str, default: Any = None) -> Any:
+    if isinstance(rule, Mapping):
+        return rule.get(name, default)
+    return getattr(rule, name, default)
+
+
+def _auth_failed_for(domains: Iterable[str], headers: Mapping[str, Any]) -> bool:
+    """Provider verdicts that positively contradict the claimed sender.
+
+    Missing verdicts are not failure (stored mail has no header facts), but a
+    DMARC fail, or DKIM results with no passing signature by the domain, mean
+    the From: line cannot be trusted to sort mail out of view.
+    """
+    if not headers:
+        return False
+    if str(headers.get("dmarc") or "") in {"fail", "quarantine", "reject"}:
+        return True
+    dkim = str(headers.get("dkim") or "")
+    if dkim:
+        signed = headers.get("dkim_pass_domains") or ()
+        if not any(_domain_matches(str(d), domains) for d in signed):
+            return True
+    return False
+
+
+def match_category_rule(
+    rules: Iterable[Any],
+    *,
+    site_id: str,
+    from_addr: str,
+    subject: str,
+    headers: Mapping[str, Any] | None = None,
+) -> tuple[Any, bool] | None:
+    """First enabled rule matching the sender: ``(rule, exempt)`` or None.
+
+    ``exempt`` is True for a security/account notice the rule must NOT file
+    away (its ``exempt_subject_regex`` or ``exempt_reasons`` matched). Mail
+    whose provider authentication contradicts the claimed domain never
+    matches, so a forged From: cannot hide itself in a filed bucket.
+    """
+    headers = headers or {}
+    address = str(from_addr or "").strip().lower()
+    domain = sender_domain(address)
+    site = str(site_id or "").lower()
+    subject = str(subject or "")
+    for rule in rules or ():
+        if not _rule_value(rule, "enabled", True):
+            continue
+        sites = [str(s).lower() for s in (_rule_value(rule, "sites") or ())]
+        if sites and site not in sites:
+            continue
+        domains = [str(d).lower() for d in (_rule_value(rule, "from_domains") or ())]
+        addrs = [str(a).lower() for a in (_rule_value(rule, "from_addrs") or ())]
+        list_suffixes = [str(x).lower() for x in (_rule_value(rule, "list_id_suffixes") or ())]
+        list_id = str(headers.get("list_id") or "").lower()
+        by_sender = (domain and _domain_matches(domain, domains)) or (address and address in addrs)
+        by_list = bool(list_id) and any(
+            list_id == sfx.lstrip(".") or list_id.endswith("." + sfx.lstrip("."))
+            for sfx in list_suffixes
+        )
+        if not (by_sender or by_list):
+            continue
+        subject_regex = str(_rule_value(rule, "subject_regex", "") or "")
+        if subject_regex and not re.search(subject_regex, subject):
+            continue
+        trusted = domains or [registrable_domain(domain)]
+        if _rule_value(rule, "require_authenticated", True) and _auth_failed_for(
+            trusted, headers
+        ):
+            continue
+        exempt_regex = str(_rule_value(rule, "exempt_subject_regex", "") or "")
+        reasons = {str(r).lower() for r in (_rule_value(rule, "exempt_reasons") or ())}
+        exempt = bool(exempt_regex and re.search(exempt_regex, subject)) or (
+            str(headers.get("github_reason") or "").lower() in reasons
+        )
+        return rule, exempt
+    return None
+
+
+def _category_result(rule: Any, exempt: bool, learned: tuple[str, str] | None) -> ScreeningResult:
+    name = str(_rule_value(rule, "name", "rule") or "rule")
+    label = str(_rule_value(rule, "label", name) or name)
+    category = str(_rule_value(rule, "category", "") or "").upper()
+    if exempt:
+        return ScreeningResult(
+            str(_rule_value(rule, "exempt_status", "POTENTIAL_ISSUE") or "POTENTIAL_ISSUE"),
+            f"{label} security or account notice; verify it by signing in to {label} "
+            "directly, not through a link in the mail.",
+            "RULE",
+            category=category,
+            rule=name,
+            priority=4,
+        )
+    if learned and learned[0] == "CONTENT":
+        return ScreeningResult(
+            "CONTENT", learned[1], "LEARNED", category=category, rule=name,
+            priority=int(_rule_value(rule, "priority", 1) or 0),
+        )
+    if learned and learned[0] == "SPAM":
+        return ScreeningResult("SPAM", learned[1], "LEARNED", category=category, rule=name)
+    return ScreeningResult(
+        "FILED",
+        f"filed by category rule {name} ({label})",
+        "RULE",
+        category=category,
+        rule=name,
+        priority=int(_rule_value(rule, "priority", 1) or 0),
+    )
+
+
 def assess_inbound(
     *,
     mode: str,
@@ -269,19 +728,93 @@ def assess_inbound(
     own_domains: Iterable[str] = (),
     site_terms: "re.Pattern[str] | None" = None,
     brand_terms: "re.Pattern[str] | None" = None,
+    from_name: str = "",
+    headers: Mapping[str, Any] | None = None,
+    category_rules: Iterable[Any] = (),
+    site_id: str = "",
+    learned_spam_domains: Iterable[str] = (),
+    brand_domains: Mapping[str, Iterable[str]] | None = None,
 ) -> ScreeningResult:
     """Screen one message without network, tools, or model access.
 
-    Only ``CONTENT`` lets a body reach an LLM (see ``AI_WITHHELD_STATUSES``), so
-    the bar for CONTENT is deliberately the strictest thing here: a message must
-    say something *topical*.  Naming the site is not enough — spam names the site
-    constantly.  Everything unproven falls through to POTENTIAL_SPAM, which is
-    withheld from AI but still visible to a human in the Inbox.
+    Only ``UNSCREENED``/``CONTENT`` let a body reach an LLM (see
+    :func:`ai_may_read`). Order of precedence, both modes:
+
+    1. a forged own-domain sender (POTENTIAL_ISSUE);
+    2. brand impersonation (SPAM when corroborated, else POTENTIAL_ISSUE);
+    3. a category rule (FILED, or POTENTIAL_ISSUE for its security notices).
+
+    ``content_only`` sites then require a topical signal for CONTENT, and
+    everything unproven falls through to POTENTIAL_SPAM. ``standard`` sites
+    only act on strong evidence (learned human spam labels, a high spam score)
+    and otherwise leave the message UNSCREENED for normal triage.
     """
-    if str(mode or "standard").lower() != "content_only":
+    standard = str(mode or "standard").lower() != "content_only"
+    headers = dict(headers or {})
+    own_domains = tuple(own_domains or ())
+    subject = subject or ""
+    domain = sender_domain(from_addr)
+    link_note = " Embedded links remain disabled." if link_count else ""
+    examples = list(learned_examples or ())
+    learned = _learned_label(examples, from_addr, subject)
+
+    # 1. Forged sender — outranks everything, including a human "legitimate"
+    #    mark, because the address it was learned against is exactly what is
+    #    being spoofed.
+    if impersonates_own_domain(from_addr, own_domains, headers):
+        return ScreeningResult(
+            "POTENTIAL_ISSUE",
+            "sender claims one of your own domains but arrived from outside; "
+            f"treat as forged.{link_note}",
+        )
+
+    # 2. Brand impersonation: "PayPal" <billing@unrelated.example>.
+    phish = phishing_signals(
+        from_name=from_name, domain=domain, subject=subject, headers=headers,
+        brands=brand_domains,
+    )
+    if phish is not None and phish.corroborated:
+        return ScreeningResult(
+            "SPAM",
+            f"phishing: {'; '.join(phish.hits)} (sent from {domain or 'unknown'})",
+            "AUTO_RULE",
+        )
+
+    # 3. Deterministic category rules (GitHub notifications by default).
+    matched = match_category_rule(
+        category_rules, site_id=site_id, from_addr=from_addr, subject=subject,
+        headers=headers,
+    )
+    if matched is not None:
+        return _category_result(matched[0], matched[1], learned)
+
+    if phish is not None:
+        return ScreeningResult(
+            "POTENTIAL_ISSUE",
+            f"display name claims {phish.brand} but the mail was sent from "
+            f"{domain or 'an unknown domain'}; verify with {phish.brand} directly."
+            f"{link_note}",
+        )
+
+    score, hits = spam_score(
+        from_addr=from_addr, from_name=from_name, subject=subject, headers=headers,
+        own_domains=own_domains, learned_spam_domains=learned_spam_domains,
+    )
+    score_reason = "; ".join(hits)
+
+    if standard:
+        # Standard sites send mail to the model by default; only strong,
+        # deterministic evidence holds a message back.
+        if learned and learned[0] == "SPAM":
+            return ScreeningResult("SPAM", learned[1], "LEARNED")
+        if score >= STANDARD_SPAM_SCORE:
+            return ScreeningResult("SPAM", f"spam rules: {score_reason}", "AUTO_RULE")
+        if score >= SPAM_SCORE:
+            return ScreeningResult(
+                "POTENTIAL_SPAM", f"spam rules: {score_reason}", "AUTO_RULE"
+            )
         return ScreeningResult("UNSCREENED", "standard site screening")
 
-    subject = subject or ""
     body = (text or "")[:_BODY_SCAN_CHARS]
     both = f"{subject}\n{body}"
 
@@ -293,20 +826,8 @@ def assess_inbound(
     brand_only = (
         brand_terms is not None and bool(brand_terms.search(both)) and not topical
     )
-    learned = _learned_label(learned_examples, from_addr, subject)
-    link_note = " Embedded links remain disabled." if link_count else ""
 
-    # 1. Forged sender — outranks everything, including a human "legitimate"
-    #    mark, because the address it was learned against is exactly what is
-    #    being spoofed.
-    if impersonates_own_domain(from_addr, own_domains):
-        return ScreeningResult(
-            "POTENTIAL_ISSUE",
-            "sender claims one of your own domains but arrived from outside; "
-            f"treat as forged.{link_note}",
-        )
-
-    # 2. Account/security/payment claims in the SUBJECT always require
+    # 4. Account/security/payment claims in the SUBJECT always require
     #    direct-site verification, even from a previously-trusted sender.
     if issue_subject:
         return ScreeningResult(
@@ -318,12 +839,24 @@ def assess_inbound(
     if learned and learned[0] == "SPAM":
         return ScreeningResult("SPAM", learned[1], "LEARNED")
 
-    # 3. Sales/scam patterns beat a body-only "issue" cue: a marketing mail whose
+    # 5. Scored spam rules. A topical message (it talks about the site's own
+    #    subject) needs the higher bar before it is filed away unseen — except
+    #    the "www.<yoursite>.com – quick question?" opener, whose generic
+    #    "question about" wording is exactly what makes it look topical.
+    bar = STANDARD_SPAM_SCORE if topical and OWN_URL_HOOK not in hits else SPAM_SCORE
+    if score >= bar:
+        return ScreeningResult("SPAM", f"spam rules: {score_reason}", "AUTO_RULE")
+    if score >= POTENTIAL_SCORE:
+        return ScreeningResult(
+            "POTENTIAL_SPAM", f"spam rules: {score_reason}", "AUTO_RULE"
+        )
+
+    # 6. Sales/scam patterns beat a body-only "issue" cue: a marketing mail whose
     #    footer says "sign in to your account" is spam, not a security event.
     if unsolicited:
         return ScreeningResult("POTENTIAL_SPAM", "unsolicited sales or promotion pattern")
 
-    # 4. An issue cue found only in the body, with nothing topical to support it,
+    # 7. An issue cue found only in the body, with nothing topical to support it,
     #    is still worth a human look but is not a confirmed claim.
     if issue_body and not topical:
         return ScreeningResult(
@@ -332,7 +865,7 @@ def assess_inbound(
             f"provider site directly.{link_note}",
         )
 
-    # 5. CONTENT requires a real topical signal — never the brand name alone.
+    # 8. CONTENT requires a real topical signal — never the brand name alone.
     if topical:
         return ScreeningResult("CONTENT", "matches the site's expected content topics")
     if learned and learned[0] == "CONTENT":

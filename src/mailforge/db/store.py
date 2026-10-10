@@ -33,6 +33,9 @@ _SCREEN = "COALESCE(NULLIF(TRIM(m.screening_status),''),'UNSCREENED')"
 _AI_READABLE_SQL = f"{_SCREEN} IN ({sql_status_list(AI_READABLE_STATUSES)})"
 _QUESTIONABLE_SQL = f"m.screening_status IN ({sql_status_list(QUESTIONABLE_STATUSES)})"
 _INBOX_VISIBLE_SQL = f"{_SCREEN} NOT IN ({sql_status_list(INBOX_HIDDEN_STATUSES)})"
+# A rule classification (model_used 'rule:<name>') only files mail; once a
+# human marks such a message content-related it still needs model triage.
+_UNTRIAGED_SQL = "(c.message_id IS NULL OR COALESCE(c.model_used,'') LIKE 'rule:%')"
 _SPAM_TAG_SQL = (
     "(UPPER(TRIM(COALESCE(c.category,'')))='SPAM' "
     "OR UPPER(TRIM(COALESCE(m.screening_status,'')))='SPAM')"
@@ -187,6 +190,9 @@ class Store:
                 "purged_at": "TEXT",
                 "server_deleted_at": "TEXT",
                 "server_delete_error": "TEXT",
+                # Allowlisted header facts (auth verdicts, list/bulk markers)
+                # as JSON; see mail/header_facts.py. Never free text.
+                "header_meta": "TEXT",
             },
             "drafts": {
                 "sender_addr": "TEXT",
@@ -431,7 +437,8 @@ class Store:
         cols = (
             "account_id folder uid message_id thread_id from_addr from_name to_addrs "
             "cc_addrs subject received_at raw_html sanitized_text has_attachments link_count "
-            "quarantined quarantine_reason screening_status screening_reason screening_source"
+            "quarantined quarantine_reason screening_status screening_reason screening_source "
+            "header_meta"
         ).split()
         f.setdefault("quarantined", 0)
         f.setdefault("screening_status", "UNSCREENED")
@@ -511,7 +518,7 @@ class Store:
             "SELECT m.id FROM messages m "
             "LEFT JOIN classifications c ON c.message_id=m.id "
             "LEFT JOIN drafts d ON d.message_id=m.id "
-            "WHERE c.message_id IS NULL AND d.id IS NULL "
+            f"WHERE {_UNTRIAGED_SQL} AND d.id IS NULL "
             "AND m.archived=0 AND m.trashed=0 "
             f"AND {_AI_READABLE_SQL} "
             "ORDER BY datetime(m.received_at) DESC, m.id DESC LIMIT ?",
@@ -543,7 +550,7 @@ class Store:
             "SELECT 1 FROM messages m "
             "LEFT JOIN classifications c ON c.message_id=m.id "
             "LEFT JOIN drafts d ON d.message_id=m.id "
-            "WHERE m.id=? AND c.message_id IS NULL AND d.id IS NULL "
+            f"WHERE m.id=? AND {_UNTRIAGED_SQL} AND d.id IS NULL "
             "AND m.archived=0 AND m.trashed=0 "
             f"AND {_AI_READABLE_SQL} LIMIT 1",
             (int(message_pk),),
@@ -699,6 +706,24 @@ class Store:
         sql += " ORDER BY datetime(m.received_at) DESC, m.id DESC LIMIT ? OFFSET ?"
         params += [int(limit), max(0, int(offset))]
         return self.conn.execute(sql, tuple(params)).fetchall()
+
+    def message_ids_for_tag(
+        self, tag: str, account_name: str | None = None, limit: int = 20000
+    ) -> list[int]:
+        """Every active message id under one live tag (all pages), newest first.
+
+        Same predicate as the Mail page's tag view; used by "Delete all" on a
+        rule category so it is not limited to the ticked rows of one page.
+        """
+        if not str(tag or "").strip():
+            return []
+        rows = self.list_received(
+            limit=max(1, int(limit)),
+            account_name=account_name,
+            include_spam=True,
+            message_tag=tag,
+        )
+        return [int(r["id"]) for r in rows]
 
     def message_tag_counts(self, account_name: str | None = None) -> dict[str, int]:
         """Live tags on active messages, omitting tags with zero matches."""
@@ -948,6 +973,32 @@ class Store:
         )
         self.conn.commit()
         return cur.rowcount == 1
+
+    def learned_spam_domains(self, site_id: str) -> set[str]:
+        """Sender domains a human marked SPAM (learn similar) on this site that
+        have no legitimate history anywhere in the store.
+
+        Spammers rotate the local part within one domain, so an exact-address
+        example misses the next message. Learning the whole domain is only
+        safe when nothing from it was ever wanted: any message from it that a
+        human or the screener let through (CONTENT/UNSCREENED/FILED), any
+        allowlisted recipient there, or any CONTENT feedback disqualifies it.
+        Freemail domains are excluded by the caller's scoring.
+        """
+        rows = self.conn.execute(
+            "SELECT DISTINCT f.sender_domain AS d FROM message_screening_feedback f "
+            "WHERE f.site_id=? AND f.learn_similar=1 AND f.label='SPAM' "
+            "AND TRIM(COALESCE(f.sender_domain,''))!='' "
+            "AND NOT EXISTS (SELECT 1 FROM message_screening_feedback g "
+            "WHERE g.sender_domain=f.sender_domain AND g.label='CONTENT') "
+            "AND NOT EXISTS (SELECT 1 FROM recipient_allowlist r "
+            "WHERE LOWER(r.domain)=f.sender_domain) "
+            "AND NOT EXISTS (SELECT 1 FROM messages m WHERE "
+            "LOWER(SUBSTR(m.from_addr, INSTR(m.from_addr,'@')+1))=f.sender_domain "
+            f"AND {_SCREEN} IN ('CONTENT','UNSCREENED','FILED'))",
+            (validate_site_id(site_id),),
+        ).fetchall()
+        return {str(r["d"]).lower() for r in rows if r["d"]}
 
     def screening_examples(self, site_id: str, limit: int = 500) -> list[sqlite3.Row]:
         return self.conn.execute(

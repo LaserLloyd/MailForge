@@ -124,3 +124,40 @@ def test_filed_mail_is_hidden_from_inbox_but_not_questionable(tmp_path):
         tags = store.message_tag_counts()
         assert tags.get("category:GITHUB") == 1
         assert "screening:FILED" not in tags
+
+
+def test_model_spam_verdict_moves_mail_to_the_spam_view(tmp_path):
+    from mailforge.agent.graph import AgentGraph
+
+    with open_store(tmp_path / "llm.db") as store:
+        unknown = _message(store, 1)
+        graph = AgentGraph(store, Settings(), None)
+        graph._file_model_spam(unknown, store.get_message(unknown), "bulk sales pitch")
+        row = store.get_message(unknown)
+        assert (row["screening_status"], row["screening_source"]) == ("SPAM", "LLM")
+        assert "bulk sales pitch" in row["screening_reason"]
+        assert [r["id"] for r in store.list_received(spam_only=True)] == [unknown]
+        assert store.list_received() == []
+
+        # A correspondent you have written to stays visible.
+        known = _message(store, 2)
+        store.record_allowlist("sender@example.test", source="manual")
+        graph._file_model_spam(known, store.get_message(known), "x")
+        assert store.get_message(known)["screening_status"] == "POTENTIAL_SPAM"
+
+        # A human decision always wins.
+        human = _message(store, 3)
+        store.record_screening_feedback(human, "CONTENT")
+        graph._file_model_spam(human, store.get_message(human), "x")
+        assert store.get_message(human)["screening_status"] == "CONTENT"
+
+
+def test_spam_view_and_spam_tag_agree(tmp_path):
+    with open_store(tmp_path / "agree.db") as store:
+        mid = _message(store, 1)
+        store.upsert_classification(mid, category="SPAM", priority=0, rationale="",
+                                    injection_risk=0.0, model_used="m")
+        assert [r["id"] for r in store.list_received(spam_only=True)] == [mid]
+        assert [
+            r["id"] for r in store.list_received(message_tag="spam", include_spam=True)
+        ] == [mid]

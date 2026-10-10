@@ -19,13 +19,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict
+from typing import Any
 
 from ..audit.log import AuditLog
 from ..config import Settings
 from ..db.store import Store
 from ..mail.normalize import spotlight_wrap
 from ..security import run_output_guardrails, score_injection
-from ..security.inbound_screening import ai_may_read
+from ..security.inbound_screening import ai_may_read, spoofed_brand
 from . import tools, worker
 from .planner import SymbolicRefs, freeze_plan
 
@@ -75,6 +76,27 @@ class AgentGraph:
         if existing is not None and existing["state"] == "DEFERRED_NO_LLM":
             return existing
         return None
+
+    def _file_model_spam(self, message_id: int, msg: Any, rationale: str) -> None:
+        """Move model-classified spam out of the Inbox into the spam view.
+
+        Never overrides a human decision (screening_source USER). A sender the
+        operator has written to before only becomes POTENTIAL_SPAM, so a model
+        mistake on a known correspondent stays visible.
+        """
+        try:
+            if str(msg["screening_source"] or "").upper() == "USER":
+                return
+            sender = str(msg["from_addr"] or "").strip().lower()
+            known = bool(sender) and self.store.is_allowlisted(sender)
+            status = "POTENTIAL_SPAM" if known else "SPAM"
+            reason = " ".join(str(rationale or "").split())[:120]
+            self.store.set_message_screening(
+                message_id, status, f"model classified as spam: {reason}", source="LLM"
+            )
+            log.info("Message %s classified SPAM by the model — screened %s.", message_id, status)
+        except Exception:  # noqa: BLE001 — classification already stored
+            log.exception("Could not file model-classified spam for message %s", message_id)
 
     def _retire_deferred(self, message_id: int, reason: str) -> None:
         """Move a DEFERRED_NO_LLM draft out of the once-a-minute resume loop.
@@ -210,9 +232,18 @@ class AgentGraph:
         )
 
         # --- classify (quarantined worker → typed Category) ---
+        # A boolean only: the display name itself is attacker text and stays
+        # out of the symbolic metadata.
+        brand_mismatch = bool(
+            spoofed_brand(
+                str(msg["from_name"] or ""), refs.sender_domain,
+                getattr(self.settings.security, "impersonated_brands", None),
+            )
+        )
         meta = (
             f"sender_domain={refs.sender_domain}; links={refs.link_count}; "
-            f"attachments={refs.has_attachments}; injection_risk={injection_risk:.2f}"
+            f"attachments={refs.has_attachments}; injection_risk={injection_risk:.2f}; "
+            f"display_name_brand_mismatch={brand_mismatch}"
         )
         try:
             classification = await worker.classify(
@@ -265,6 +296,8 @@ class AgentGraph:
             {"tool": "propose_label", "category": category},
             subject_table="messages", subject_id=message_id,
         )
+        if str(category).upper() == "SPAM":
+            self._file_model_spam(message_id, msg, rationale)
 
         # --- decide whether to draft (action choice fixed by plan, not content) ---
         if not plan.should_draft or category not in _REPLYABLE:

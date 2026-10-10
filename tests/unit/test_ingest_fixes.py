@@ -52,6 +52,7 @@ def _listener(store):
     # Screening vocabulary is normally injected by runtime from config.
     lst.site_terms = None
     lst.brand_terms = None
+    lst.category_rules = ()
     return lst
 
 
@@ -120,7 +121,10 @@ def test_duplicate_that_never_reached_triage_is_requeued(tmp_path):
     notified = []
     lst = _listener(store)
     lst.on_new_message = notified.append
-    lst.security = SimpleNamespace(quarantine_enabled=False, attachment_max_bytes=1, attachment_max_count=1)
+    lst.security = SimpleNamespace(
+        quarantine_enabled=False, attachment_max_bytes=1, attachment_max_count=1,
+        impersonated_brands={},
+    )
     lst.screening_mode = "standard"
     lst._own_domains = ()
     msg = SimpleNamespace(
