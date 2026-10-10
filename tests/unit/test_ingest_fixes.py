@@ -139,3 +139,88 @@ def test_duplicate_that_never_reached_triage_is_requeued(tmp_path):
     notified.clear()
     assert lst._ingest_one(msg, "INBOX") is False
     assert notified == []
+
+
+def test_a_poison_uid_is_skipped_after_repeated_failures(monkeypatch):
+    store = _CursorStore(cursor=0)
+    lst = _listener(store)
+
+    def ingest(msg, folder, notify=True):
+        if int(msg.uid) == 2:
+            raise ValueError("unparseable MIME")
+        return True
+
+    lst._ingest_one = ingest
+    mailbox = _Mailbox([1, 2, 3])
+    for _ in range(imap_listener.MAX_INGEST_ATTEMPTS - 1):
+        lst._ingest_missing(mailbox, "INBOX")
+        assert store.cursor in (None, 0)  # pinned while retries remain
+    lst._ingest_missing(mailbox, "INBOX")
+    assert store.cursor == 3  # skipped, later mail no longer blocked
+
+
+def test_a_not_null_violation_is_not_mistaken_for_a_duplicate(tmp_path):
+    import sqlite3
+
+    import pytest
+
+    from mailforge.db.store import open_store
+
+    store = open_store(tmp_path / "x.db")
+    account = store.upsert_account("a", "imap", "h", 993, "u", "main")
+    fields = dict(
+        account_id=account, folder="INBOX", message_id="<m@x>", thread_id="t",
+        from_addr="s@x", from_name="S", to_addrs="u", cc_addrs="", subject="s",
+        received_at="2026-07-16T00:00:00+00:00", raw_html=None, sanitized_text="b",
+        has_attachments=0, link_count=0,
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        store.insert_message(uid=None, **fields)
+    assert store.insert_message(uid=5, **fields) is not None
+    assert store.insert_message(uid=5, **fields) is None  # true duplicate
+    assert not store.conn.in_transaction
+
+
+def test_uidvalidity_is_recorded_and_a_reset_is_reported(tmp_path):
+    from mailforge.db.store import open_store
+    from mailforge.mail.sync_state import SyncRegistry
+
+    store = open_store(tmp_path / "u.db")
+    account = store.upsert_account("t", "imap", "h", 993, "u", "main")
+    store.set_mailbox_cursor(account, "INBOX", 40)
+    lst = _listener(store)
+    lst._account_id = account
+    lst.sync = SyncRegistry()
+    lst._uidvalidity_alert = None
+
+    def box(value):
+        client = SimpleNamespace(response=lambda code: (code, [str(value).encode()]))
+        return SimpleNamespace(client=client)
+
+    lst._check_uidvalidity(box(111), "INBOX")
+    assert store.mailbox_uidvalidity(account, "INBOX") == 111
+    lst._check_uidvalidity(box(111), "INBOX")
+    assert lst._uidvalidity_alert is None
+    lst._check_uidvalidity(box(222), "INBOX")
+    assert "UIDVALIDITY" in (lst._uidvalidity_alert or "")
+    assert store.mailbox_uidvalidity(account, "INBOX") == 111  # alert persists
+
+
+def test_uidvalidity_column_is_added_to_an_old_database(tmp_path):
+    import sqlite3
+
+    from mailforge.db.store import open_store
+
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE mailbox_cursors (account_id INTEGER NOT NULL, folder TEXT NOT NULL, "
+        "last_uid INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, "
+        "PRIMARY KEY(account_id, folder))"
+    )
+    conn.commit()
+    conn.close()
+    store = open_store(path)
+    cols = {r["name"] for r in store.conn.execute("PRAGMA table_info(mailbox_cursors)")}
+    assert "uidvalidity" in cols
+    open_store(path)  # idempotent

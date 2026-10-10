@@ -181,6 +181,9 @@ class Store:
                 "managed_key": "TEXT",
                 "content_sha256": "TEXT",
             },
+            "mailbox_cursors": {
+                "uidvalidity": "INTEGER",
+            },
         }
         for table, wanted in additions.items():
             present = columns(table)
@@ -421,13 +424,18 @@ class Store:
             )
             self.conn.commit()
             return cur.lastrowid
-        except sqlite3.IntegrityError:
+        except sqlite3.IntegrityError as e:
             # CRITICAL: the failed INSERT already opened an implicit write
             # transaction and took SQLite's write lock. Without this rollback
             # the connection holds that lock forever, every other connection
             # gets "database is locked", and the WAL can never checkpoint.
             self.conn.rollback()
-            return None  # duplicate UID — already ingested
+            if "UNIQUE" in str(e).upper():
+                return None  # duplicate UID — already ingested
+            # NOT NULL / CHECK / FK: a real defect, not a duplicate. Raising lets
+            # the listener log it and retry instead of advancing past the
+            # message as if it had already been stored.
+            raise
 
     def get_message(self, message_id: int) -> sqlite3.Row | None:
         return self.conn.execute("SELECT * FROM messages WHERE id=?", (message_id,)).fetchone()
@@ -461,6 +469,21 @@ class Store:
             "ON CONFLICT(account_id,folder) DO UPDATE SET "
             "last_uid=MAX(last_uid,excluded.last_uid),updated_at=excluded.updated_at",
             (int(account_id), folder, max(0, int(last_uid)), _now()),
+        )
+        self.conn.commit()
+
+    def mailbox_uidvalidity(self, account_id: int, folder: str) -> int | None:
+        row = self.conn.execute(
+            "SELECT uidvalidity FROM mailbox_cursors WHERE account_id=? AND folder=?",
+            (int(account_id), folder),
+        ).fetchone()
+        return int(row["uidvalidity"]) if row is not None and row["uidvalidity"] is not None else None
+
+    def set_mailbox_uidvalidity(self, account_id: int, folder: str, value: int) -> None:
+        """Record UIDVALIDITY on an existing cursor row (no-op without one)."""
+        self.conn.execute(
+            "UPDATE mailbox_cursors SET uidvalidity=? WHERE account_id=? AND folder=?",
+            (int(value), int(account_id), folder),
         )
         self.conn.commit()
 

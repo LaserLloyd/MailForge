@@ -59,6 +59,9 @@ SOCKET_TIMEOUT_S = 30        # every blocking IMAP op (login/select/fetch/NOOP/
 FETCH_CHUNK = 200            # max UIDs per SEARCH/FETCH during catch-up — one
 #                              giant command fails on most servers and would then
 #                              fail identically on every retry.
+MAX_INGEST_ATTEMPTS = 3      # a UID that fails this many times in a row is
+#                              skipped (logged at ERROR) so it cannot pin the
+#                              cursor forever.
 BACKFILL_COUNT = 50          # most-recent existing messages pulled once on first
 #                              connect so the Mail page isn't empty. Idempotent
 #                              (UNIQUE account,folder,uid); these messages enter
@@ -179,6 +182,22 @@ def refresh_capabilities(mailbox: MailBox) -> tuple[str, ...]:
     return tuple(getattr(client, "capabilities", ()) or ())
 
 
+def folder_uidvalidity(mailbox: MailBox, folder: str) -> int | None:
+    """UIDVALIDITY for the selected ``folder`` (from SELECT, else STATUS)."""
+    try:
+        typ, dat = mailbox.client.response("UIDVALIDITY")
+        if dat and dat[-1] is not None:
+            raw = dat[-1]
+            return int(raw.decode() if isinstance(raw, bytes) else raw)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        value = mailbox.folder.status(folder, ["UIDVALIDITY"]).get("UIDVALIDITY")
+        return int(value) if value is not None else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _login(mailbox: MailBox, account: IMAPAccount) -> None:
     secret = get_imap_secret(account.name)
     if secret is None:
@@ -260,6 +279,10 @@ class IMAPListener:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._backfilled = False
+        # Set when the server reset UIDVALIDITY (see _check_uidvalidity).
+        self._uidvalidity_alert: str | None = None
+        # (folder, uid) -> consecutive ingest failures (see _ingest_missing).
+        self._ingest_failures: dict[tuple[str, str], int] = {}
         self._account_id = store.upsert_account(
             account.name,
             "imap",
@@ -354,6 +377,7 @@ class IMAPListener:
                 # Reconnected because the user asked for a refresh while we were
                 # in backoff: reconcile right away.
                 self._checked_ingest(mailbox, folder)
+            self._check_uidvalidity(mailbox, folder)
 
             session_start = time.monotonic()
 
@@ -376,6 +400,35 @@ class IMAPListener:
                         mailbox.client.noop()
                     except Exception:  # noqa: BLE001 — dead socket → reconnect
                         return
+
+    def _check_uidvalidity(self, mailbox: MailBox, folder: str) -> None:
+        """Record the folder's UIDVALIDITY; shout if the server reset it.
+
+        A changed UIDVALIDITY means every stored UID for the folder now names a
+        different message (or none). The provider-delete path refuses such UIDs
+        on its own (Message-ID check); here the change is made loud — logged
+        and shown on the sync chip — because the UID cursor can no longer be
+        trusted to find new mail and the folder needs a human-driven re-sync.
+        The stored value is deliberately left unchanged so the alert persists.
+        """
+        try:
+            current = folder_uidvalidity(mailbox, folder)
+            if current is None:
+                return
+            stored = self.store.mailbox_uidvalidity(self._account_id, folder)
+            if stored is None:
+                self.store.set_mailbox_uidvalidity(self._account_id, folder, current)
+            elif stored != current:
+                msg = (
+                    f"UIDVALIDITY of {folder} changed ({stored} -> {current}); stored "
+                    "UIDs no longer match the server — new mail may be missed until "
+                    "the folder is re-synced"
+                )
+                log.error("IMAP '%s': %s", self.account.name, msg)
+                self._uidvalidity_alert = msg
+                self.sync.note_check(self.account.name, error=msg)
+        except Exception:  # noqa: BLE001 — diagnostics must never break ingest
+            log.debug("UIDVALIDITY check failed for '%s'", self.account.name, exc_info=True)
 
     def _idle_wait(self, mailbox: MailBox) -> list[bytes]:
         """One IDLE session of up to ``IDLE_TIMEOUT_S``, polled in short slices.
@@ -412,7 +465,13 @@ class IMAPListener:
         except Exception as e:
             self.sync.note_check(self.account.name, error=str(e))
             raise
-        self.sync.note_check(self.account.name, new_messages=inserted)
+        alert = getattr(self, "_uidvalidity_alert", None)
+        if alert:
+            # Keep the reset visible instead of letting a "successful" check
+            # (which cannot see past the stale cursor) clear it.
+            self.sync.note_check(self.account.name, error=alert)
+        else:
+            self.sync.note_check(self.account.name, new_messages=inserted)
         return inserted
 
     def _ingest_missing(self, mailbox: MailBox, folder: str, initial: bool = False) -> int:
@@ -448,11 +507,26 @@ class IMAPListener:
             chunk = targets[start : start + FETCH_CHUNK]
             criteria = AND(uid=[str(u) for u in chunk])
             complete = True
+            failures = self.__dict__.setdefault("_ingest_failures", {})
             for msg in mailbox.fetch(criteria, mark_seen=False, bulk=True):
                 try:
                     if self._ingest_one(msg, folder, notify=True):
                         inserted += 1
+                    failures.pop((folder, str(msg.uid)), None)
                 except Exception:  # noqa: BLE001 — one bad message must not kill the loop
+                    key = (folder, str(msg.uid))
+                    failures[key] = failures.get(key, 0) + 1
+                    if failures[key] >= MAX_INGEST_ATTEMPTS:
+                        # A deterministic failure (bad MIME, a parser crash)
+                        # would otherwise pin the cursor and refetch this
+                        # chunk every 30 s forever, starving later mail.
+                        log.exception(
+                            "Giving up on UID %s on '%s' after %d failed ingest attempts; "
+                            "skipping it so later mail is not blocked.",
+                            msg.uid, self.account.name, failures[key],
+                        )
+                        failures.pop(key, None)
+                        continue
                     complete = False
                     log.exception("Failed to ingest UID %s on '%s'", msg.uid, self.account.name)
             # Advance only after the whole chunk was handled. If one UID failed,
@@ -504,7 +578,11 @@ class IMAPListener:
             try:
                 from ..security import score_injection
 
-                risk = float(score_injection(norm.text or ""))
+                # Subject and display name reach agents too (bridge metadata),
+                # so an injection payload there must be scored as well.
+                from_name = msg.from_values.name if msg.from_values else ""
+                scored = "\n".join(p for p in (subject, from_name, norm.text or "") if p)
+                risk = float(score_injection(scored))
                 if risk >= float(self.security.quarantine_threshold):
                     quarantined = 1
                     quarantine_reason = f"ingest injection score {risk:.2f}"
@@ -515,22 +593,28 @@ class IMAPListener:
         # It can use prior human examples but never calls a model or follows a
         # link. Questionable/spam messages are stored for the operator's safe local
         # review and withheld from every AI path downstream.
-        from ..security.inbound_screening import assess_inbound
+        from ..security.inbound_screening import ScreeningResult, assess_inbound
 
-        screening = assess_inbound(
-            mode=self.screening_mode,
-            from_addr=msg.from_ or "",
-            subject=subject,
-            text=norm.text or "",
-            link_count=len(norm.links),
-            has_attachments=bool(msg.attachments),
-            learned_examples=self.store.screening_examples(self.account.site_id),
-            # Our own domain, so inbound mail forging it is caught. Genuine mail
-            # from ourselves does not arrive over the public MX.
-            own_domains=self._own_domains,
-            site_terms=self.site_terms,
-            brand_terms=self.brand_terms,
-        )
+        try:
+            screening = assess_inbound(
+                mode=self.screening_mode,
+                from_addr=msg.from_ or "",
+                subject=subject,
+                text=norm.text or "",
+                link_count=len(norm.links),
+                has_attachments=bool(msg.attachments),
+                learned_examples=self.store.screening_examples(self.account.site_id),
+                # Our own domain, so inbound mail forging it is caught. Genuine mail
+                # from ourselves does not arrive over the public MX.
+                own_domains=self._own_domains,
+                site_terms=self.site_terms,
+                brand_terms=self.brand_terms,
+            )
+        except Exception as e:  # noqa: BLE001 — fail closed, never lose mail
+            log.exception("Inbound screening failed for UID %s", msg.uid)
+            screening = ScreeningResult(
+                "POTENTIAL_ISSUE", f"screening failed ({type(e).__name__}); held for review"
+            )
 
         message_pk = self.store.insert_message(
             account_id=self._account_id,

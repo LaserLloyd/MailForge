@@ -149,6 +149,9 @@ CREATE TABLE IF NOT EXISTS mailbox_cursors (
   folder TEXT NOT NULL,
   last_uid INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT NOT NULL,
+  -- The server's UIDVALIDITY when last_uid was recorded. If it changes, every
+  -- stored UID for this folder is meaningless (RFC 3501 2.3.1.1).
+  uidvalidity INTEGER,
   PRIMARY KEY(account_id, folder));
 
 -- Controller-side link table: real URL targets the LLM never sees (spec §4.5).
