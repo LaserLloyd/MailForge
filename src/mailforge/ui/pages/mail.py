@@ -1168,13 +1168,18 @@ def render(
             except Exception:  # noqa: BLE001
                 pass
         _audit_bulk("purge_now", message_ids, report.purged)
-        for err in report.errors:
-            ui.notify(f"The mail server refused the delete — {err}", type="negative", timeout=9000)
-        _notify_then_navigate(
-            report.summary(),
-            _current_url(),
-            kind="positive" if report.ok else "warning",
-        )
+        try:
+            for err in report.errors:
+                ui.notify(
+                    f"The mail server refused the delete — {err}", type="negative", timeout=9000
+                )
+            _notify_then_navigate(
+                report.summary(),
+                _current_url(),
+                kind="positive" if report.ok else "warning",
+            )
+        except RuntimeError:  # the page closed while the server was contacted
+            log.debug("purge finished after its page was closed: %s", report.summary())
 
     with (
         ui.row()

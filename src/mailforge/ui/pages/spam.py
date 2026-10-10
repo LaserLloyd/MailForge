@@ -433,15 +433,18 @@ def render(store: object, settings: object, account: str = "") -> None:
             except Exception:  # noqa: BLE001
                 pass
         _audit(store, "purge_now", ids, report.purged)
-        ui.notify(report.summary(), type="positive" if report.ok else "warning", timeout=8000)
-        for err in report.errors:
-            ui.notify(
-                f"The mail server refused the delete — {err}. The local copy is gone; "
-                "the next sweep retries the server.",
-                type="negative",
-                timeout=10000,
-            )
-        _reload()
+        try:
+            ui.notify(report.summary(), type="positive" if report.ok else "warning", timeout=8000)
+            for err in report.errors:
+                ui.notify(
+                    f"The mail server refused the delete — {err}. The local copy is gone; "
+                    "the next sweep retries the server.",
+                    type="negative",
+                    timeout=10000,
+                )
+            _reload()
+        except RuntimeError:  # the page closed while the server was contacted
+            log.debug("purge finished after its page was closed: %s", report.summary())
 
     def _ask_purge(ids: list[int]) -> None:
         if not ids:
