@@ -558,6 +558,7 @@ class Store:
         trashed_only: bool = False,
         drafted_only: bool = False,
         offset: int = 0,
+        ai_caller: bool = False,
     ) -> list[sqlite3.Row]:
         """Received messages for the Mail page, newest first, joined with the
         account label. Optional account filter + substring search over
@@ -614,11 +615,24 @@ class Store:
             # from the mail, not the sender's display name).
             needle = re.sub(r"([\\%_])", r"\\\1", q.strip())
             like = f"%{needle}%"
+            body_match = "m.sanitized_text LIKE ? ESCAPE '\\'"
+            if ai_caller:
+                # An agent must not learn anything about a withheld body —
+                # not even "does it contain this word" by probing the search.
+                from ..security.inbound_screening import AI_WITHHELD_STATUSES
+
+                withheld = ",".join("?" for _ in AI_WITHHELD_STATUSES)
+                body_match = (
+                    f"({body_match} AND m.quarantined=0 AND "
+                    f"COALESCE(m.screening_status,'UNSCREENED') NOT IN ({withheld}))"
+                )
             sql += (
                 " AND (m.from_addr LIKE ? ESCAPE '\\' OR m.from_name LIKE ? ESCAPE '\\'"
-                " OR m.subject LIKE ? ESCAPE '\\' OR m.sanitized_text LIKE ? ESCAPE '\\')"
+                f" OR m.subject LIKE ? ESCAPE '\\' OR {body_match})"
             )
             params += [like, like, like, like]
+            if ai_caller:
+                params += sorted(AI_WITHHELD_STATUSES)
         if unseen_only:
             sql += " AND m.seen=0"
         if today_only:

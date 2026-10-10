@@ -1,4 +1,11 @@
-"""Machine-readable, site-bound OpenClaw bridge. It exposes no send capability."""
+"""Machine-readable, site-bound OpenClaw bridge.
+
+Read, propose and note operations are always available. ``prepare-send`` /
+``send`` exist but are hard-gated by ``openclaw.agent_send_enabled`` (false by
+default): the human-confirmation token is returned to the calling agent, so
+that confirmation is only as strong as the agent's own honesty — keep agent
+send disabled unless confirmation moves out of band.
+"""
 
 from __future__ import annotations
 
@@ -97,15 +104,25 @@ def _row_screening_status(row: Any) -> str:
 
 
 def _message_json(row: Any, *, full: bool = False) -> dict[str, Any]:
-    body = row["sanitized_text"] or ""
+    from .mail.normalize import neutralize_delimiters, untrusted_metadata
+
+    body = neutralize_delimiters(row["sanitized_text"] or "")
+    # Header fields are attacker-controlled and travel outside the body's
+    # untrusted framing: one line, no brackets/control chars, bounded — and
+    # shorter still for mail whose body is withheld.
+    withheld = _row_quarantined(row) or _row_screening_status(row) in {
+        "POTENTIAL_SPAM", "POTENTIAL_ISSUE", "SPAM"
+    }
+    meta_limit = 80 if withheld else 200
     result = {
         "id": int(row["id"]),
         "site_id": row["site_id"],
         "account_name": row["account_name"],
-        "from_addr": row["from_addr"] or "",
-        "from_name": row["from_name"] or "",
+        "from_addr": untrusted_metadata(row["from_addr"], 254),
+        "from_name": untrusted_metadata(row["from_name"], meta_limit),
         "to_addrs": row["to_addrs"] or "",
-        "subject": row["subject"] or "",
+        "subject": untrusted_metadata(row["subject"], meta_limit),
+        "metadata_untrusted": True,
         "received_at": row["received_at"] or "",
         "has_attachments": bool(row["has_attachments"]),
         "seen": bool(row["seen"]),
@@ -192,11 +209,13 @@ def _daily_brief(store: Any, site: str) -> dict[str, Any]:
     fresh agent notes. No message bodies — the brief links back to the UI."""
     triage = store.triage_counts(site)
 
+    from .mail.normalize import untrusted_metadata
+
     def _brief_row(row: Any) -> dict[str, Any]:
         return {
             "id": int(row["id"]),
-            "from": row["from_name"] or row["from_addr"] or "",
-            "subject": " ".join(str(row["subject"] or "").split())[:160],
+            "from": untrusted_metadata(row["from_name"] or row["from_addr"] or "", 120),
+            "subject": untrusted_metadata(row["subject"], 160),
             "received_at": row["received_at"] or "",
             "category": row["category"] or "",
             "quarantined": bool(row["quarantined"]),
@@ -530,6 +549,7 @@ def run_bridge(action: str, site_id: str) -> int:
                     limit=limit,
                     q=query,
                     site_id=site,
+                    ai_caller=True,
                     unseen_only=bool(data.get("unread_only", False)),
                     needs_reply_only=bool(data.get("needs_reply_only", False)),
                     needs_action_only=bool(data.get("needs_action_only", False)),
@@ -544,6 +564,12 @@ def run_bridge(action: str, site_id: str) -> int:
                 result = store.weekly_summary(
                     site, _bounded_int(data, "days", 7, 1, 31)
                 )
+                from .mail.normalize import untrusted_metadata
+
+                for item in result.get("important", []):
+                    for key in ("subject", "from_name", "from_addr"):
+                        if key in item:
+                            item[key] = untrusted_metadata(item[key], 160)
                 result["notes"] = [
                     {"id": int(r["id"]), "kind": r["kind"], "author": r["author"],
                      "title": r["title"], "body": r["body"], "created_at": r["created_at"]}

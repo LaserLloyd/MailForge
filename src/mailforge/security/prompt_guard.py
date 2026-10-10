@@ -39,6 +39,7 @@ _PATTERNS: list[tuple[re.Pattern[str], float]] = [
     (re.compile(r"\boverride\s+(your|the|all|previous)\s+\w+", re.I), 0.45),
     (re.compile(r"\b(send|email|forward|cc|bcc)\s+(this|the\s+\w+|everything|all)\s+to\b", re.I), 0.4),  # tool-call lure
     (re.compile(r"<\s*/?\s*(system|im_start|im_end|s)\s*>", re.I), 0.4),  # delimiter injection
+    (re.compile(r"<+\s*/?\s*(end_)?untrusted_[a-z_]*", re.I), 0.5),  # our own data-block delimiters
     (re.compile(r"\bend\s+of\s+(prompt|instructions?|context)\b", re.I), 0.35),
     (re.compile(r"\b(execute|run|invoke|call)\s+(the\s+)?(tool|function|command|shell)\b", re.I), 0.35),
     (re.compile(r"```[\s\S]*?(system|assistant|user)\s*:", re.I), 0.3),
