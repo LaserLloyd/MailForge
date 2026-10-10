@@ -363,12 +363,17 @@ def render(
             int(_value(row, "id")): str(_value(row, "name", "Template"))
             for row in template_rows
         }
+        selected_tid = (
+            int(_value(selected_template, "id")) if selected_template is not None else None
+        )
+        if selected_tid is not None and selected_tid not in template_options:
+            # A template from a site with no mailbox: keep it visible instead of
+            # handing ui.select a value outside its options (a 500 page).
+            template_options[selected_tid] = str(_value(selected_template, "name", "Template"))
         with ui.row().classes("w-full items-center bb-toolbar"):
             template_sel = ui.select(
                 template_options,
-                value=int(_value(selected_template, "id"))
-                if selected_template is not None
-                else None,
+                value=selected_tid,
                 label="Response template",
             ).props("outlined dense clearable").classes("col bb-toolbar-grow")
 

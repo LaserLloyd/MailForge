@@ -150,6 +150,14 @@ def _agent_notes(store: object) -> None:
                         ).style("font-size: 11px; color: var(--text-tertiary)")
 
 
+def reset_stale_filters(actors: list[str], events: list[str]) -> None:
+    """Fall back to "all" for a remembered filter no longer among the options."""
+    if _view.get("actor") not in actors:
+        _view["actor"] = "all"
+    if _view.get("event") not in events:
+        _view["event"] = "all"
+
+
 def render(store: object) -> None:
     """Render the activity page body."""
     _verify_banner(store)
@@ -161,6 +169,9 @@ def render(store: object) -> None:
         rows = []
     actors = ["all"] + sorted({r["actor"] for r in rows if r["actor"]})
     events = ["all"] + sorted({r["event"] for r in rows if r["event"]})
+    # The choice outlives the rows it was made from: once a value drops out of
+    # the last _LIMIT events, ui.select would raise (a 500 on every load).
+    reset_stale_filters(actors, events)
 
     with ui.row().classes("w-full items-center").style("gap: 10px"):
         ui.select(

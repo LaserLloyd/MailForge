@@ -673,6 +673,8 @@ def _sync_widget(store: object | None = None) -> None:
                 _paint()
             except Exception:
                 pass  # page torn down mid-refresh
+        if getattr(btn, "is_deleted", False):
+            return  # the user navigated away during the wait; no client to notify
         new_now = sum(a.new_total for a in registry.snapshot())
         gained = max(0, new_now - new_before)
         s = registry.summary()

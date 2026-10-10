@@ -107,8 +107,9 @@ class _BulkSelection:
     is ticked — the same store calls the Mail page uses.
     """
 
-    def __init__(self, store: object) -> None:
+    def __init__(self, store: object, settings: object | None = None) -> None:
         self.store = store
+        self.settings = settings
         self.visible_ids: list[int] = []
         # one message can appear in two lists (e.g. needs-reply AND recent);
         # every copy's box mirrors the same model state.
@@ -186,10 +187,9 @@ class _BulkSelection:
                 notice = f"Archived {changed} message(s)."
             elif action == "trash":
                 changed = self.store.set_messages_trashed(ids, True)  # type: ignore[attr-defined]
-                notice = (
-                    f"Moved {changed} message(s) to local Trash. "
-                    "The provider mailbox was not changed."
-                )
+                from .mail import _delete_notice
+
+                notice = _delete_notice(self.settings, changed)
             else:
                 raise ValueError(f"unsupported bulk action: {action}")
             try:
@@ -383,7 +383,7 @@ def refresh(store: object, settings: object) -> None:
                 _inbox_tile(metrics, site_labels)
 
     # --- bulk selection across the three message lists ------------------------
-    selection = _BulkSelection(store)
+    selection = _BulkSelection(store, settings)
     selection.render_bar()
 
     # --- three columns: needs reply / needs action / recent -------------------

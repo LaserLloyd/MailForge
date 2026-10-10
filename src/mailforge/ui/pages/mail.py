@@ -36,6 +36,9 @@ _VIEW_LABELS: dict[str, str] = {
 #: entries that do the same thing in the picker.
 _VIEW_COVERED_TAGS = frozenset({"quarantined", "spam"})
 
+#: Where "Mark as spam" lands: the Filtered-spam view, never ``?tag=spam``.
+SPAM_VIEW_URL = "/mail?" + urlencode({"filter": "spam"})
+
 
 _TAG_LABELS = {
     "quarantined": "Quarantined",
@@ -64,6 +67,30 @@ def filter_options(tag_counts: dict[str, int] | None = None) -> dict[str, str]:
     for tag, count in sorted(live_tags, key=lambda item: _tag_label(item[0]).lower()):
         options[f"tag:{tag}"] = f"{_tag_label(tag)} ({count})"
     return options
+
+
+def resolve_view(
+    filter: str, tag: str, tag_counts: dict[str, int] | None
+) -> tuple[str, str, str]:
+    """Normalise ``?filter=`` / ``?tag=`` into something the picker can show.
+
+    Returns ``(filter, tag, select_value)`` where ``select_value`` is always a
+    key of :func:`filter_options` for the same ``tag_counts`` — NiceGUI's
+    ``ui.select`` raises ``ValueError`` (a 500 page) for any value outside its
+    options. Tags a view already covers (``spam``, ``quarantined``) become that
+    view; unknown, stale or zero-count tags and unknown views fall back.
+    """
+    counts = tag_counts or {}
+    filter = filter if filter in _VIEW_LABELS else "all"
+    tag = str(tag or "")
+    if tag in _VIEW_COVERED_TAGS:
+        filter, tag = tag, ""
+    elif tag not in counts or int(counts.get(tag) or 0) <= 0:
+        tag = ""
+    value = f"tag:{tag}" if tag else f"view:{filter}"
+    if value not in filter_options(counts):
+        filter, tag, value = "all", "", "view:all"
+    return filter, tag, value
 
 
 def _short_time(iso: str | None) -> str:
@@ -216,6 +243,25 @@ def _delete_notice(settings: object, changed: int) -> str:
 
 def _account_options(settings: object) -> list[str]:
     return [a.name for a in (getattr(settings, "imap_accounts", []) or [])]
+
+
+def account_select_options(
+    configured: list[str], account: str, db_accounts: list[str] | None = None
+) -> tuple[dict[str, str], str]:
+    """Options and a safe value for the account picker.
+
+    A mailbox removed with ``account-remove`` keeps its database row (and its
+    history), and the dashboard still links to it — so a known-but-removed name
+    stays browsable, labelled as removed. Anything else falls back to "All".
+    """
+    options = {"": "All accounts", **{name: name for name in configured}}
+    account = str(account or "")
+    if account and account not in options:
+        if account in (db_accounts or []):
+            options[account] = f"{account} (removed)"
+        else:
+            account = ""
+    return options, account
 
 
 def reply_compose_url(
@@ -483,16 +529,14 @@ def _message_reader(
     def _mark_unread() -> None:
         try:
             store.mark_message_unseen(message_id)  # type: ignore[attr-defined]
-            ui.notify("Marked unread.", type="positive")
-            ui.navigate.to(back_url)
+            _notify_then_navigate("Marked unread.", back_url)
         except Exception as e:  # noqa: BLE001
             ui.notify(f"Could not mark unread: {e}", type="negative")
 
     def _archive() -> None:
         try:
             store.set_message_archived(message_id, True)  # type: ignore[attr-defined]
-            ui.notify("Message archived.", type="positive")
-            ui.navigate.to(back_url)
+            _notify_then_navigate("Message archived.", back_url)
         except Exception as e:  # noqa: BLE001
             ui.notify(f"Could not archive: {e}", type="negative")
 
@@ -509,8 +553,7 @@ def _message_reader(
                 store.set_message_trashed(message_id, False)  # type: ignore[attr-defined]
             if archived:
                 store.set_message_archived(message_id, False)  # type: ignore[attr-defined]
-            ui.notify("Message restored to the inbox.", type="positive")
-            ui.navigate.to(_message_url(message_id))
+            _notify_then_navigate("Message restored to the inbox.", _message_url(message_id))
         except Exception as e:  # noqa: BLE001
             ui.notify(f"Could not restore message: {e}", type="negative")
 
@@ -540,24 +583,22 @@ def _message_reader(
             except Exception:  # noqa: BLE001
                 log.exception("audit append failed for screening feedback")
             if label == "SPAM":
-                ui.notify(
+                _notify_then_navigate(
                     "Marked as spam. Similar sender/subject patterns will be filtered locally; "
                     "nothing was deleted on the mail server.",
-                    type="positive",
-                    timeout=7000,
+                    SPAM_VIEW_URL,
                 )
-                ui.navigate.to("/mail?" + urlencode({"tag": "spam"}))
             elif label == "CONTENT":
-                ui.notify(
+                _notify_then_navigate(
                     "Marked content-related. Similar messages may proceed to normal triage; "
                     "account/security claims still require direct-site verification.",
-                    type="positive",
-                    timeout=7000,
+                    _message_url(message_id),
                 )
-                ui.navigate.to(_message_url(message_id))
             else:
-                ui.notify("Added to the questionable review queue.", type="positive")
-                ui.navigate.to(_message_url(message_id, tag=f"screening:{label}"))
+                _notify_then_navigate(
+                    "Added to the questionable review queue.",
+                    _message_url(message_id, tag=f"screening:{label}"),
+                )
         except Exception as e:  # noqa: BLE001
             ui.notify(f"Could not save screening feedback: {e}", type="negative")
 
@@ -674,8 +715,9 @@ def _message_reader(
                             )
                         except Exception:  # noqa: BLE001
                             log.exception("audit append failed for release")
-                        ui.notify("Released from quarantine.", type="positive")
-                        ui.navigate.to(_message_url(message_id))
+                        _notify_then_navigate(
+                            "Released from quarantine.", _message_url(message_id)
+                        )
                     except Exception as e:  # noqa: BLE001
                         ui.notify(f"Release failed: {e}", type="negative")
 
@@ -818,6 +860,13 @@ def render(
 ) -> None:
     """Render route-local filters and a responsive list/reading workspace."""
     accounts = _account_options(settings)
+    try:
+        db_accounts = [
+            str(r["name"]) for r in store.list_accounts(kind="imap")  # type: ignore[attr-defined]
+        ]
+    except Exception:  # noqa: BLE001
+        db_accounts = []
+    account_options, account = account_select_options(accounts, account, db_accounts)
     filter = filter if filter in _VIEW_LABELS else "all"
     try:
         page = max(0, int(page))
@@ -836,7 +885,7 @@ def render(
         )
     except Exception:  # noqa: BLE001
         tag_counts = {}
-    tag = tag if tag in tag_counts else ""
+    filter, tag, select_value = resolve_view(filter, tag, tag_counts)
     filters = {"account": account, "q": q, "filter": filter, "tag": tag}
     if page:
         filters["page"] = str(page)
@@ -865,13 +914,13 @@ def render(
         ui.select(
             filter_options(tag_counts),
             label="View or tag",
-            value=f"tag:{tag}" if tag else f"view:{filter}",
+            value=select_value,
             on_change=lambda e: _choose_filter(str(e.value)),
         ).props("dense outlined options-dense").classes("w-52 bb-toolbar-grow")
         ui.space()
-        if accounts:
+        if len(account_options) > 1:
             ui.select(
-                {"": "All accounts", **{name: name for name in accounts}},
+                account_options,
                 value=account,
                 on_change=lambda e: _go(account=str(e.value or "")),
             ).props("dense outlined").classes("w-52 bb-toolbar-grow")
@@ -916,7 +965,7 @@ def render(
     except Exception as e:  # noqa: BLE001
         log.warning("list_received failed: %s", e)
         rows = []
-    if tag == "spam":
+    if filter == "spam":
         ui.label(
             "Filtered locally and reversible. These messages remain on the mail server."
         ).style("font-size: 12px; color: var(--text-secondary)")

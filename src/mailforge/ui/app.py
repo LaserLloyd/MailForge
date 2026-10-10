@@ -56,6 +56,18 @@ _PREV_LAUNCHER_KEY: tuple[str, float] | None = None
 _PREV_KEY_GRACE_S = 60.0
 
 
+def _int_or_none(value: str | None) -> int | None:
+    """Parse an optional integer query parameter; junk means "not given".
+
+    Typing the route parameter ``int`` lets FastAPI answer ``?page=abc`` with a
+    raw 422 JSON body instead of the page, so ids/pages arrive as text.
+    """
+    try:
+        return int(str(value).strip()) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _write_secret_file(path: Any, value: str) -> None:
     """Create/replace a 0600 secret file with no world-readable window.
 
@@ -375,12 +387,12 @@ def _register_pages(store: object, settings: object, bridge: object | None) -> N
 
     @ui.page("/mail")
     def _mail(
-        message_id: int | None = None,
+        message_id: str = "",
         account: str = "",
         q: str = "",
         filter: str = "all",
         tag: str = "",
-        page: int = 0,
+        page: str = "",
         token: str | None = None,
     ) -> None:
         if not _gate(token):
@@ -391,12 +403,12 @@ def _register_pages(store: object, settings: object, bridge: object | None) -> N
                 store,
                 settings,
                 bridge,
-                message_id=message_id,
+                message_id=_int_or_none(message_id),
                 account=account,
                 q=q,
                 filter=filter,
                 tag=tag,
-                page=page,
+                page=max(0, _int_or_none(page) or 0),
             )
 
     @ui.page("/mail/{message_id}")
@@ -408,12 +420,12 @@ def _register_pages(store: object, settings: object, bridge: object | None) -> N
             mail_page.render_detail(store, settings, message_id, bridge)
 
     @ui.page("/outbox")
-    def _outbox(view: str = "all", page: int = 0, token: str | None = None) -> None:
+    def _outbox(view: str = "all", page: str = "", token: str | None = None) -> None:
         if not _gate(token):
             _denied()
             return
         with theme.shell("outbox", "Outbox & Sent", bridge, store, max_width=1180):
-            outbox_page.render(store, settings, view=view, page=page)
+            outbox_page.render(store, settings, view=view, page=max(0, _int_or_none(page) or 0))
 
     @ui.page("/outbox/{kind}/{row_id}")
     def _outbox_detail(kind: str, row_id: int, token: str | None = None) -> None:
@@ -435,10 +447,10 @@ def _register_pages(store: object, settings: object, bridge: object | None) -> N
     def _compose(
         to: str = "",
         subject: str = "",
-        draft_id: int | None = None,
-        template_id: int | None = None,
+        draft_id: str = "",
+        template_id: str = "",
         account: str = "",
-        reply_to: int | None = None,
+        reply_to: str = "",
         token: str | None = None,
     ) -> None:
         if not _gate(token):
@@ -450,10 +462,10 @@ def _register_pages(store: object, settings: object, bridge: object | None) -> N
                 settings,
                 to=to,
                 subject=subject,
-                draft_id=draft_id,
-                template_id=template_id,
+                draft_id=_int_or_none(draft_id),
+                template_id=_int_or_none(template_id),
                 account=account,
-                reply_to=reply_to,
+                reply_to=_int_or_none(reply_to),
             )
 
     @ui.page("/templates")
@@ -461,7 +473,7 @@ def _register_pages(store: object, settings: object, bridge: object | None) -> N
         site: str = "",
         to: str = "",
         subject: str = "",
-        message_id: int | None = None,
+        message_id: str = "",
         token: str | None = None,
     ) -> None:
         if not _gate(token):
@@ -474,7 +486,7 @@ def _register_pages(store: object, settings: object, bridge: object | None) -> N
                 site=site,
                 to=to,
                 subject=subject,
-                message_id=message_id,
+                message_id=_int_or_none(message_id),
             )
 
     @ui.page("/references")
