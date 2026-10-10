@@ -708,12 +708,17 @@ class Store:
         return self.conn.execute(sql, tuple(params)).fetchall()
 
     def message_ids_for_tag(
-        self, tag: str, account_name: str | None = None, limit: int = 20000
+        self,
+        tag: str,
+        account_name: str | None = None,
+        limit: int = 20000,
+        statuses: Iterable[str] | None = None,
     ) -> list[int]:
         """Every active message id under one live tag (all pages), newest first.
 
         Same predicate as the Mail page's tag view; used by "Delete all" on a
         rule category so it is not limited to the ticked rows of one page.
+        ``statuses`` optionally keeps only rows with those screening statuses.
         """
         if not str(tag or "").strip():
             return []
@@ -723,7 +728,12 @@ class Store:
             include_spam=True,
             message_tag=tag,
         )
-        return [int(r["id"]) for r in rows]
+        wanted = {str(s).upper() for s in statuses} if statuses is not None else None
+        return [
+            int(r["id"])
+            for r in rows
+            if wanted is None or str(r["screening_status"] or "UNSCREENED").upper() in wanted
+        ]
 
     def message_tag_counts(self, account_name: str | None = None) -> dict[str, int]:
         """Live tags on active messages, omitting tags with zero matches."""

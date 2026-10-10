@@ -289,3 +289,14 @@ def test_picker_shows_the_rule_label_with_a_count():
     assert mail.resolve_view("all", "category:GITHUB", {"category:GITHUB": 12})[2] == (
         "tag:category:GITHUB"
     )
+
+
+def test_delete_all_targets_only_filed_mail(tmp_path):
+    with open_store(tmp_path / "ids.db") as store:
+        lst = _ingest_listener(store)
+        lst._ingest_one(_msg(1, GH_NOTIFY, "[o/r] Run failed: CI"), "INBOX")
+        lst._ingest_one(_msg(2, GH_NOREPLY, "[GitHub] Please review this sign in"), "INBOX")
+        filed = store.message_ids_for_tag("category:GITHUB", statuses=("FILED",))
+        assert filed == [lst.notified[0]]
+        assert len(store.message_ids_for_tag("category:GITHUB")) == 2
+        assert store.message_ids_for_tag("") == []

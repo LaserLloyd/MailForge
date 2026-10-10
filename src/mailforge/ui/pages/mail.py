@@ -1019,7 +1019,7 @@ def render(
             ).style("font-size: 12px; color: var(--text-secondary)")
             ui.space()
             ui.button(
-                f"Delete all {rule_label}",
+                f"Delete all filed {rule_label}",
                 icon="delete_sweep",
                 on_click=lambda: _delete_all_in_tag(),
             ).props("flat dense no-caps color=negative")
@@ -1180,14 +1180,22 @@ def render(
         holding period), but it can be hundreds of messages, so it asks first.
         """
         try:
+            # Only FILED mail: the rule's security/account notices are left for
+            # a human to read one by one (deleting them skips the undo window).
             message_ids = store.message_ids_for_tag(  # type: ignore[attr-defined]
+                tag, account_name=account or None, statuses=("FILED",)
+            )
+            everything = store.message_ids_for_tag(  # type: ignore[attr-defined]
                 tag, account_name=account or None
             )
         except Exception as e:  # noqa: BLE001
             ui.notify(f"Could not list messages: {e}", type="negative")
             return
+        kept = len(everything) - len(message_ids)
         if not message_ids:
-            ui.notify("Nothing to delete.")
+            ui.notify("Nothing filed to delete." + (
+                f" {kept} security/account notice(s) are left for you to review." if kept else ""
+            ))
             return
         label = rule_category_label(tag) or _tag_label(tag)
         with ui.dialog() as confirm, ui.card().classes("bb-card").style(
@@ -1198,6 +1206,10 @@ def render(
                 f"{len(message_ids)} message(s) will move to Trash"
                 + (f" for {account}" if account else "")
                 + ". You can restore them from Trash until the holding period ends."
+                + (
+                    f" {kept} security or account notice(s) are not included; review "
+                    "those individually." if kept else ""
+                )
             ).style("font-size: 12.5px; color: var(--text-secondary)")
             with ui.row().classes("w-full justify-end bb-toolbar"):
                 ui.button("Cancel", on_click=lambda: confirm.submit(False)).props("flat no-caps")
