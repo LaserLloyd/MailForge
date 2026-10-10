@@ -11,6 +11,7 @@ from urllib.parse import urlencode
 
 from nicegui import ui
 
+from ...security.inbound_screening import ai_may_read
 from .. import markdown as markdown_ui
 from .. import theme
 from . import assistant
@@ -498,7 +499,7 @@ def _message_reader(
     archived = bool(_value(msg, "archived", 0))
     trashed = bool(_value(msg, "trashed", 0))
     screening_status = str(_value(msg, "screening_status", "UNSCREENED") or "UNSCREENED").upper()
-    screening_withheld = screening_status in {"POTENTIAL_SPAM", "POTENTIAL_ISSUE", "SPAM"}
+    screening_withheld = not ai_may_read(screening_status)
     reply_to = str(_value(msg, "from_addr") or "")
     reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
     try:
@@ -725,24 +726,30 @@ def _message_reader(
                     "outline no-caps color=negative"
                 )
 
-    if screening_status in {"POTENTIAL_SPAM", "POTENTIAL_ISSUE", "SPAM"}:
+    if screening_withheld:
+        filed = screening_status == "FILED"
         severe = screening_status in {"POTENTIAL_ISSUE", "SPAM"}
+        tone = "info" if filed else ("error" if severe else "warning")
         with (
             ui.card()
             .classes("w-full bb-card")
-            .style(f"padding: 12px; border-color: {theme.tone_border('error' if severe else 'warning')}")
+            .style(f"padding: 12px; border-color: {theme.tone_border(tone)}")
         ):
             with ui.row().classes("w-full items-center").style("gap: 8px"):
                 ui.icon(
-                    "gpp_maybe" if screening_status == "POTENTIAL_ISSUE" else "report",
+                    "gpp_maybe" if screening_status == "POTENTIAL_ISSUE"
+                    else ("folder_special" if filed else "report"),
                     size="22px",
-                ).style(f"color: {theme.tone_text('error' if severe else 'warning')}")
+                ).style(f"color: {theme.tone_text(tone)}")
                 with ui.column().classes("col").style("gap: 2px"):
                     theme.screening_badge(screening_status)
                     ui.label(str(_value(msg, "screening_reason", "") or "")).style(
                         "font-size: 12px; color: var(--text-secondary)"
                     )
                     ui.label(
+                        "Filed by a sender rule and kept out of the Inbox and away "
+                        "from AI. Mark it content-related if an AI should read it."
+                        if filed else
                         "No AI can read this message in its current state. Review the "
                         "sanitized copy below, then mark it content-related or spam."
                     ).style("font-size: 12px; color: var(--text-secondary)")

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..security import run_output_guardrails
+from ..security.inbound_screening import ai_may_read
 from . import worker
 
 
@@ -38,9 +39,7 @@ async def revise_draft(
             "source message is quarantined — release it in the local UI first"
         )
     source = store.get_message(int(draft["message_id"]))
-    if source is not None and str(source["screening_status"] or "").upper() in {
-        "POTENTIAL_SPAM", "POTENTIAL_ISSUE", "SPAM"
-    }:
+    if source is not None and not ai_may_read(source["screening_status"]):
         raise ValueError(
             "source message is withheld by inbound screening — mark it content-related first"
         )

@@ -19,6 +19,25 @@ from importlib import resources
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from ..security.inbound_screening import (
+    AI_READABLE_STATUSES,
+    INBOX_HIDDEN_STATUSES,
+    QUESTIONABLE_STATUSES,
+    sql_status_list,
+)
+
+# SQL fragments built from the screening constants, so a status added there
+# is handled here without hunting literals. The AI gate is an ALLOWLIST: a
+# row is AI-eligible only when its status is explicitly readable.
+_SCREEN = "COALESCE(NULLIF(TRIM(m.screening_status),''),'UNSCREENED')"
+_AI_READABLE_SQL = f"{_SCREEN} IN ({sql_status_list(AI_READABLE_STATUSES)})"
+_QUESTIONABLE_SQL = f"m.screening_status IN ({sql_status_list(QUESTIONABLE_STATUSES)})"
+_INBOX_VISIBLE_SQL = f"{_SCREEN} NOT IN ({sql_status_list(INBOX_HIDDEN_STATUSES)})"
+_SPAM_TAG_SQL = (
+    "(UPPER(TRIM(COALESCE(c.category,'')))='SPAM' "
+    "OR UPPER(TRIM(COALESCE(m.screening_status,'')))='SPAM')"
+)
+
 log = logging.getLogger(__name__)
 
 # Embedding dimension must match config LLM embedding model + vec0 column.
@@ -494,8 +513,7 @@ class Store:
             "LEFT JOIN drafts d ON d.message_id=m.id "
             "WHERE c.message_id IS NULL AND d.id IS NULL "
             "AND m.archived=0 AND m.trashed=0 "
-            "AND COALESCE(m.screening_status,'UNSCREENED') "
-            "NOT IN ('POTENTIAL_SPAM','POTENTIAL_ISSUE','SPAM') "
+            f"AND {_AI_READABLE_SQL} "
             "ORDER BY datetime(m.received_at) DESC, m.id DESC LIMIT ?",
             (max(1, min(int(limit), 1000)),),
         ).fetchall()
@@ -527,8 +545,7 @@ class Store:
             "LEFT JOIN drafts d ON d.message_id=m.id "
             "WHERE m.id=? AND c.message_id IS NULL AND d.id IS NULL "
             "AND m.archived=0 AND m.trashed=0 "
-            "AND COALESCE(m.screening_status,'UNSCREENED') "
-            "NOT IN ('POTENTIAL_SPAM','POTENTIAL_ISSUE','SPAM') LIMIT 1",
+            f"AND {_AI_READABLE_SQL} LIMIT 1",
             (int(message_pk),),
         ).fetchone()
         return row is not None
@@ -619,20 +636,14 @@ class Store:
             if ai_caller:
                 # An agent must not learn anything about a withheld body —
                 # not even "does it contain this word" by probing the search.
-                from ..security.inbound_screening import AI_WITHHELD_STATUSES
-
-                withheld = ",".join("?" for _ in AI_WITHHELD_STATUSES)
                 body_match = (
-                    f"({body_match} AND m.quarantined=0 AND "
-                    f"COALESCE(m.screening_status,'UNSCREENED') NOT IN ({withheld}))"
+                    f"({body_match} AND m.quarantined=0 AND {_AI_READABLE_SQL})"
                 )
             sql += (
                 " AND (m.from_addr LIKE ? ESCAPE '\\' OR m.from_name LIKE ? ESCAPE '\\'"
                 f" OR m.subject LIKE ? ESCAPE '\\' OR {body_match})"
             )
             params += [like, like, like, like]
-            if ai_caller:
-                params += sorted(AI_WITHHELD_STATUSES)
         if unseen_only:
             sql += " AND m.seen=0"
         if today_only:
@@ -646,7 +657,7 @@ class Store:
         )
         needs_action_sql = (
             f"({needs_reply_sql} OR m.quarantined=1 "
-            "OR m.screening_status IN ('POTENTIAL_SPAM','POTENTIAL_ISSUE') "
+            f"OR {_QUESTIONABLE_SQL} "
             "OR COALESCE(d.state,'') IN ('PENDING','BLOCKED','DEFERRED_NO_LLM'))"
         )
         if needs_reply_only:
@@ -656,19 +667,20 @@ class Store:
         if quarantined_only:
             sql += " AND m.quarantined=1"
         if questionable_only:
-            sql += " AND m.screening_status IN ('POTENTIAL_SPAM','POTENTIAL_ISSUE')"
+            sql += f" AND {_QUESTIONABLE_SQL}"
         if spam_only:
-            sql += " AND m.screening_status='SPAM'"
+            # Same predicate as the "spam" tag: screened spam OR mail the model
+            # classified as spam, so the two views can never disagree.
+            sql += f" AND {_SPAM_TAG_SQL}"
         elif not include_spam:
-            sql += " AND COALESCE(m.screening_status,'UNSCREENED')!='SPAM'"
+            # Spam and rule-filed mail (e.g. GitHub notifications) have their
+            # own views; the default Inbox stays for mail a person should read.
+            sql += f" AND {_INBOX_VISIBLE_SQL}"
         if message_tag:
             tag_kind, separator, tag_value = str(message_tag).partition(":")
             normalized = tag_value.strip().upper()
             if message_tag == "spam":
-                sql += (
-                    " AND (UPPER(TRIM(COALESCE(c.category,'')))='SPAM' "
-                    "OR UPPER(TRIM(COALESCE(m.screening_status,'')))='SPAM')"
-                )
+                sql += f" AND {_SPAM_TAG_SQL}"
             elif message_tag == "quarantined":
                 sql += " AND m.quarantined=1"
             elif separator and tag_kind == "category" and normalized:
@@ -715,6 +727,8 @@ class Store:
             + " AND TRIM(COALESCE(m.screening_status,''))!='' "
             "AND UPPER(TRIM(m.screening_status))!='UNSCREENED' "
             "AND UPPER(TRIM(m.screening_status))!='SPAM' "
+            # FILED rows are reached through their rule's category tag.
+            "AND UPPER(TRIM(m.screening_status))!='FILED' "
             "GROUP BY UPPER(TRIM(m.screening_status))",
             params,
         ).fetchall():
@@ -724,8 +738,7 @@ class Store:
             "JOIN accounts a ON a.id=m.account_id "
             "LEFT JOIN classifications c ON c.message_id=m.id "
             "WHERE m.archived=0 AND m.trashed=0 "
-            "AND (UPPER(TRIM(COALESCE(c.category,'')))='SPAM' "
-            "OR UPPER(TRIM(COALESCE(m.screening_status,'')))='SPAM')" + account_sql,
+            f"AND {_SPAM_TAG_SQL}" + account_sql,
             params,
         ).fetchone()
         spam = int(row["n"] or 0)
@@ -749,25 +762,26 @@ class Store:
             # bare date() would compare its UTC date against the local date and
             # drop this morning's mail whenever the two differ.
             "COALESCE(SUM(CASE WHEN date(m.received_at,'localtime')=date('now','localtime') "
-            "AND COALESCE(m.screening_status,'UNSCREENED')!='SPAM' "
+            f"AND {_INBOX_VISIBLE_SQL} "
             "THEN 1 ELSE 0 END),0) AS today, "
             "COALESCE(SUM(CASE WHEN m.seen=0 "
-            "AND COALESCE(m.screening_status,'UNSCREENED')!='SPAM' "
+            f"AND {_INBOX_VISIBLE_SQL} "
             "THEN 1 ELSE 0 END),0) AS unread, "
             "COALESCE(SUM(CASE WHEN c.category IN ('RESPOND','MEETING') "
             "AND COALESCE(d.state,'') NOT IN ('SENT','REJECTED') THEN 1 ELSE 0 END),0) "
             "AS needs_reply, "
             "COALESCE(SUM(CASE WHEN (c.category IN ('RESPOND','MEETING') "
             "AND COALESCE(d.state,'') NOT IN ('SENT','REJECTED')) OR m.quarantined=1 "
-            "OR m.screening_status IN ('POTENTIAL_SPAM','POTENTIAL_ISSUE') "
+            f"OR {_QUESTIONABLE_SQL} "
             "OR COALESCE(d.state,'') IN ('PENDING','BLOCKED','DEFERRED_NO_LLM') "
             "THEN 1 ELSE 0 END),0) AS needs_action, "
             "COALESCE(SUM(m.quarantined),0) AS quarantined, "
-            "COALESCE(SUM(CASE WHEN m.screening_status "
-            "IN ('POTENTIAL_SPAM','POTENTIAL_ISSUE') THEN 1 ELSE 0 END),0) "
+            f"COALESCE(SUM(CASE WHEN {_QUESTIONABLE_SQL} THEN 1 ELSE 0 END),0) "
             "AS questionable, "
             "COALESCE(SUM(CASE WHEN m.screening_status='SPAM' THEN 1 ELSE 0 END),0) "
-            "AS spam "
+            "AS spam, "
+            "COALESCE(SUM(CASE WHEN m.screening_status='FILED' THEN 1 ELSE 0 END),0) "
+            "AS filed "
             "FROM messages m LEFT JOIN accounts a ON a.id=m.account_id "
             "LEFT JOIN classifications c ON c.message_id=m.id "
             "LEFT JOIN drafts d ON d.id=(SELECT latest.id FROM drafts latest "
@@ -824,7 +838,7 @@ class Store:
             sql += " AND a.site_id=?"
             params = (validate_site_id(site_id),)
         if not include_spam:
-            sql += " AND COALESCE(m.screening_status,'UNSCREENED')!='SPAM'"
+            sql += f" AND {_INBOX_VISIBLE_SQL}"
         row = self.conn.execute(sql, params).fetchone()
         return {"total": row["total"] or 0, "unseen": row["unseen"] or 0}
 
@@ -846,7 +860,7 @@ class Store:
         count except ``spam`` itself. Read-only; no bodies or credentials.
         """
         floor = self.URGENT_PRIORITY if urgent_priority is None else int(urgent_priority)
-        not_spam = "COALESCE(m.screening_status,'UNSCREENED')!='SPAM'"
+        not_spam = _INBOX_VISIBLE_SQL
         # A message counts once per metric; m.id IS NULL means the account has no
         # active mail, and every SUM below then collapses to 0 via COALESCE.
         needs_reply_sql = (
@@ -864,13 +878,13 @@ class Store:
             "THEN 1 ELSE 0 END),0) AS urgent, "
             f"COALESCE(SUM(CASE WHEN {needs_reply_sql} THEN 1 ELSE 0 END),0) AS needs_reply, "
             f"COALESCE(SUM(CASE WHEN ({needs_reply_sql}) OR m.quarantined=1 "
-            "OR m.screening_status IN ('POTENTIAL_SPAM','POTENTIAL_ISSUE') "
+            f"OR {_QUESTIONABLE_SQL} "
             "OR COALESCE(d.state,'') IN ('PENDING','BLOCKED','DEFERRED_NO_LLM') "
             "THEN 1 ELSE 0 END),0) AS needs_action, "
             "COALESCE(SUM(CASE WHEN m.quarantined=1 THEN 1 ELSE 0 END),0) AS quarantined, "
-            "COALESCE(SUM(CASE WHEN m.screening_status "
-            "IN ('POTENTIAL_SPAM','POTENTIAL_ISSUE') THEN 1 ELSE 0 END),0) AS questionable, "
-            "COALESCE(SUM(CASE WHEN m.screening_status='SPAM' THEN 1 ELSE 0 END),0) AS spam "
+            f"COALESCE(SUM(CASE WHEN {_QUESTIONABLE_SQL} THEN 1 ELSE 0 END),0) AS questionable, "
+            "COALESCE(SUM(CASE WHEN m.screening_status='SPAM' THEN 1 ELSE 0 END),0) AS spam, "
+            "COALESCE(SUM(CASE WHEN m.screening_status='FILED' THEN 1 ELSE 0 END),0) AS filed "
             "FROM accounts a "
             "LEFT JOIN messages m ON m.account_id=a.id AND m.archived=0 AND m.trashed=0 "
             "LEFT JOIN classifications c ON c.message_id=m.id "

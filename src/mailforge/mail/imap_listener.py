@@ -593,7 +593,7 @@ class IMAPListener:
         # It can use prior human examples but never calls a model or follows a
         # link. Questionable/spam messages are stored for the operator's safe local
         # review and withheld from every AI path downstream.
-        from ..security.inbound_screening import ScreeningResult, assess_inbound
+        from ..security.inbound_screening import ScreeningResult, ai_may_read, assess_inbound
 
         try:
             screening = assess_inbound(
@@ -657,7 +657,7 @@ class IMAPListener:
                 "Message %d QUARANTINED at ingest (%s) — no LLM/bridge access "
                 "until released in the UI.", message_pk, quarantine_reason,
             )
-        if screening.status in {"POTENTIAL_SPAM", "POTENTIAL_ISSUE", "SPAM"}:
+        if not ai_may_read(screening.status):
             log.info(
                 "Message %d screened %s (%s) — body withheld from AI.",
                 message_pk, screening.status, screening.reason,

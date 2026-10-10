@@ -21,6 +21,7 @@ from .agent.revisions import revise_draft
 from .config import load_settings
 from .db.store import open_store, validate_site_id
 from .llm.bridge import LMStudioBridge
+from .security.inbound_screening import ai_may_read
 
 OPS = frozenset(
     {
@@ -110,9 +111,7 @@ def _message_json(row: Any, *, full: bool = False) -> dict[str, Any]:
     # Header fields are attacker-controlled and travel outside the body's
     # untrusted framing: one line, no brackets/control chars, bounded — and
     # shorter still for mail whose body is withheld.
-    withheld = _row_quarantined(row) or _row_screening_status(row) in {
-        "POTENTIAL_SPAM", "POTENTIAL_ISSUE", "SPAM"
-    }
+    withheld = _row_quarantined(row) or not ai_may_read(_row_screening_status(row))
     meta_limit = 80 if withheld else 200
     result = {
         "id": int(row["id"]),
@@ -138,7 +137,7 @@ def _message_json(row: Any, *, full: bool = False) -> dict[str, Any]:
             "A human must review and release it in the local approval UI."
         )
         return result
-    if _row_screening_status(row) in {"POTENTIAL_SPAM", "POTENTIAL_ISSUE", "SPAM"}:
+    if not ai_may_read(_row_screening_status(row)):
         result["body_withheld"] = (
             "Body withheld by inbound screening. A human must review the sanitized "
             "message locally and mark it content-related before any agent may read it."
@@ -166,9 +165,7 @@ async def _async_action(action: str, site: str, data: dict[str, Any], store: Any
                 "must release it in the local UI before AI work is allowed"
             )
         message = store.get_message(message_id)
-        if message is not None and _row_screening_status(message) in {
-            "POTENTIAL_SPAM", "POTENTIAL_ISSUE", "SPAM"
-        }:
+        if message is not None and not ai_may_read(_row_screening_status(message)):
             raise BridgeInputError(
                 "message is withheld by inbound screening; a human must review it in "
                 "the local UI and mark it content-related before AI work"
@@ -325,9 +322,7 @@ def _prepare_send(data: dict[str, Any], site: str, store: Any, settings: Any) ->
         raise BridgeInputError("source message is quarantined; release it in the UI first")
     if draft["message_id"] is not None:
         source = store.get_message(int(draft["message_id"]))
-        if source is not None and _row_screening_status(source) in {
-            "POTENTIAL_SPAM", "POTENTIAL_ISSUE", "SPAM"
-        }:
+        if source is not None and not ai_may_read(_row_screening_status(source)):
             raise BridgeInputError(
                 "source message is withheld by inbound screening; mark it content-related first"
             )
@@ -414,9 +409,7 @@ def _do_agent_send(data: dict[str, Any], site: str, store: Any, settings: Any) -
                 "source message is quarantined; authorization not consumed"
             )
         source = store.get_message(int(draft["message_id"]))
-        if source is not None and _row_screening_status(source) in {
-            "POTENTIAL_SPAM", "POTENTIAL_ISSUE", "SPAM"
-        }:
+        if source is not None and not ai_may_read(_row_screening_status(source)):
             raise BridgeInputError(
                 "source message is withheld by inbound screening; authorization not consumed"
             )

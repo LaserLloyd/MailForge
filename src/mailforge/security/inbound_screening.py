@@ -14,11 +14,43 @@ import re
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+#: Every status a message may carry. ``FILED`` is mail a deterministic
+#: category rule sorted into its own bucket (e.g. GitHub notifications): it is
+#: withheld from AI like spam, but it is not "questionable" and is not spam.
 SCREENING_STATUSES = frozenset(
-    {"UNSCREENED", "CONTENT", "POTENTIAL_SPAM", "POTENTIAL_ISSUE", "SPAM"}
+    {"UNSCREENED", "CONTENT", "POTENTIAL_SPAM", "POTENTIAL_ISSUE", "SPAM", "FILED"}
 )
 QUESTIONABLE_STATUSES = frozenset({"POTENTIAL_SPAM", "POTENTIAL_ISSUE"})
-AI_WITHHELD_STATUSES = frozenset({"POTENTIAL_SPAM", "POTENTIAL_ISSUE", "SPAM"})
+#: The ONLY statuses whose bodies an LLM, agent or bridge caller may read.
+#: Gates test membership in this allowlist (see :func:`ai_may_read`), so a
+#: status added later is withheld until someone deliberately allows it.
+AI_READABLE_STATUSES = frozenset({"UNSCREENED", "CONTENT"})
+AI_WITHHELD_STATUSES = SCREENING_STATUSES - AI_READABLE_STATUSES
+#: Statuses kept out of the default Inbox listing and its counts.
+INBOX_HIDDEN_STATUSES = frozenset({"SPAM", "FILED"})
+
+
+def normalize_status(status: Any) -> str:
+    """Upper-cased status; NULL/empty is the schema default ``UNSCREENED``."""
+    value = str(status if status is not None else "").strip().upper()
+    return value or "UNSCREENED"
+
+
+def ai_may_read(status: Any) -> bool:
+    """Fail-closed AI gate: True only for an explicitly AI-readable status."""
+    return normalize_status(status) in AI_READABLE_STATUSES
+
+
+def sql_status_list(statuses: Iterable[str]) -> str:
+    """``'A','B'`` for an SQL ``IN`` list built from the constants above.
+
+    Only ever called with this module's fixed status sets (validated to be
+    plain upper-case identifiers), never with user input.
+    """
+    values = sorted(statuses)
+    if not all(re.fullmatch(r"[A-Z_]+", v) for v in values):
+        raise ValueError("status lists must be fixed identifiers")
+    return ",".join(f"'{v}'" for v in values)
 
 _SUBJECT_PREFIX = re.compile(r"^\s*(?:re|fwd?|aw|wg)\s*:\s*", re.IGNORECASE)
 _VARIABLE = re.compile(r"\b(?:\d[\d.,:/_-]*|[a-f0-9]{12,})\b", re.IGNORECASE)

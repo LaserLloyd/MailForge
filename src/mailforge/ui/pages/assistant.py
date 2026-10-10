@@ -10,6 +10,7 @@ from typing import Any
 from nicegui import context, ui
 
 from ...security import run_output_guardrails
+from ...security.inbound_screening import ai_may_read
 from ..markdown import safe_markdown
 
 log = logging.getLogger(__name__)
@@ -320,9 +321,7 @@ def render_drawer(
                         "you release it from the Inbox.", type="negative", timeout=8000,
                     )
                     return
-                if str(_value(message, "screening_status", "UNSCREENED")).upper() in {
-                    "POTENTIAL_SPAM", "POTENTIAL_ISSUE", "SPAM"
-                }:
+                if not ai_may_read(_value(message, "screening_status", "UNSCREENED")):
                     ui.notify(
                         "Inbound screening is withholding this message from AI. "
                         "Mark it content-related first.",

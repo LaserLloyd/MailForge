@@ -25,6 +25,7 @@ from ..config import Settings
 from ..db.store import Store
 from ..mail.normalize import spotlight_wrap
 from ..security import run_output_guardrails, score_injection
+from ..security.inbound_screening import ai_may_read
 from . import tools, worker
 from .planner import SymbolicRefs, freeze_plan
 
@@ -152,7 +153,7 @@ class AgentGraph:
         # injection quarantine. Questionable/spam mail remains available only
         # to the operator's sanitized local reader until it is marked content-related.
         screening_status = str(msg["screening_status"] or "UNSCREENED").upper()
-        if screening_status in {"POTENTIAL_SPAM", "POTENTIAL_ISSUE", "SPAM"}:
+        if not ai_may_read(screening_status):
             self.audit.block(
                 {
                     "reason": "inbound_screening",

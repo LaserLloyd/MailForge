@@ -36,6 +36,7 @@ from nicegui import run, ui
 
 from ...mail.markdown import markdown_to_safe_html
 from ...security import run_output_guardrails
+from ...security.inbound_screening import ai_may_read
 from .. import theme
 from .. import markdown as markdown_ui
 from ..interrupt import ApprovalRecord
@@ -151,11 +152,9 @@ def _do_send(store: object, settings: object, draft: Any, body: str, approval: A
             raise PermissionError("Send blocked: source message is quarantined")
         get_message = getattr(store, "get_message", None)
         source = get_message(int(draft["message_id"])) if callable(get_message) else None
-        if source is not None and str(
-            _value(source, "screening_status", "UNSCREENED") or "UNSCREENED"
-        ).upper() in {
-            "POTENTIAL_SPAM", "POTENTIAL_ISSUE", "SPAM"
-        }:
+        if source is not None and not ai_may_read(
+            _value(source, "screening_status", "UNSCREENED")
+        ):
             raise PermissionError(
                 "Send blocked: source message is withheld by inbound screening"
             )
@@ -314,8 +313,7 @@ def render(
         orig is not None
         and (
             bool(orig["quarantined"])
-            or str(orig["screening_status"] or "").upper()
-            in {"POTENTIAL_SPAM", "POTENTIAL_ISSUE", "SPAM"}
+            or not ai_may_read(orig["screening_status"])
         )
     )
 

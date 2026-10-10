@@ -15,6 +15,7 @@ from urllib.parse import urlencode
 
 from nicegui import ui
 
+from ...security.inbound_screening import ai_may_read
 from .. import theme
 from .mail import RangeSelection, _shift_held, _short_time, _snippet
 
@@ -298,9 +299,7 @@ def _message_row(
                     style="color: var(--text-secondary); font-size: 13px",
                 )
                 snippet = _snippet(_value(row, "sanitized_text"), 90)
-                withheld = str(
-                    _value(row, "screening_status", "UNSCREENED") or "UNSCREENED"
-                ).upper() in {"POTENTIAL_SPAM", "POTENTIAL_ISSUE", "SPAM"}
+                withheld = not ai_may_read(_value(row, "screening_status", "UNSCREENED"))
                 if snippet and not _value(row, "quarantined", 0) and not withheld:
                     ui.label(snippet).classes("bb-clip-1").style(
                         "font-size: 11.5px; color: var(--text-tertiary)"

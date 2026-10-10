@@ -508,6 +508,7 @@ def screening_badge(status: Any) -> ui.html | None:
         "POTENTIAL_SPAM": ("POTENTIAL SPAM", "warning"),
         "POTENTIAL_ISSUE": ("POTENTIAL ISSUE", "error"),
         "SPAM": ("SPAM", "error"),
+        "FILED": ("FILED", "accent"),
     }
     item = labels.get(value)
     return badge(*item) if item else None

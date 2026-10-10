@@ -13,6 +13,7 @@ from nicegui import run, ui
 
 from ...mail.markdown import markdown_to_safe_html
 from ...response_templates import expand_template
+from ...security.inbound_screening import ai_may_read
 from .. import theme
 from ..markdown import safe_markdown
 
@@ -302,9 +303,9 @@ def render(
         )
     prefill_body = template_body
     if saved is None and replied is not None and not template_body:
-        withheld = bool(_value(replied, "quarantined", 0)) or str(
-            _value(replied, "screening_status", "") or ""
-        ).upper() in {"POTENTIAL_SPAM", "POTENTIAL_ISSUE", "SPAM"}
+        withheld = bool(_value(replied, "quarantined", 0)) or not ai_may_read(
+            _value(replied, "screening_status", "")
+        )
         if not withheld:
             prefill_body = quoted_reply_body(
                 str(_value(replied, "from_name") or _value(replied, "from_addr") or "they"),
