@@ -25,7 +25,8 @@ source file or test, that is the signal it belongs in config instead.
 
 Anything published from this repository is checked by
 `scripts/scrub_check.py` (the same scanner the hooks and CI run) before it
-ships. The contract it enforces is the one stated above: examples and fixtures use documentation
+ships. The scanner, the hooks and the CI workflow live in the git repository;
+the downloadable archive leaves them out. The contract it enforces is the one stated above: examples and fixtures use documentation
 namespaces (`example.com`, `example.net`, `.test`, `.invalid`), people are
 `Alex Example` / `Sam Rivera`, organisations are `Northwind Studio` /
 `Acme Workshop`, sites are `main` / `shop` / `studio`, hosts are
