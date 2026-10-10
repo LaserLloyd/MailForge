@@ -24,6 +24,7 @@ import hashlib
 import logging
 import os
 import re
+import sqlite3
 import ssl
 import stat
 import threading
@@ -516,10 +517,14 @@ class IMAPListener:
                     if self._ingest_one(msg, folder, notify=True):
                         inserted += 1
                     failures.pop((folder, str(msg.uid)), None)
-                except Exception:  # noqa: BLE001 — one bad message must not kill the loop
+                except Exception as e:  # noqa: BLE001 — one bad message must not kill the loop
                     key = (folder, str(msg.uid))
-                    failures[key] = failures.get(key, 0) + 1
-                    if failures[key] >= MAX_INGEST_ATTEMPTS:
+                    # A locked/busy database or full disk is the store's
+                    # problem, not this message's: never count it towards
+                    # skipping (that would drop mail for good).
+                    if not isinstance(e, (sqlite3.OperationalError, OSError)):
+                        failures[key] = failures.get(key, 0) + 1
+                    if failures.get(key, 0) >= MAX_INGEST_ATTEMPTS:
                         # A deterministic failure (bad MIME, a parser crash)
                         # would otherwise pin the cursor and refetch this
                         # chunk every 30 s forever, starving later mail.

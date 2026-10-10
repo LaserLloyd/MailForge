@@ -163,6 +163,24 @@ def test_a_poison_uid_is_skipped_after_repeated_failures(monkeypatch):
     assert store.cursor == 3  # skipped, later mail no longer blocked
 
 
+def test_a_locked_database_never_counts_towards_skipping(monkeypatch):
+    import sqlite3
+
+    store = _CursorStore(cursor=0)
+    lst = _listener(store)
+
+    def ingest(msg, folder, notify=True):
+        if int(msg.uid) == 2:
+            raise sqlite3.OperationalError("database is locked")
+        return True
+
+    lst._ingest_one = ingest
+    mailbox = _Mailbox([1, 2, 3])
+    for _ in range(imap_listener.MAX_INGEST_ATTEMPTS * 2):
+        lst._ingest_missing(mailbox, "INBOX")
+        assert store.cursor in (None, 0)  # transient: keep retrying, never drop
+
+
 def test_a_not_null_violation_is_not_mistaken_for_a_duplicate(tmp_path):
     import sqlite3
 
