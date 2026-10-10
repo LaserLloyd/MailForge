@@ -376,7 +376,7 @@ def _box(
 
 def render(store: object, settings: object, account: str = "") -> None:
     """Spam & Deletion: three screening boxes plus the scheduled-deletion queue."""
-    from ...mail.retention import delete_mode, purge_now, retention_days
+    from ...mail.retention import delete_mode, purge_now_isolated, retention_days
 
     accounts = [a.name for a in (getattr(settings, "imap_accounts", []) or [])]
     account = account if account in accounts else ""
@@ -423,7 +423,7 @@ def render(store: object, settings: object, account: str = "") -> None:
             timeout=None,
         )
         try:
-            report = await asyncio.to_thread(purge_now, store, settings, ids)
+            report = await asyncio.to_thread(purge_now_isolated, store, settings, ids)
         except Exception as e:  # noqa: BLE001
             ui.notify(f"Delete failed: {e}", type="negative")
             return

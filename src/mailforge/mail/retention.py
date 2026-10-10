@@ -206,3 +206,40 @@ def sweep(store: Store, settings: Settings) -> PurgeReport:
     except Exception:  # noqa: BLE001
         log.exception("audit append failed for retention sweep")
     return report
+
+
+def _private_store(store: Store) -> Store | None:
+    """A fresh connection to the same database, or None if there is none.
+
+    sqlite3 keeps one transaction per *connection*: a worker thread sharing
+    the UI's connection can commit — or roll back — the UI's half-finished
+    write. Blocking purges therefore run on their own connection.
+    """
+    path = getattr(store, "db_path", None)
+    if not path:
+        return None
+    from ..db.store import open_store
+
+    return open_store(path, init=False)
+
+
+def purge_now_isolated(store: Store, settings: Settings, message_ids: list[int]) -> PurgeReport:
+    """:func:`purge_now` on a private connection — use from worker threads."""
+    own = _private_store(store)
+    if own is None:
+        return purge_now(store, settings, message_ids)
+    try:
+        return purge_now(own, settings, message_ids)
+    finally:
+        own.close()
+
+
+def sweep_isolated(store: Store, settings: Settings) -> PurgeReport:
+    """:func:`sweep` on a private connection — use from worker threads."""
+    own = _private_store(store)
+    if own is None:
+        return sweep(store, settings)
+    try:
+        return sweep(own, settings)
+    finally:
+        own.close()

@@ -60,12 +60,29 @@ class AnomalyMonitor:
         """Launch the monitor in a background daemon thread."""
         if self._thread and self._thread.is_alive():
             return
+        self.seed_seen_sends()
         self._stop.clear()
         self._thread = threading.Thread(
             target=self._run, name="openclaw-anomaly-monitor", daemon=True
         )
         self._thread.start()
         log.info("Anomaly monitor started (poll=%.0fs)", self.poll_interval_s)
+
+    def seed_seen_sends(self) -> None:
+        """Treat sends older than the window as already reported.
+
+        The seen-set is in memory, so without this every restart re-announced
+        the same old send as a new anomaly — which teaches the operator to
+        ignore the real ones.
+        """
+        try:
+            rows = self.store.conn.execute(
+                "SELECT id FROM drafts WHERE state='SENT' "
+                f"AND datetime(COALESCE(sent_at, updated_at)) < {self._window_clause()}"
+            ).fetchall()
+            self._seen_send_ids.update(int(r["id"]) for r in rows)
+        except Exception as e:  # noqa: BLE001
+            log.debug("could not seed sent drafts: %s", e)
 
     def stop(self, timeout: float | None = 5.0) -> None:
         """Signal the loop to exit and join the thread."""
@@ -102,7 +119,7 @@ class AnomalyMonitor:
     def _check_blocked_spike(self) -> list[str]:
         row = self.store.conn.execute(
             "SELECT COUNT(*) AS n FROM drafts "
-            f"WHERE state='BLOCKED' AND updated_at >= {self._window_clause()}"
+            f"WHERE state='BLOCKED' AND datetime(updated_at) >= {self._window_clause()}"
         ).fetchone()
         n = row["n"] if row else 0
         if n >= self.blocked_spike_threshold:
@@ -116,7 +133,7 @@ class AnomalyMonitor:
         row = self.store.conn.execute(
             "SELECT COUNT(*) AS n FROM classifications "
             "WHERE injection_risk >= ? "
-            f"AND classified_at >= {self._window_clause()}",
+            f"AND datetime(classified_at) >= {self._window_clause()}",
             (self.high_injection_threshold,),
         ).fetchone()
         n = row["n"] if row else 0

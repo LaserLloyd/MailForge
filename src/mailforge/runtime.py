@@ -103,7 +103,9 @@ def run_serve(start_ui: bool = True, ui_port: int | None = None) -> None:
         )
         listeners.append(listener)
 
-    monitor = AnomalyMonitor(store)
+    # The monitor polls from its own thread: give it its own connection so it
+    # can never commit or roll back the UI/graph connection's transaction.
+    monitor = AnomalyMonitor(open_store(db_path, init=False))
 
     async def _resume_deferred() -> None:
         # Startup recovery can take longer than the periodic retry interval.
@@ -125,7 +127,10 @@ def run_serve(start_ui: bool = True, ui_port: int | None = None) -> None:
             await asyncio.sleep(DEFERRED_RETRY_INTERVAL_S)
             if stop_event.is_set():
                 return
-            await _resume_deferred()
+            try:
+                await _resume_deferred()
+            except Exception:  # noqa: BLE001 — one bad pass must not end the task
+                log.exception("Deferred-draft resume pass failed")
 
     async def _consumer() -> None:
         loop = asyncio.get_running_loop()
@@ -144,9 +149,12 @@ def run_serve(start_ui: bool = True, ui_port: int | None = None) -> None:
                 log.debug("model resolution skipped: %s", e)
             if getattr(bridge, "has_heavy", False):
                 log.info("OpenClaw heavy-lift link active: %s", bridge.heavy_base_url)
-        for mid in store.unprocessed_message_ids(limit=200):
-            work_q.put(mid)
-        await _resume_deferred()
+        try:
+            for mid in store.unprocessed_message_ids(limit=200):
+                work_q.put(mid)
+            await _resume_deferred()
+        except Exception:  # noqa: BLE001 — never let startup recovery kill triage
+            log.exception("Startup triage recovery failed; continuing with live mail")
         while not stop_event.is_set():
             try:
                 mid = await loop.run_in_executor(None, work_q.get)
@@ -165,11 +173,11 @@ def run_serve(start_ui: bool = True, ui_port: int | None = None) -> None:
         Runs off the event loop — a sweep logs into every mailbox it has work
         for, and that must never stall the UI or the listeners.
         """
-        from .mail.retention import SWEEP_INTERVAL_S, sweep
+        from .mail.retention import SWEEP_INTERVAL_S, sweep_isolated
 
         while not stop_event.is_set():
             try:
-                report = await asyncio.to_thread(sweep, store, settings)
+                report = await asyncio.to_thread(sweep_isolated, store, settings)
                 if report.requested:
                     log.info("Retention sweep: %s", report.summary())
             except Exception as e:  # noqa: BLE001

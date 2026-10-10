@@ -1130,7 +1130,7 @@ def render(
         Irreversible, and it reaches the provider, so it asks first — the rest of
         the bulk actions are all undoable and deliberately do not.
         """
-        from ...mail.retention import purge_now
+        from ...mail.retention import purge_now_isolated
 
         message_ids = selection.ids
         if not message_ids:
@@ -1158,7 +1158,7 @@ def render(
             timeout=None,
         )
         try:
-            report = await asyncio.to_thread(purge_now, store, settings, message_ids)
+            report = await asyncio.to_thread(purge_now_isolated, store, settings, message_ids)
         except Exception as e:  # noqa: BLE001
             ui.notify(f"Delete failed: {e}", type="negative")
             return

@@ -483,3 +483,26 @@ def test_lmstudio_health_falls_back_to_openai_api_when_sdk_rejects_remote_host(
     )
     bridge = LMStudioBridge("203.0.113.2:1234", "chat", "embed")
     assert bridge.is_up() is True
+
+
+def test_anomaly_monitor_does_not_re_report_old_sends_after_restart(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    from mailforge.audit.monitor import AnomalyMonitor
+    from mailforge.db.store import open_store
+
+    store = open_store(tmp_path / "m.db")
+    old = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+    new = datetime.now(timezone.utc).isoformat()
+    store.conn.execute("PRAGMA foreign_keys=OFF")
+    for did, when in ((1, old), (2, new)):
+        store.conn.execute(
+            "INSERT INTO drafts(id,message_id,thread_id,state,recipient,created_at,updated_at,"
+            "sent_at) VALUES(?,NULL,'t',?,?,?,?,?)",
+            (did, "SENT", f"x{did}@unlisted.example", when, when, when),
+        )
+    store.conn.commit()
+    monitor = AnomalyMonitor(store)
+    monitor.seed_seen_sends()
+    findings = monitor._check_first_time_external_sends()
+    assert len(findings) == 1 and "draft 2" in findings[0]
