@@ -65,6 +65,20 @@ Notes:
 
 ---
 
+## `llm.lm_studio_host` is a generic key, not literally LM Studio
+
+`[llm] lm_studio_host` (and `LMStudioBridge`, the code path it feeds) predates
+the OpenAI-compatible `/chat/completions` contract becoming the common
+denominator across local inference servers. The value can be any
+OpenAI-compatible chat-completions endpoint; do not assume it runs LM Studio.
+
+`LMStudioBridge._post_chat` therefore sends an identity header
+(`X-SF-Client: mailforge`) and a scheduling hint (`priority: 2`) on every chat
+request. A plain LM Studio backend ignores both; a backend with request-tier
+scheduling uses them to tell its co-tenants apart.
+
+---
+
 ## Tests and lint
 
 ```bash

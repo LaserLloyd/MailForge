@@ -315,15 +315,26 @@ class LMStudioBridge:
         path (which differs only in URL, model, and a Bearer key). Returns the
         assistant content, or ``""`` on any failure (sentinel → caller defers
         or falls back).
+
+        ``lm_studio_host`` in config.toml can point at a different
+        OpenAI-compatible backend entirely, not literally LM Studio (see
+        docs/MAINTAINERS.md), so every call here declares itself and its
+        tier: ``X-SF-Client: mailforge`` and ``priority: 2`` (a dispatched
+        agent's model, never a person waiting — tier 1 is reserved for that).
+        Harmless extra fields for a plain LM Studio backend; load-bearing
+        for one that supports request-tier scheduling.
         """
         payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
             "temperature": temperature,
+            "priority": 2,
         }
         if response_format is not None:
             payload["response_format"] = response_format
-        headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
+        headers: dict[str, str] = {"X-SF-Client": "mailforge"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as c:
                 r = await c.post(
