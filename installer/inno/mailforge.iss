@@ -12,7 +12,7 @@
 ; (spec §10). The PyInstaller exe inside should be signed too.
 
 #define MyAppName "MailForge"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.5.0"
 #define MyAppPublisher "MailForge"
 #define MyAppExeName "mailforge.exe"
 #define ServiceId "mailforge"

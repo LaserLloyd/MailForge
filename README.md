@@ -1,5 +1,7 @@
 # MailForge
 
+Local-LLM email assistant that triages, screens and drafts — and never auto-sends. Rule-of-Two security, IMAP across multiple mailboxes, inbound spam and phishing screening, a two-stage deletion policy that reaches the mail server, and sqlite-vec RAG over your own mail.
+
 A **self-contained, cross-platform (Linux + Windows) local-LLM email assistant**.
 It watches your mailbox, screens and classifies what arrives, and writes *draft*
 replies with a model running on **your own machine** — then waits for you to
@@ -100,9 +102,15 @@ mailforge service install
 ```powershell
 irm https://astral.sh/uv/install.ps1 | iex
 uv tool install .
-mailforge service install        # installs a Windows service via WinSW
 mailforge setup-wizard
+mailforge service install        # installs a Windows service via WinSW
 ```
+
+The Windows service needs the third-party `WinSW-x64.exe`, which is not
+committed here; vendor it first as described in
+[`installer/winsw/README.md`](installer/winsw/README.md). Without it
+`service install` writes the descriptor and tells you where the binary is
+expected, but installs nothing.
 
 Then open the `http://127.0.0.1:<port>/?token=…` URL it prints — the token is
 one-shot and upgrades to a signed session cookie. Review each draft and
@@ -133,17 +141,19 @@ uv run ruff check src tests scripts   # lint
 | `mailforge demo` | Throwaway install seeded with fictional mail — nothing real is touched |
 | `mailforge setup-wizard` | Interactive account / credential / config / DB setup |
 | `mailforge account-add` | Add another mailbox without replacing existing configuration |
-| `mailforge account-list` / `account-remove` | Inspect / detach mailboxes (history is kept) |
+| `mailforge account-list` / `account-remove <name>` | Inspect / detach mailboxes (history is kept) |
 | `mailforge serve` | Run the listener + agent + web UI |
 | `mailforge serve --no-ui` | Headless (e.g. under the service) |
-| `mailforge open` | Open an authenticated browser session to the running UI |
+| `mailforge open` | Start the background service if needed, then open an authenticated browser session |
 | `mailforge ingest` | Embed your style guides / context docs for retrieval |
 | `mailforge references-refresh` | Rebuild the managed per-site knowledge handbooks |
 | `mailforge bridge <action> --site <id>` | Site-bound JSON stdin/stdout bridge for a local agent |
-| `mailforge purge-trash` | Report the deletion queue; `--yes` runs the sweep now |
+| `mailforge purge-trash` | Report the deletion queue; `--yes` runs the sweep now (`--now` ignores the holding period) |
+| `mailforge rescreen [--site <id>] [--apply]` | Re-apply spam screening and category rules (e.g. GitHub) to stored mail; dry run by default |
 | `mailforge audit-verify` | Verify the audit hash chain is intact |
 | `mailforge service install\|start\|stop\|desktop` | Manage the background service / launcher |
 | `mailforge redteam` | Run offline red-team suites (garak / promptfoo) |
+| `mailforge version` | Print the installed version |
 
 ### Demo mode
 
@@ -168,7 +178,7 @@ new mail (IMAP IDLE)
   → spotlight-wrap (untrusted = data, never instructions)
   → plan freeze (policy + symbolic facts only — never raw content)
   → classify (typed category)
-  → retrieve same-thread context
+  → retrieve context (site-scoped: style guides, context docs, Knowledge library)
   → draft reply (recipient bound to the thread)
   → output guardrails (PII / secrets / URLs / toxicity / cross-thread / policy)
        PASS → PENDING  →  you Approve/Edit/Reject in the UI  →  SMTP send
@@ -211,10 +221,20 @@ component conventions live in **`docs/STYLE-GUIDE.md`**):
   A delete here skips the holding period and, unless `server_delete_mode` is
   `off`, removes the provider's copy too; if the mail server refuses or cannot
   be reached, the page says so and the next sweep retries.
+- **Categories** — `[[category_rules]]` in `config.toml` file notification
+  mail by sender (GitHub by default) into its own View/Tag entry, out of the
+  Inbox and away from every model, with a "Delete all" action. Security and
+  account notices (new keys, tokens, sign-ins) are never filed; they stay
+  visible for review.
+- **Outbox** — every outgoing message in one list: drafts an agent staged for
+  approval and mail that was actually transmitted. Each row carries exactly one
+  status (*not sent — awaiting approval*, *expired*, *sent*, *failed*, or an
+  explicit "result unknown"); none of the uncertain states ever reads as sent.
+  The page has no send control of its own.
 - **AI response workshop** — a right-side chat drawer: ask for a first response,
   give feedback ("shorter", "warmer"), review revisions, apply one explicitly.
   Applying never sends, and the applied text is re-checked by the guardrails.
-- **Reference Library** — upload TXT / Markdown / PDF / DOCX per site.
+- **Knowledge** (reference library) — upload TXT / Markdown / PDF / DOCX per site.
   Retrieval is bound to the receiving mailbox's persisted site, never to
   addresses or instructions inside an email.
 - **Templates** — per-site response templates with a small, validated
@@ -360,7 +380,8 @@ fully functional on your local LLM server. When one is present:
   and on any error it falls back to the local model.
 - **The bridge** — `mailforge bridge <action> --site <id>` speaks JSON on
   stdin/stdout: `status`, `list`, `get`, `propose`, `revise`, `daily-brief`,
-  `weekly-summary`, `reference-search`, `notes`, `note-add`. Quarantined and
+  `weekly-summary`, `reference-search`, `notes`, `note-add` (plus
+  `prepare-send` / `send`, below). Quarantined and
   screened-out messages are **metadata only**; eligible bodies come wrapped in
   explicit untrusted-content markers with a content-policy field. There is no
   delete, archive, move, forward, credential, filesystem or shell tool.
@@ -375,12 +396,14 @@ fully functional on your local LLM server. When one is present:
 
 ## Architecture
 
-`src/mailforge/`: `config.py`/`secrets.py` (settings + keyring), `db/`
+`src/mailforge/`: `config.py`/`secrets.py` (settings + keyring),
+`accounts.py` (the single add/remove-mailbox path), `db/`
 (schema + the only place SQL lives), `mail/` (IMAP/SMTP, sanitize, normalize),
 `llm/` (bridge + structured output), `rag/` (chunk/embed/retrieve), `agent/`
 (deterministic graph, planner, quarantined worker, restricted tools),
 `security/` (the guardrail stack), `ui/` (NiceGUI app), `audit/` (hash-chain log
-+ anomaly monitor), `service/` (systemd + WinSW), `demo.py` (demo dataset).
++ anomaly monitor), `knowledge/` (per-site handbooks), `bridge_cli.py` (the
+agent bridge), `service/` (systemd + WinSW), `demo.py` (demo dataset).
 
 Paths resolve per-OS through `platformdirs`, so the same build behaves correctly
 on Linux and Windows. `packaging/pyinstaller.spec` (folder mode, never one-file)
@@ -400,6 +423,10 @@ installer for machines with no Python.
   requires an explicit human confirmation round-trip.
 - Attachments are stored and downloadable but are never read by any model.
 - Threading is heuristic (`In-Reply-To`/`References`, then normalized subject).
+- **Retrieval covers your documents, not yet past mail.** The vector store and
+  its thread-scoped search are in place, but nothing indexes thread history
+  yet, so drafts draw on the site's style guides, context docs and Knowledge
+  library only.
 
 ---
 
