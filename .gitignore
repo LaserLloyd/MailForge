@@ -55,3 +55,4 @@ ui_storage_secret
 CLAUDE.md
 CLAUDE.local.md
 memory/
+pytest-results.xml

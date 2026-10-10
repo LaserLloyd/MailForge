@@ -82,4 +82,10 @@ jobs:
         run: uv run ruff check .
 
       - name: Tests
-        run: uv run pytest -q
+        run: uv run pytest -q --junitxml=pytest-results.xml
+
+      - name: Annotate test failures
+        # Job logs need a signed-in browser or a token; annotations are on
+        # the public run page and API. One ::error line per failing test.
+        if: always()
+        run: python scripts/junit_annotations.py pytest-results.xml
