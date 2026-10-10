@@ -5,6 +5,20 @@ Published by Laser Lloyd — https://www.laserlloyd.com
 
 ## Unreleased
 
+### Added
+- **Stronger spam and phishing screening.** Scored rules on subject, sender
+  and provider authentication results file clear cold outreach and brand
+  impersonation as spam instead of leaving it in the Inbox as "potential
+  spam". Standard sites now get the forged-sender, phishing and learned-spam
+  checks too. Add your own providers to `[security].impersonated_brands`.
+- **Category rules** (`[[category_rules]]`, GitHub by default): notification
+  mail is filed into its own View/Tag entry, kept out of the Inbox and away
+  from every AI, with a "Delete all" action. Security and account notices are
+  never filed.
+- **`mailforge rescreen [--site ID] [--apply]`** re-applies screening and
+  category rules to stored mail (dry run by default; never overrides a human
+  decision or releases withheld mail to AI).
+
 ### Changed
 - **Renamed SiftForge to MailForge** (2026-08-27). The project, CLI, package,
   systemd unit, and every path moved to the new name: command `mailforge`,

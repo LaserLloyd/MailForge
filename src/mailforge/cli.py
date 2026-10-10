@@ -637,3 +637,82 @@ def purge_trash(
     for err in report.errors:
         typer.secho(f"  provider error — {err}", fg="red")
     raise typer.Exit(code=0 if report.ok else 1)
+
+
+@app.command("rescreen")
+def rescreen_command(
+    site: str = typer.Option("", "--site", help="Only this site id (default: every site)."),
+    apply: bool = typer.Option(
+        False, "--apply", help="Write the new screening. Without it this is a dry run."
+    ),
+    include_trashed: bool = typer.Option(
+        False, "--include-trashed", help="Also re-screen mail in local Trash (not purged mail)."
+    ),
+    db: str = typer.Option(
+        "", "--db", help="Use this database file instead of the configured one (e.g. a copy)."
+    ),
+    all_statuses: bool = typer.Option(
+        False,
+        "--all-statuses",
+        help="Also apply a site's catch-all verdicts (POTENTIAL_SPAM/ISSUE) to mail "
+        "that is currently AI-readable. Off by default.",
+    ),
+    show: int = typer.Option(40, "--show", help="List up to this many changed messages."),
+) -> None:
+    """Re-run spam screening and category rules (e.g. GitHub) over stored mail.
+
+    Use after updating MailForge or changing site vocabulary, category rules or
+    learned spam examples. Human decisions are never overridden, and mail that
+    is withheld from AI is never released to it here. Idempotent: a second
+    --apply changes nothing.
+    """
+    from pathlib import Path
+
+    from .config import load_settings
+    from .db.store import open_store
+    from .rescreen import rescreen
+
+    settings = load_settings()
+    path = Path(db).expanduser() if db else settings.resolved_db_path()
+    if not path.exists():
+        typer.secho(f"No database at {path}", fg="red")
+        raise typer.Exit(code=2)
+    store = open_store(path)
+    report = rescreen(
+        store, settings, site=site.strip().lower() or None, dry_run=not apply,
+        include_trashed=include_trashed, all_statuses=all_statuses,
+    )
+    typer.echo(f"Database: {path}")
+    typer.echo(f"Re-screened {report.examined} message(s) (human/model decisions skipped).")
+    statuses = sorted(set(report.before) | set(report.after))
+    typer.echo(f"  {'status':<16}{'before':>8}{'after':>8}")
+    for status in statuses:
+        typer.echo(f"  {status:<16}{report.before[status]:>8}{report.after[status]:>8}")
+    if report.categories:
+        typer.echo(
+            "Rule categories: "
+            + ", ".join(f"{k} {v}" for k, v in sorted(report.categories.items()))
+        )
+    for (before, after), n in sorted(report.transitions().items()):
+        typer.echo(f"  {before} -> {after}: {n}")
+    for change in report.changes[: max(0, show)]:
+        typer.echo(
+            f"  #{change.message_id:>6} {change.account:<12} {change.before} -> {change.after}"
+            f"  {change.from_addr[:40]}  {change.subject[:60]}"
+        )
+    if len(report.changes) > show:
+        typer.echo(f"  ... and {len(report.changes) - show} more")
+    if report.kept_readable:
+        typer.echo(
+            f"{len(report.kept_readable)} AI-readable message(s) matched only a catch-all "
+            "verdict; left unchanged (see --all-statuses)."
+        )
+    if report.kept_withheld:
+        typer.echo(
+            f"{len(report.kept_withheld)} withheld message(s) would now be AI-readable; "
+            "left withheld (mark them content-related in the UI if they are)."
+        )
+    if apply:
+        typer.secho("Applied." if report.applied else "Nothing to change.", fg="green")
+    else:
+        typer.secho("Dry run - pass --apply to write.", fg="yellow")
