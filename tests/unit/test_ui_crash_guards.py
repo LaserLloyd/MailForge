@@ -127,3 +127,57 @@ def test_dashboard_delete_notice_describes_retention():
 )
 def test_query_int_parsing_never_raises(raw, expected):
     assert ui_app._int_or_none(raw) == expected
+
+
+def _guard(port=8765):
+    captured = {}
+
+    class FakeApp:
+        def add_middleware(self, cls):
+            captured["cls"] = cls
+
+    import mailforge.ui.app as mod
+
+    orig = mod.nicegui_app
+    mod.nicegui_app = FakeApp()
+    try:
+        mod._install_host_guard(port)
+    finally:
+        mod.nicegui_app = orig
+    return captured["cls"]
+
+
+@pytest.mark.parametrize(
+    "kind,headers,allowed",
+    [
+        ("http", {"host": "127.0.0.1:8765"}, True),
+        ("http", {"host": "127.0.0.1:8765", "origin": "http://127.0.0.1:8765"}, True),
+        ("http", {"host": "127.0.0.1:8765", "origin": "https://evil.example"}, False),
+        ("http", {"host": "evil.example"}, False),
+        ("websocket", {"host": "localhost:8765", "origin": "http://localhost:8765"}, True),
+        ("websocket", {"host": "localhost:8765", "origin": "https://evil.example"}, False),
+    ],
+)
+def test_host_and_origin_guard(kind, headers, allowed):
+    import asyncio
+
+    calls = []
+
+    async def inner(scope, receive, send):
+        calls.append("app")
+
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    async def receive():
+        return {"type": "http.request"}
+
+    guard = _guard()(inner)
+    scope = {
+        "type": kind,
+        "headers": [(k.encode(), v.encode()) for k, v in headers.items()],
+    }
+    asyncio.run(guard(scope, receive, send))
+    assert (calls == ["app"]) is allowed

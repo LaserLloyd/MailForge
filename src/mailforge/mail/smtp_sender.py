@@ -13,7 +13,8 @@ SECURITY BOUNDARY — READ BEFORE IMPORTING.
     Do not register :func:`send_email` in ``agent/tools.py`` or expose it to any
     planner/worker. Doing so is a defect.
 
-Transport: STARTTLS on submission port; supports password and XOAUTH2 auth.
+Transport: STARTTLS on the submission port, or implicit TLS on 465; plaintext AUTH
+is refused except to a loopback relay. Supports password and XOAUTH2 auth.
 """
 
 from __future__ import annotations
@@ -28,6 +29,22 @@ from email.utils import make_msgid
 from pydantic import SecretStr
 
 from ..config import SMTPAccount
+
+
+#: Implicit-TLS submission port (RFC 8314): TLS from the first byte.
+SMTPS_PORT = 465
+
+
+def _is_loopback(host: str) -> bool:
+    import ipaddress
+
+    h = str(host or "").strip().strip("[]").lower()
+    if h == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(h).is_loopback
+    except ValueError:
+        return False
 
 
 @dataclass(frozen=True)
@@ -116,9 +133,22 @@ def send_email(
     )
 
     context = ssl.create_default_context()
-    with smtplib.SMTP(smtp_cfg.host, smtp_cfg.port, timeout=30) as server:
+    implicit_tls = int(smtp_cfg.port) == SMTPS_PORT
+    if not implicit_tls and not smtp_cfg.starttls and not _is_loopback(smtp_cfg.host):
+        # Without TLS, AUTH sends the password (or the XOAUTH2 bearer token)
+        # in the clear to anyone on the path.
+        raise RuntimeError(
+            "Refusing plaintext SMTP AUTH: enable STARTTLS or use port 465 (implicit TLS)."
+        )
+    if implicit_tls:
+        connection = smtplib.SMTP_SSL(smtp_cfg.host, smtp_cfg.port, timeout=30, context=context)
+    else:
+        connection = smtplib.SMTP(smtp_cfg.host, smtp_cfg.port, timeout=30)
+    with connection as server:
         server.ehlo()
-        if smtp_cfg.starttls:
+        if smtp_cfg.starttls and not implicit_tls:
+            # Raises SMTPNotSupportedError if the server does not offer it:
+            # fail closed rather than log in over plaintext.
             server.starttls(context=context)
             server.ehlo()
         try:

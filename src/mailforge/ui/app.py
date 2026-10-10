@@ -238,7 +238,7 @@ def allowed_hosts(port: int) -> set[str]:
 
 def _install_host_guard(port: int) -> None:
     """Reject any HTTP request OR WebSocket upgrade whose Host header is not
-    127.0.0.1:PORT / localhost:PORT (spec §0.7), and any WebSocket whose
+    127.0.0.1:PORT / localhost:PORT (spec §0.7), and any request whose
     Origin (when sent) is not one of ours.
 
     Written as a raw ASGI middleware on purpose: Starlette's
@@ -263,13 +263,18 @@ def _install_host_guard(port: int) -> None:
             host_ok = headers.get("host", "") in allowed
             origin = headers.get("origin")
             origin_ok = origin is None or origin in allowed_origins
-            if host_ok and (kind == "http" or origin_ok):
+            # Origin applies to plain HTTP too: socket.io's long-polling
+            # fallback and uploads are HTTP POSTs, and NiceGUI's socket.io
+            # server accepts any origin. Same-origin navigations send no
+            # Origin (or ours), so only cross-site requests are refused.
+            if host_ok and origin_ok:
                 await self.app(scope, receive, send)
                 return
             if kind == "http":
                 from starlette.responses import PlainTextResponse
 
-                resp = PlainTextResponse("Forbidden: bad Host header", status_code=403)
+                what = "Host header" if not host_ok else "Origin"
+                resp = PlainTextResponse(f"Forbidden: bad {what}", status_code=403)
                 await resp(scope, receive, send)
             else:
                 # Refuse the upgrade before the handshake completes.
