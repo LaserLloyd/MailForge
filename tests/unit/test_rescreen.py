@@ -168,3 +168,28 @@ def test_cli_dry_run_on_a_copy(tmp_path, monkeypatch):
         assert store.conn.execute("SELECT screening_status FROM messages").fetchone()[0] == (
             "POTENTIAL_SPAM"
         )
+
+
+def test_agency_category_rule_files_notices_but_leaves_human_replies(tmp_path):
+    from mailforge.config import CategoryRule
+
+    rule = CategoryRule(
+        name="agency", label="State agency", category="STATE_AGENCY",
+        from_domains=["agency.example"], sites=["main"],
+        subject_regex=r"(?i)^(?!\s*(re|fw|fwd)\s*:)",
+    )
+    settings = _settings().model_copy(update={"category_rules": [rule]})
+    with open_store(tmp_path / "r.db") as store:
+        receipt = _add(store, 1, "filings@agency.example", "Payment Receipt",
+                       status="UNSCREENED", site="main")
+        auto = _add(store, 2, "corps@agency.example", "Automatic reply: your request",
+                    status="UNSCREENED", site="main")
+        human = _add(store, 3, "corps@agency.example", "RE: your request",
+                     status="UNSCREENED", site="main")
+        other = _add(store, 4, "filings@agency.example", "Payment Receipt",
+                     status="UNSCREENED", site="shop")
+        rescreen(store, settings, dry_run=False)
+        assert _status(store, receipt)[0] == "FILED"
+        assert _status(store, auto)[0] == "FILED"
+        assert _status(store, human)[0] == "UNSCREENED"
+        assert _status(store, other)[0] == "UNSCREENED"  # rule is scoped to site main
