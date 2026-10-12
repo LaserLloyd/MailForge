@@ -614,6 +614,33 @@ def health_command(
     raise typer.Exit(code=0 if code == 200 else 1)
 
 
+@app.command("eval-screening")
+def eval_screening_command(
+    limit: int = typer.Option(200, "--limit", "-n", help="Replay the N most recent human labels."),
+    db: str = typer.Option("", "--db", help="Use this database file instead of the configured one."),
+) -> None:
+    """Replay human screening labels against today's screener (leave-one-out).
+
+    Read-only. Prints a confusion matrix and per-status precision/recall.
+    """
+    from pathlib import Path
+
+    from .config import load_settings
+    from .db.store import open_store
+    from .eval_screening import evaluate, format_report
+
+    settings = load_settings()
+    path = Path(db).expanduser() if db else settings.resolved_db_path()
+    if not path.exists():
+        typer.secho(f"No database at {path}", fg="red")
+        raise typer.Exit(code=2)
+    with open_store(path, init=False) as store:
+        report = evaluate(store, settings, limit=limit)
+    typer.echo(f"Database: {path}")
+    for line in format_report(report):
+        typer.echo(line)
+
+
 def main() -> None:
     try:
         app()
