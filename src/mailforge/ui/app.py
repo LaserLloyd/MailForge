@@ -583,6 +583,7 @@ def build_app(
 
     _install_host_guard(_PORT)
     _install_theme_files()
+    _register_health(store)
     _register_pages(store, settings, bridge)
 
     return {
@@ -592,6 +593,23 @@ def build_app(
         "storage_secret": storage_secret,
         "url": f"http://{host}:{_PORT}/?token={_LAUNCH_TOKEN}",
     }
+
+
+def _register_health(store: object) -> None:
+    """``GET /healthz``: JSON status for monitors. Deliberately outside
+    ``_gate`` (no session) but still behind the Host/Origin guard, so only
+    127.0.0.1:<ui_port> reaches it; it exposes no credentials or content."""
+    from starlette.responses import JSONResponse
+
+    from ..health import health_report
+
+    def _healthz() -> JSONResponse:
+        body, code = health_report(store)
+        return JSONResponse(body, status_code=code, headers={"Cache-Control": "no-store"})
+
+    # NiceGUI's app is a FastAPI instance; skip a duplicate on re-entry (tests).
+    if not any(getattr(r, "path", None) == "/healthz" for r in nicegui_app.routes):
+        nicegui_app.get("/healthz")(_healthz)
 
 
 def run_ui(

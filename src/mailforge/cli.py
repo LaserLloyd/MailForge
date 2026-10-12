@@ -578,6 +578,42 @@ def service_stop() -> None:
     typer.secho("Service stopped.", fg="green")
 
 
+@app.command("health")
+def health_command(
+    timeout: float = typer.Option(5.0, "--timeout", help="Seconds to wait for the service."),
+) -> None:
+    """Query the running service's /healthz and print it (exit 0 ok, 1 degraded, 2 unreachable)."""
+    import json
+    import urllib.error
+    import urllib.request
+
+    from .paths import runtime_file
+
+    port_file = runtime_file("ui_port")
+    try:
+        port = int(port_file.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        typer.secho("No ui_port recorded - has the service ever started?", fg="red")
+        raise typer.Exit(code=2) from None
+    url = f"http://127.0.0.1:{port}/healthz"
+    try:
+        # Direct opener: never route a loopback probe through a proxy.
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        try:
+            resp = opener.open(url, timeout=timeout)
+            code, raw = resp.status, resp.read()
+        except urllib.error.HTTPError as e:
+            code, raw = e.code, e.read()
+    except (OSError, urllib.error.URLError) as e:
+        typer.secho(f"MailForge service unreachable on 127.0.0.1:{port} ({e})", fg="red")
+        raise typer.Exit(code=2) from None
+    try:
+        typer.echo(json.dumps(json.loads(raw), indent=2, sort_keys=True))
+    except ValueError:
+        typer.echo(raw.decode("utf-8", "replace")[:500])
+    raise typer.Exit(code=0 if code == 200 else 1)
+
+
 def main() -> None:
     try:
         app()
