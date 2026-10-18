@@ -21,7 +21,24 @@ Published by Laser Lloyd — https://www.laserlloyd.com
 
 ### Fixed
 - `scripts/scrub_check.py` no longer reports the bundle's `files.json` sha256 table as
-  `secret-blob` (that one file, that one category; covered by a test).
+  `secret-blob` (that one file, that one category, and only 64-hex digests; any other
+  blob in it is still reported; covered by a test).
+- **Container: an `https://` `LLM_BASE_URL` stays https.** The entrypoint reduced it to a
+  bare `host:port`, so the bridge spoke plain HTTP and sent the API key in clear.
+- **Container: `docker compose exec` commands unlock the credential store** (they skip the
+  entrypoint; the keyring helper now reads `MAILFORGE_KEYRING_PASSWORD[_FILE]` itself). A wrong
+  password is a plain "did not unlock ... wrong password?" error, not a `MAC check failed`
+  traceback.
+- **Container: the `compose.puid.yml` override works for a PUID other than 1000** (setpriv
+  `--init-groups` aborted because the read-only image has no passwd entry for that UID).
+- `MAILFORGE_UI_ALLOWED_HOSTS` / `UI_EXTRA_HOSTS`: an entry on `:443`/`:80` also accepts the bare
+  name browsers send, so a TLS reverse proxy no longer gets 403 on every request.
+- The PyInstaller spec bundles `ui/static/` and `ui/forgeui.json` (the UI could not import
+  without the manifest); `[tool.uv] cache-keys` cover every package-data kind.
+- `mailforge llm-check` no longer prints OK when `/v1/models` lists no models or is not a model
+  list; a heavy-lift 401 names `openclaw.heavy_lift_key_env`, not the local key variable.
+- Tests: the hermetic socket guard now also covers asyncio on Windows (the proactor loop
+  bypassed it, so async HTTP clients could reach real ports).
 
 ## 0.6.0 — 2026-10-18
 
