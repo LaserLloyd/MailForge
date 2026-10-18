@@ -172,7 +172,18 @@ docker compose -f deploy/compose/compose.yml run --rm app account-list
 docker compose -f deploy/compose/compose.yml exec app mailforge health
 ```
 
-Details, credentials, upgrades and removal: [`docs/deploy/docker.md`](docs/deploy/docker.md).
+**Your data survives updates.** The mail database (with its sqlite-vec index), `config.toml` and the encrypted credential
+store live only in the `mailforge-data` volume (the image is read-only). `docker compose down` keeps it; **`down -v` deletes
+it**. Before a new image version first starts, the database, config and credential store are copied to `/data/backups/`
+(last 5 kept). Back up (app stopped; keep `MAILFORGE_KEYRING_PASSWORD` separately, it is not in the archive):
+
+```bash
+docker compose -f deploy/compose/compose.yml stop app
+docker run --rm -v mailforge_mailforge-data:/data:ro -v "$PWD":/backup alpine tar czf /backup/mailforge-data-$(date +%F).tgz -C /data .
+docker compose -f deploy/compose/compose.yml start app
+```
+
+Restore, bind-mount ownership (`PUID`/`PGID`), credentials and upgrades: [`docs/deploy/docker.md`](docs/deploy/docker.md).
 
 ## Commands
 

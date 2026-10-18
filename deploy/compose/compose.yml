@@ -26,7 +26,7 @@ services:
     hostname: mailforge
     restart: unless-stopped
     init: true                      # tini as PID 1: signal forwarding + zombie reaping
-    stop_grace_period: 30s
+    stop_grace_period: 60s          # lets uvicorn drain and SQLite checkpoint + close cleanly
 
     ports:
       # MailForge is a localhost-only app by design (one-shot login token, Host
@@ -51,6 +51,14 @@ services:
       # guard must be told, or every page answers 403.
       MAILFORGE_UI_ALLOWED_HOSTS: localhost:${HOST_PORT:-8090},127.0.0.1:${HOST_PORT:-8090}${UI_EXTRA_HOSTS:+,${UI_EXTRA_HOSTS}}
 
+    # Non-root by default. For a bind-mounted DATA_PATH owned by another UID see
+    # compose.puid.yml (starts as root only to chown, then drops to PUID:PGID).
+    user: "${RUN_AS:-1000:1000}"
+    # Everything stateful (SQLite DB, config, credentials) is on the /data
+    # volume; the image filesystem is read-only so a stray write fails loudly.
+    read_only: true
+    tmpfs:
+      - /tmp
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
@@ -85,4 +93,6 @@ services:
         max-file: "3"
 
 volumes:
+  # `docker compose down` keeps this volume; `down -v` DELETES the mail database,
+  # config and credential store.
   mailforge-data:

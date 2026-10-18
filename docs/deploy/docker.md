@@ -122,16 +122,85 @@ a fresh install with no mailbox. The image's `HEALTHCHECK` treats both as up
 and fails only when the server is unreachable or the database errors; use the
 JSON (`docker compose exec app mailforge health`) for per-mailbox monitoring.
 
-## Data, upgrades, removal
+## Your data, upgrades, backups
+
+**All state is in the `/data` volume** (`mailforge-data`, or the host directory in
+`DATA_PATH`): the SQLite database `data/agent.db` (mail, drafts, audit chain, and
+the sqlite-vec index), `config/config.toml`, and the encrypted credential store
+`xdg/python_keyring/cryptfile_pass.cfg`. Nothing stateful is written inside the
+image: its root filesystem is mounted read-only (`/tmp` is a tmpfs), so a stray
+write fails loudly instead of disappearing on the next update.
+
+| Command | Effect on your data |
+|---|---|
+| `docker compose ... down` | stops and removes the container; **the volume is kept** |
+| `docker compose ... down -v` | **also deletes the volume: mail database, config and stored mailbox credentials are gone** |
+| `docker compose ... up -d --build` after `git pull` | new image, same volume: data intact, the DB migrates itself |
+
+The container gets 60 s to stop (`stop_grace_period`). SQLite runs in WAL mode:
+after a stop, `agent.db-wal` and `agent.db-shm` sit beside `agent.db` and are part
+of the database (MailForge exits on SIGTERM without truncating the WAL; SQLite
+recovers it on the next open). Always copy all three together; the backup commands
+below copy the whole directory.
+
+### Upgrades
 
 ```bash
-git pull && docker compose -f deploy/compose/compose.yml up -d --build      # upgrade; /data is kept, the DB migrates itself
-docker compose -f deploy/compose/compose.yml down                           # stop; /data is kept
-docker compose -f deploy/compose/compose.yml down -v                        # stop AND delete mail DB, config, credential store
+git pull
+docker compose -f deploy/compose/compose.yml up -d --build
 ```
 
-Back up the volume (`/data`) **and** the keyring password together; either is
-useless without the other.
+On the first start of a new image version, **before** the app (and so any schema
+migration) starts, the entrypoint copies the database (with its `-wal`/`-shm`),
+`config.toml`, the credential store and the UI session secret to
+`/data/backups/<old>-to-<new>-<timestamp>/` (mode 0700, last 5 kept). The version
+compared is `<package version>-<VERSION build arg>`; release images set `VERSION`,
+so pass `--build-arg VERSION=...` (or `VERSION=` in `.env`) when building locally
+if you want a backup on every rebuild.
+
+### Back up and restore the volume
+
+Stop the app first so the database copy is consistent. The volume is named
+`<project>_<volume>` = `mailforge_mailforge-data` (`docker volume ls`).
+
+```bash
+docker compose -f deploy/compose/compose.yml stop app
+docker run --rm -v mailforge_mailforge-data:/data:ro -v "$PWD":/backup alpine \
+    tar czf /backup/mailforge-data-$(date +%F).tgz -C /data .
+docker compose -f deploy/compose/compose.yml start app
+```
+
+Restore (replaces the volume's contents; the app must be down):
+
+```bash
+docker compose -f deploy/compose/compose.yml down
+docker run --rm -v mailforge_mailforge-data:/data -v "$PWD":/backup alpine \
+    sh -c 'rm -rf /data/* /data/.[!.]* && tar xzf /backup/mailforge-data-YYYY-MM-DD.tgz -C /data'
+docker compose -f deploy/compose/compose.yml up -d
+```
+
+The archive contains your mail and the encrypted credential file: store it like
+the mailbox itself. The credentials inside are useless without
+`MAILFORGE_KEYRING_PASSWORD`, which is **not** in the archive; keep that
+separately (password manager). Back up and restore them as a pair. (With no
+password the credentials read as missing: `mailforge account-list` shows
+`[MISSING CREDENTIAL]`. With a wrong password the command fails with
+`MAC check failed`; correct `MAILFORGE_KEYRING_PASSWORD` and retry.)
+
+### Volume permissions (bind mounts)
+
+The image runs as UID/GID 1000. A named volume just works. A bind-mounted
+`DATA_PATH` must be writable by that user; if it is owned by someone else the
+container stops at once with a message saying so. Either `chown 1000:1000` it, or
+let the container fix it and run as your user:
+
+```bash
+PUID=$(id -u) PGID=$(id -g) docker compose \
+    -f deploy/compose/compose.yml -f deploy/compose/compose.puid.yml up -d
+```
+
+That override starts the container as root only to `chown` the data directory and
+drop to `PUID:PGID` (`setpriv`); the app process runs with no capabilities.
 
 ## Image
 

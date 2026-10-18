@@ -95,6 +95,7 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     HOME=/data \
+    IMAGE_VERSION=${VERSION} \
     MAILFORGE_HOME=/data \
     XDG_DATA_HOME=/data/xdg \
     XDG_CONFIG_HOME=/data/xdg-config \
