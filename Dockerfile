@@ -46,9 +46,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # README.md because pyproject.toml names it as the package readme.
 COPY README.md LICENSE ./
 COPY src/ ./src/
+# --reinstall-package mailforge: never serve the project itself from the uv cache
+# mount (belt and braces next to [tool.uv] cache-keys in pyproject.toml); otherwise a
+# rebuild after a source-only change ships the previously cached wheel.
 RUN --mount=type=cache,target=/root/.cache/uv \
     set -eu; args=""; for e in $EXTRAS; do args="$args --extra $e"; done; \
-    uv sync --locked --no-editable $args
+    uv sync --locked --no-editable --reinstall-package mailforge $args
 
 RUN find /app/.venv -name '__pycache__' -type d -prune -exec rm -rf {} + \
  && find /app/.venv -name '*.pyc' -delete
