@@ -348,9 +348,11 @@ triage_guidance = ""             # extra policy text shown to the triage prompt
 signature = "Alex"               # fills {{signature}} in templates and the composer
 
 [llm]
-lm_studio_host = "127.0.0.1:1234"   # any OpenAI-compatible server
+lm_studio_host = "127.0.0.1:1234"   # any OpenAI-compatible server (StudioForge gateway, not the :8080 panel)
+api_key_env = "MAILFORGE_LLM_API_KEY"  # sent as Authorization: Bearer; STUDIOFORGE_API_KEY is the fallback
 chat_model = "your-chat-model"
 embedding_model = "your-embedding-model"
+# Against StudioForge both ids are `publisher/repo/stem`; run `mailforge llm-check` to verify them.
 ttl_seconds = 1800
 context_length = 8192
 
@@ -483,6 +485,7 @@ installer for machines with no Python.
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+MIT — see [`LICENSE`](LICENSE). The bundled installer and container image include `html2text`
+(GPL-3.0-or-later); see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and [`docs/LICENSING.md`](docs/LICENSING.md).
 
 Published by Laser Lloyd — https://www.laserlloyd.com
