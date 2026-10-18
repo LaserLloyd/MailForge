@@ -40,20 +40,40 @@ If code and this guide disagree, fix whichever one is wrong.
 ## 2. Themes and design tokens
 
 MailForge does not define colours. They come from the **shared theme
-folder** `src/mailforge/ui/static/ui-theme/`, a verbatim copy of the drop-in
-folder every app uses: the theme runtime, the tokens for every theme, the
-NiceGUI/Quasar adapter, and `VERSION` (`ui-theme <revision date> <digest>`,
-the marker a theme update is checked against). **Never edit a file in that
-folder.** To update the themes, replace the whole folder with a newer copy —
-from the theme repository, `python tools/sync_theme.py status` shows whether
-MailForge is behind and `update --apply` copies the newer folder in. Nothing
-else changes: it is served at `/mf-theme/` with `no-cache`, so a new copy is
-live on the next page load.
+folder** `src/mailforge/ui/static/ui-theme/`, the **ForgeUI** (ThemeForge) drop-in
+bundle every app uses: the theme runtime, the tokens for every theme, the
+NiceGUI/Quasar adapter, the component layer, and `VERSION` (`ThemeForge <version>
+<digest>`) plus `files.json` (a sha256 for every file). **Never edit a file in that
+folder.** The folder is written whole by `python -m forgeui vendor`, driven by the
+manifest `forgeui.json` at the repository root (it names the folder, the accepted
+version `1.2`, the adapter `quasar`, and the app's theme settings). Nothing else
+changes: the folder is served at `/mf-theme/` with `no-cache`, so a new copy is live on
+the next page load.
 
-MailForge's own settings are `THEME_SETTINGS` in `theme.py`: the picker's
-themes and order (the six core themes plus Night Red), the default for a new
-browser (`midnight-gold`) and the storage key (`mailforge.theme`). A theme
-added there needs a service restart.
+To update the bundle (no private registry, no copy-paste):
+
+```bash
+uv pip install "forgeui @ git+https://github.com/LaserLloyd/ThemeForge@v1.2.0"   # the release forgeui.json accepts (not PyPI)
+python -m forgeui vendor            # replace the folder, verified against files.json, VERSION last
+python -m forgeui vendor --check    # exit 1 on drift (CI and tests/unit/test_forgeui_vendor.py run this)
+# offline: python -m forgeui vendor --source <ThemeForge checkout, ui-theme folder, zip or wheel>
+```
+
+`forgeui` is a development tool, not a dependency of MailForge. A hand-edited bundle file
+is refused unless you pass `--force`; MailForge's own CSS belongs in `theme.py`, not in the
+bundle (an app-owned overlay file would go under `extra_files` in `forgeui.json`, never
+appended into a bundle file).
+
+MailForge's own settings are in **one place**, `forgeui.json` `settings`: the picker's
+themes and order (the six original core themes, the new Slate, High Contrast and High
+Contrast Light, then Night Red), the default for a new browser (`midnight-gold`) and the
+storage key (`mailforge.theme`). `theme.THEME_SETTINGS` reads them and writes them onto the
+runtime's `<script>` tag. The package carries a byte copy of the manifest,
+`src/mailforge/ui/forgeui.json` (the wheel, the container image and the frozen build have
+no repository root); after editing `forgeui.json`, run
+`cp forgeui.json src/mailforge/ui/forgeui.json` (a test fails if they differ). A theme added
+to the list needs a service restart. Opt-in themes (`electric-yellow`, `laserlloyd*`) are
+offered only if listed there.
 
 Component CSS in `theme.py` and inline styles in page files read **contract
 tokens only**, never a literal colour:
