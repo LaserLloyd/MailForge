@@ -205,7 +205,25 @@ def verify_chain(db_path: str | Path) -> tuple[bool, int, int | None]:
     ``this_hash`` does not match the recomputation, or that fails to link to the
     previous entry's ``this_hash`` (``None`` when ``ok`` is True).
     """
+    import sqlite3
+
     from ..db.store import Store
+
+    # A fresh install has no database (or an empty file from an earlier run with
+    # no schema yet). Nothing has been audited, so the chain is vacuously intact;
+    # probe read-only so verifying never creates the file as a side effect.
+    path = Path(db_path).expanduser()
+    if not path.exists():
+        return (True, 0, None)
+    probe = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+    try:
+        has_table = probe.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='audit_log'"
+        ).fetchone()
+    finally:
+        probe.close()
+    if not has_table:
+        return (True, 0, None)
 
     store = Store(db_path)
     try:

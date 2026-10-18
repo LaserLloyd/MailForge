@@ -30,6 +30,10 @@ Once installed (see [Install](#install)), try it with fictional data and no mail
 mailforge demo
 ```
 
+`mailforge demo` opens the approval UI in your browser (add `--no-browser` to just print the URL; the line to look for is
+`MailForge UI: http://127.0.0.1:<port>/...`). Review each draft and **Approve / Edit / Reject**; in the demo nothing is ever sent.
+Stop it with Ctrl-C and the demo directory is deleted.
+
 ---
 
 ## Why it is safe by design
@@ -91,8 +95,16 @@ By default MailForge looks for it at `localhost:1234`.
 Ports: 8090 in Docker (the approval UI and `/healthz`, published on the host's loopback only). Natively the UI binds `127.0.0.1` on a random port
 that `mailforge serve` prints in its login URL; set `MAILFORGE_UI_PORT` to pin one. If your server needs a key, set `MAILFORGE_LLM_API_KEY`.
 
-The `[llm,rag]` extras add the LM Studio SDK (optional model loading) and sqlite-vec retrieval, the same set the Docker image ships. `security-ml` is a
+The `[llm,rag]` extras add the LM Studio SDK bridge to your local model server (`llm`) and the sqlite-vec vector index plus the PDF/DOCX document readers
+behind retrieval over your own mail and the Knowledge library (`rag`). They are the same two the Docker image installs by default (`ARG EXTRAS="llm rag"`).
+Without `rag`, vector search is disabled and uploads fall back to plain-text reading, so a plain `uv tool install .` is only for a bare-bones trial. `security-ml` is a
 separate optional extra (torch and model downloads, several GB) that most installs can skip: without it the regex and heuristic guardrails still run.
+
+**Model ids.** Out of the box MailForge asks the server for the LM Studio catalogue ids `qwen/qwen3.6-35b-a3b` (chat) and
+`text-embedding-nomic-embed-text-v1.5` (embeddings). A server that does not list those ids (StudioForge, for example, names models
+`publisher/repo/stem`) makes `mailforge llm-check` exit 1 and say so. Set the ids your server lists in the `[llm]` section of `config.toml`
+(`chat_model`, `embedding_model`; see [Configuration](#configuration)) or per run with the environment variables
+`MAILFORGE_LLM__CHAT_MODEL` and `MAILFORGE_LLM__EMBEDDING_MODEL`, then run `mailforge llm-check` again.
 
 ### Windows
 
@@ -396,7 +408,7 @@ garak/promptfoo CI). In Docker, set `EXTRAS="llm rag security-ml"` in `.env` and
 | `mailforge rescreen [--site <id>] [--apply]` | Re-apply spam screening and category rules (e.g. GitHub) to stored mail; dry run by default |
 | `mailforge audit-verify` | Verify the audit hash chain is intact |
 | `mailforge health` | Print the running service's `/healthz` JSON (exit 0 only when every mailbox is healthy; a fresh install with no mailbox is `degraded`, 503) |
-| `mailforge llm-check` | Is the LLM server reachable, is the API key accepted, are the configured model ids served? (exit 0 / 1 fix needed / 2 unreachable) |
+| `mailforge llm-check` | Is the LLM server reachable, is the API key accepted, are the configured model ids served? (exit 0 / 1 fix needed / 2 unreachable; default ids and overrides: see [Install](#install)) |
 | `mailforge eval-screening` | Leave-one-out replay of your own screening labels against the current rules |
 | `mailforge service install\|start\|stop\|desktop` | Manage the background service / launcher |
 | `mailforge redteam` | Run offline red-team suites (garak / promptfoo) |
