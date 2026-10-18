@@ -32,6 +32,10 @@ die() { log "FATAL: $*"; exit 1; }
 # ---- 1. privileges ----------------------------------------------------------
 if [ "$(id -u)" = "0" ]; then
     log "started as root; chown ${DATA_DIR} to ${PUID}:${PGID} and drop privileges"
+    # Best effort only: under compose's read_only root filesystem /etc cannot be
+    # written, so PUID may have no passwd entry. Nothing below needs one (HOME is
+    # /data; setpriv uses --clear-groups, not --init-groups, which would abort with
+    # "uid not found" for exactly the PUIDs this override exists for).
     if [ "$(id -u app)" != "$PUID" ] || [ "$(id -g app)" != "$PGID" ]; then
         groupmod -o -g "$PGID" app 2>/dev/null || true
         usermod -o -u "$PUID" -g "$PGID" app 2>/dev/null || true
@@ -39,11 +43,12 @@ if [ "$(id -u)" = "0" ]; then
     mkdir -p "$DATA_DIR"
     chown "$PUID:$PGID" "$DATA_DIR"
     # Recurse only when something inside is visibly wrong, never on every boot.
-    if [ "$(find "$DATA_DIR" -maxdepth 2 ! -user "$PUID" 2>/dev/null | head -n1)" != "" ]; then
+    # Depth 3 reaches the credential store (/data/xdg/python_keyring/cryptfile_pass.cfg).
+    if [ "$(find "$DATA_DIR" -maxdepth 3 ! -user "$PUID" 2>/dev/null | head -n1)" != "" ]; then
         log "ownership mismatch on existing data: one-time recursive chown"
         chown -R "$PUID:$PGID" "$DATA_DIR"
     fi
-    exec setpriv --reuid="$PUID" --regid="$PGID" --init-groups --inh-caps=-all -- "$0" "$@"
+    exec setpriv --reuid="$PUID" --regid="$PGID" --clear-groups --inh-caps=-all -- "$0" "$@"
 fi
 
 # ---- 2. writability --------------------------------------------------------

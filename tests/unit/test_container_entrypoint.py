@@ -63,3 +63,13 @@ def test_llm_base_url_keeps_the_scheme_the_bridge_needs(base_url, host, bridge_b
 def test_an_explicit_lm_studio_host_wins_and_unset_means_untouched():
     assert _host_for("https://a.example.test/v1", preset="b.example.test:1") == "b.example.test:1"
     assert _host_for(None) == ""
+
+
+def test_the_privilege_drop_needs_no_passwd_entry_for_puid():
+    """compose.puid.yml keeps read_only: true, so usermod cannot add PUID to /etc/passwd;
+    `setpriv --init-groups` then aborts ("uid ... not found") for every PUID but 1000.
+    Verified against the built image in reviews/MailForge.opus.md."""
+    text = ENTRYPOINT.read_text(encoding="utf-8")
+    drop = [ln for ln in text.splitlines() if ln.strip().startswith("exec setpriv")]
+    assert len(drop) == 1, drop
+    assert "--clear-groups" in drop[0] and "--init-groups" not in drop[0]
