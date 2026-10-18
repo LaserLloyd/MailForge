@@ -151,9 +151,19 @@ def _normalize_host(host: str) -> str:
     """Return a bare ``host:port`` (no scheme) for the SDK, tolerating URLs."""
     h = host.strip()
     for prefix in ("http://", "https://"):
-        if h.startswith(prefix):
+        if h.lower().startswith(prefix):
             h = h[len(prefix) :]
     return h.rstrip("/")
+
+
+def _scheme_of(host: str) -> str:
+    """``https`` when ``lm_studio_host`` was written as an ``https://`` URL, else ``http``.
+
+    The bearer key travels in every request, so a server reached over TLS must
+    stay TLS: silently downgrading an ``https://`` setting to plain HTTP would
+    send the key in clear.
+    """
+    return "https" if host.strip().lower().startswith("https://") else "http"
 
 
 class LMStudioBridge:
@@ -185,6 +195,7 @@ class LMStudioBridge:
         api_key: str = "",
     ) -> None:
         self.host = _normalize_host(host)
+        self._scheme = _scheme_of(host)
         self.model_id = model_id
         self.embed_id = embed_id
         self.ttl_seconds = ttl_seconds
@@ -250,8 +261,9 @@ class LMStudioBridge:
     # ----- transport helpers -----
     @property
     def base_url(self) -> str:
-        """OpenAI-compat ``/v1`` base URL for ``httpx`` calls."""
-        return f"http://{self.host}/v1"
+        """OpenAI-compat ``/v1`` base URL for ``httpx`` calls (``http`` unless
+        ``lm_studio_host`` was given as an ``https://`` URL)."""
+        return f"{self._scheme}://{self.host}/v1"
 
     # ----- health -----
     async def is_up_async(self) -> bool:
