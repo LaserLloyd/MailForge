@@ -512,7 +512,11 @@ def audit_verify() -> None:
     from .config import load_settings
 
     settings = load_settings()
-    ok, n, bad = verify_chain(settings.resolved_db_path())
+    db_path = settings.resolved_db_path()
+    if not db_path.exists():
+        typer.echo("No audit log yet: nothing to verify.")
+        return
+    ok, n, bad = verify_chain(db_path)
     if ok:
         typer.secho(f"Audit chain OK ({n} entries).", fg="green")
     else:
