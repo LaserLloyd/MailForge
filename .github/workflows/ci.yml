@@ -36,7 +36,7 @@ jobs:
           python3 scripts/scrub_check.py \
             src tests scripts docs installer packaging .github \
             README.md LICENSE CHANGELOG.md CONTRIBUTING.md SECURITY.md \
-            pyproject.toml
+            THIRD_PARTY_NOTICES.md pyproject.toml
 
       - name: Scan the TREE of every commit in the pull request
         if: github.event_name == 'pull_request'
