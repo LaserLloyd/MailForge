@@ -3,6 +3,46 @@
 All notable changes to this project are documented here. Dates are ISO-8601.
 Published by Laser Lloyd — https://www.laserlloyd.com
 
+## 0.6.0 — 2026-10-18
+
+### Added
+- **API key for the LLM server.** `Authorization: Bearer <key>` is now sent on
+  every request to `llm.lm_studio_host` (probe, model list, chat, embeddings),
+  so MailForge works with a StudioForge gateway that enforces keys. The key
+  comes from the environment only: the variable named by the new
+  `[llm] api_key_env` (default `MAILFORGE_LLM_API_KEY`), with
+  `STUDIOFORGE_API_KEY` as a fallback. It is never written to `config.toml`,
+  logged, or shown. The separate heavy-lift endpoint keeps its own key.
+- **`mailforge llm-check`**: reports whether the server is reachable, whether
+  an API key is set and accepted, and whether the configured chat and
+  embedding model ids are ones the server serves (exit 0 ok, 1 fix needed, 2
+  unreachable).
+- Plain-language model-id mismatch message on the Models page, in
+  `mailforge bridge status` (`model.notes`, additive) and in the chat warning
+  log. StudioForge names models `publisher/repo/stem`; the shipped defaults
+  are LM Studio ids, which it answers with HTTP 404. Behaviour is unchanged:
+  the draft is still deferred, but now the reason is stated.
+- StudioForge contract tests (`tests/contract_studioforge/`) pinning the
+  OpenAI-compatible surface MailForge relies on, derived from the client code.
+- `THIRD_PARTY_NOTICES.md` and `docs/LICENSING.md`: `html2text` is
+  GPL-3.0-or-later and a core dependency. It stays (owner decision); the notes
+  describe the obligations for a bundled installer and the MIT replacements
+  (`markdownify`, `html-to-markdown`) with the files they would touch.
+
+### Changed
+- Tests are hermetic: a socket guard refuses every connection except to
+  ephemeral loopback ports a test opens itself, and every test runs on the
+  heuristic fallbacks even when the `security-ml` extra is installed (no Hugging
+  Face or spaCy downloads). Tests that exercise the model tier are marked `ml`
+  and skip unless the weights are already cached.
+- Docs and comments that pointed the heavy-lift example at the StudioForge
+  panel port (`:8080`) now point at the gateway (`http://127.0.0.1:1234/v1`).
+
+### Upgrading
+- Nothing to do for existing installs. To use an authenticated server, export
+  `MAILFORGE_LLM_API_KEY` and run `mailforge llm-check`. Against StudioForge,
+  set `[llm] chat_model` and `embedding_model` to ids the server lists.
+
 ## 0.5.0 — 2026-10-10
 
 ### Added

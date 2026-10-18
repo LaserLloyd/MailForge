@@ -616,6 +616,67 @@ def health_command(
     raise typer.Exit(code=0 if code == 200 else 1)
 
 
+@app.command("llm-check")
+def llm_check_command(
+    timeout: float = typer.Option(5.0, "--timeout", help="Seconds to wait for the server."),
+) -> None:
+    """Check the configured LLM server: reachable, API key accepted, model ids served.
+
+    Exit 0 = ready, 1 = reachable but something needs fixing (key refused, or a
+    configured model id the server does not serve), 2 = unreachable. Prints
+    whether a key is set, never the key.
+    """
+    import httpx
+
+    from .config import load_settings
+    from .llm.bridge import LMStudioBridge
+    from .llm.model_ids import describe_mismatch
+
+    settings = load_settings()
+    bridge = LMStudioBridge.from_settings(settings)
+    env_name = settings.llm.api_key_env or "MAILFORGE_LLM_API_KEY"
+    typer.echo(f"Server:     {bridge.base_url}")
+    typer.echo(
+        "API key:    "
+        + ("set (sent as Authorization: Bearer)" if bridge.has_api_key else f"not set (${env_name})")
+    )
+    typer.echo(f"Chat model: {bridge.model_id}")
+    typer.echo(f"Embeddings: {bridge.embed_id}")
+    try:
+        resp = httpx.get(f"{bridge.base_url}/models", headers=bridge._auth_headers(), timeout=timeout)
+    except Exception as e:  # noqa: BLE001 - report, never traceback
+        typer.secho(f"UNREACHABLE: {e}", fg="red")
+        raise typer.Exit(code=2) from None
+    if resp.status_code in (401, 403):
+        typer.secho(
+            f"REFUSED (HTTP {resp.status_code}): the server requires an API key. "
+            f"Export it in ${env_name} (or STUDIOFORGE_API_KEY) and retry.",
+            fg="red",
+        )
+        raise typer.Exit(code=1)
+    if resp.status_code != 200:
+        typer.secho(f"UNEXPECTED: GET /v1/models answered HTTP {resp.status_code}", fg="red")
+        raise typer.Exit(code=1)
+    try:
+        ids = [str(m.get("id") or "") for m in resp.json().get("data", []) if isinstance(m, dict)]
+    except ValueError:
+        ids = []
+    typer.echo(f"Served:     {len(ids)} model(s)")
+    problems = [
+        p
+        for p in (
+            describe_mismatch(bridge.model_id, ids, "chat"),
+            describe_mismatch(bridge.embed_id, ids, "embedding"),
+        )
+        if p
+    ]
+    for p in problems:
+        typer.secho(p, fg="yellow")
+    if problems:
+        raise typer.Exit(code=1)
+    typer.secho("OK", fg="green")
+
+
 @app.command("eval-screening")
 def eval_screening_command(
     limit: int = typer.Option(200, "--limit", "-n", help="Replay the N most recent human labels."),

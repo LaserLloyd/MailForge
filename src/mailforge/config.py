@@ -120,13 +120,26 @@ class SMTPAccount(BaseModel):
 
 class LLMSettings(BaseModel):
     # Any local OpenAI-compatible server (LM Studio's default port shown).
-    # The model IDs below are only starting points from the public LM Studio
-    # catalogue; set your own via the Models page or config.toml.
+    # For a StudioForge gateway use ``127.0.0.1:1234`` (the OpenAI API); the
+    # StudioForge *panel* is a different port and does not serve ``/v1``.
+    #
+    # MODEL IDS. The defaults below are LM Studio catalogue ids. A StudioForge
+    # server names its models ``publisher/repo/stem`` (three path segments, e.g.
+    # ``unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-Q5_K_S``) and answers an id it does
+    # not know with HTTP 404, so against StudioForge you MUST set ``chat_model``
+    # (and ``embedding_model``) to ids it lists. ``mailforge llm-check`` and the
+    # Models page say so explicitly when the configured id is not served.
     lm_studio_host: str = "localhost:1234"
     chat_model: str = "qwen/qwen3.6-35b-a3b"
     embedding_model: str = "text-embedding-nomic-embed-text-v1.5"
     ttl_seconds: int = 1800
     context_length: int = 8192
+    # Name of the environment variable holding the server's API key. When that
+    # variable is set the key is sent as ``Authorization: Bearer <key>`` on every
+    # request to ``lm_studio_host`` (probe, model list, chat, embeddings). The
+    # key itself is never stored in config.toml, logged, or shown. The shared
+    # name ``STUDIOFORGE_API_KEY`` is also honoured as a fallback.
+    api_key_env: str = "MAILFORGE_LLM_API_KEY"
 
 
 class SecuritySettings(BaseModel):
@@ -306,7 +319,7 @@ class OpenClawSettings(BaseModel):
 
     enabled: bool = True
     prompt_override_dir: str = ""  # "" => paths.prompt_override_dir() default
-    heavy_lift_base_url: str = ""  # e.g. "http://127.0.0.1:8080/v1"; "" => local only
+    heavy_lift_base_url: str = ""  # e.g. "http://127.0.0.1:1234/v1"; "" => local only
     heavy_lift_model: str = ""
     heavy_lift_key_env: str = "MAILFORGE_HEAVY_KEY"
     # --- agent-relayed send ("the user told the agent to send it") ----------

@@ -1,0 +1,12 @@
+{
+  "_note": "derived from client code (llm/bridge.py list_models + resolve_served_models read data[].id; every other field is additive and must be ignored): GET /v1/models",
+  "response": {
+    "object": "list",
+    "data": [
+      {"id": "pub/repo/chat-Q5_K_S", "object": "model", "owned_by": "studioforge",
+       "loaded": true, "meta": {"n_ctx_train": 32768}},
+      {"id": "pub/repo/embed-Q8_0", "object": "model", "owned_by": "studioforge",
+       "future_additive_field": {"anything": 1}}
+    ]
+  }
+}

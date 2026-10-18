@@ -78,6 +78,28 @@ OpenAI-compatible chat-completions endpoint; do not assume it runs LM Studio.
 request. A plain LM Studio backend ignores both; a backend with request-tier
 scheduling uses them to tell its co-tenants apart.
 
+### Pointing it at a StudioForge gateway
+
+* **Address.** `lm_studio_host = "127.0.0.1:1234"` is the OpenAI-compatible
+  gateway. The StudioForge *panel* is a different port (8080 by default) and
+  does not serve `/v1`; do not use it here or in `heavy_lift_base_url`.
+* **API key.** When the gateway enforces keys, export the key in the variable
+  named by `[llm] api_key_env` (default `MAILFORGE_LLM_API_KEY`; the shared name
+  `STUDIOFORGE_API_KEY` is honoured as a fallback). Every request to
+  `lm_studio_host` then carries `Authorization: Bearer <key>`. The key lives in
+  the environment only - never in `config.toml`, the keyring, logs or the UI. The
+  heavy-lift endpoint has its own key (`heavy_lift_key_env`) and never receives
+  this one.
+* **Model ids.** StudioForge ids are `publisher/repo/stem`, for example
+  `unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-Q5_K_S`. The shipped defaults are LM
+  Studio catalogue ids and are answered with HTTP 404, so against StudioForge
+  set `chat_model` and `embedding_model` to ids the server lists. `mailforge
+  llm-check` compares the configured ids with `/v1/models` and says so plainly;
+  the Models page and `mailforge bridge status` carry the same message.
+* **Contract.** `tests/contract_studioforge/` pins what MailForge reads from
+  and sends to the server. A change to StudioForge that breaks it should fail
+  there first.
+
 ---
 
 ## Tests and lint
@@ -91,6 +113,16 @@ uv run ruff check .                     # exactly what CI runs
 the package is imported, so the suite can never read or write a real
 configuration, and registers the example sites `main` + `shop` per test
 (restoring the previous registry afterwards).
+
+The suite is also **hermetic**. `tests/_netguard.py` is installed first thing and
+refuses every outbound connection except to ephemeral loopback ports a test
+opens itself (so never the live StudioForge on 1234, a hosted API, or a made-up
+LAN name); a test that attempts one fails even if the code under test swallowed
+the error. Every test runs on the heuristic fallbacks of the optional
+`security-ml` tier whatever extras are installed; tests that really use the
+models carry `@pytest.mark.ml` and skip unless the weights are already in the
+local Hugging Face cache. Set `NETGUARD_TRACE=1` to print the stack of a refused
+connection.
 
 When touching security behaviour, remember the invariants the suite enforces:
 `security.autosend_allowed` false, `security.require_human_approval` true, no

@@ -15,8 +15,58 @@ os.environ.setdefault(
     "MAILFORGE_HOME", tempfile.mkdtemp(prefix="mailforge-tests-")
 )
 
+# Hermetic: never let an installed ``security-ml`` extra (transformers /
+# huggingface_hub) reach the Hugging Face Hub from a test. With the cache absent
+# the optional model simply "is unavailable" and the documented heuristic
+# fallbacks run, exactly as on the CI runner that installs ``--extra dev`` only.
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+
+import _netguard  # noqa: E402
+
+# Refuse every outbound connect except to ephemeral loopback ports a test opens
+# itself (see tests/_netguard.py). Installed before anything else can connect.
+_netguard.install()
 
 import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _no_real_network_attempts():
+    """Fail the test that attempted a real connection, even when the code under
+    test swallowed the refusal (clients here degrade to a sentinel)."""
+    _netguard.VIOLATIONS.clear()
+    yield
+    if _netguard.VIOLATIONS:
+        found = list(_netguard.VIOLATIONS)
+        _netguard.VIOLATIONS.clear()
+        pytest.fail("test attempted a real network connection: " + "; ".join(found),
+                    pytrace=False)
+
+
+@pytest.fixture(autouse=True)
+def _optional_ml_tiers_off(request, monkeypatch):
+    """Run every test on the documented heuristic fallbacks, whatever extras
+    happen to be installed.
+
+    With ``--all-extras`` the ``security-ml`` tier is importable, and its first
+    use downloads weights (Hugging Face) and a spaCy model (GitHub). A test must
+    never do that, and its result must not depend on whether a developer's cache
+    is warm. Tests that really exercise the model tier carry ``@pytest.mark.ml``
+    and skip themselves unless the weights are already cached.
+    """
+    if request.node.get_closest_marker("ml"):
+        yield
+        return
+    from mailforge.security import guardrails, presidio, prompt_guard
+
+    for fn in (prompt_guard._load_model, guardrails._load_scanners, presidio._load_analyzer):
+        fn.cache_clear()
+    monkeypatch.setattr(prompt_guard, "_load_model", lambda: None)
+    monkeypatch.setattr(guardrails, "_load_scanners", lambda kind: None)
+    monkeypatch.setattr(presidio, "_load_analyzer", lambda: None)
+    yield
 
 
 @pytest.fixture(autouse=True)

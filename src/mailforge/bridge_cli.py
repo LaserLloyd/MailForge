@@ -506,6 +506,21 @@ def _do_agent_send(data: dict[str, Any], site: str, store: Any, settings: Any) -
     }
 
 
+def _model_status(bridge: LMStudioBridge) -> dict[str, Any]:
+    """``status.model``: reachability, the configured chat id, and (additive)
+    ``notes`` - plain sentences when a configured id is not one the server
+    serves (e.g. an LM Studio id against StudioForge's publisher/repo/stem ids).
+    """
+    up = bridge.is_up()
+    notes: list[str] = []
+    if up:
+        try:
+            notes = asyncio.run(bridge.model_id_notes())
+        except Exception:  # diagnostics must never break the status op
+            notes = []
+    return {"up": up, "chat_model": bridge.model_id, "notes": notes}
+
+
 def run_bridge(action: str, site_id: str) -> int:
     try:
         action = action.strip().lower()
@@ -533,7 +548,7 @@ def run_bridge(action: str, site_id: str) -> int:
                         {k: row[k] for k in ("id", "filename", "status", "chunk_count", "updated_at")}
                         for row in store.list_reference_documents(site)
                     ],
-                    "model": {"up": bridge.is_up(), "chat_model": bridge.model_id},
+                    "model": _model_status(bridge),
                 }
             elif action == "list":
                 limit = _bounded_int(data, "limit", 50, 1, 200)

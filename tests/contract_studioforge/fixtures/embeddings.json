@@ -1,0 +1,10 @@
+{
+  "_note": "derived from client code (llm/bridge.py embed): POST /v1/embeddings",
+  "expect_request_keys": ["model", "input", "priority"],
+  "expect_priority": 3,
+  "expect_request_headers": {"X-SF-Client": "mailforge"},
+  "dim_required": 768,
+  "response_wider_than_required": {
+    "data": [{"index": 0, "embedding_dim": 1024}]
+  }
+}

@@ -43,6 +43,11 @@ bug report:
 - **Secrets stay in the keyring.** Mailbox passwords and OAuth tokens live in
   the OS keyring; config and database must never contain them. A path that
   writes a credential to disk, a log, or a model prompt is in scope.
+- **The LLM API key never leaves the environment.** The bearer key for the
+  local LLM server (`[llm] api_key_env`, default `MAILFORGE_LLM_API_KEY`) is read
+  from the environment, sent only to `llm.lm_studio_host`, and never written to
+  config, database, logs or the UI. The heavy-lift endpoint has a separate key
+  and never receives it. A path that persists or leaks either key is in scope.
 - **Deleting is bounded.** Provider-side deletion may only ever target the
   `(folder, uid)` pairs this app recorded at ingest — never a search, never a
   whole folder. A way to make it delete anything else is in scope.
