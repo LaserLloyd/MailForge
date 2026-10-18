@@ -250,3 +250,23 @@ def test_vendored_checksum_table_exempts_only_secret_blobs():
     assert {h.category for h in scrub.scan_text(text, Path("docs/files.json"))} == {"secret-blob"}
     key = '"sk-' + "a1" * 12 + '"'  # a real secret shape inside the table is still caught
     assert scrub.scan_text(key + "\n", table) != []
+
+
+def test_files_json_exemption_covers_sha256_digests_only():
+    """The vendored bundle's files.json may carry its sha256 table; nothing else in it,
+    and no other file, gets the secret-blob exemption. Samples are built at run time so
+    this file itself stays clean for the scanner."""
+    import hashlib
+
+    digest = hashlib.sha256(b"ui-theme.css").hexdigest()
+    token = "Zq9+" * 16  # base64-shaped, 64 chars
+    short_hex = hashlib.sha1(b"x").hexdigest()  # 40 hex: not a sha256
+    files_json = Path("src/mailforge/ui/static/ui-theme/files.json")
+
+    def blobs(line, path):
+        return [h for h in scrub.scan_text(line, path) if h.category == "secret-blob"]
+
+    assert blobs(f'"ui-theme.css": "{digest}",', files_json) == []
+    assert blobs(f'"note": "{token}",', files_json)
+    assert blobs(f'"x": "{short_hex}",', files_json)
+    assert blobs(f'"ui-theme.css": "{digest}",', Path("src/mailforge/ui/static/ui-theme/themes.json"))
