@@ -25,9 +25,14 @@ SRC = REPO / "src" / "mailforge"
 # Bundle non-Python package assets the runtime reads via importlib.resources:
 #  - db/schema.sql            (§7 schema)
 #  - llm/prompts/*            (versioned spotlight prompt templates)
+#  - ui/static/               (the vendored ForgeUI theme bundle, served at /mf-theme)
+#  - ui/forgeui.json          (theme settings; mailforge.ui.theme reads it at import,
+#                              so without it the UI cannot even be imported)
 datas = []
 datas += [(str(SRC / "db" / "schema.sql"), "mailforge/db")]
 datas += [(str(SRC / "llm" / "prompts"), "mailforge/llm/prompts")]
+datas += [(str(SRC / "ui" / "static"), "mailforge/ui/static")]
+datas += [(str(SRC / "ui" / "forgeui.json"), "mailforge/ui")]
 # Installer assets the service installers read at runtime (systemd template is
 # Linux-only but harmless to ship; WinSW exe/descriptor are needed on Windows).
 datas += [(str(REPO / "installer"), "installer")]

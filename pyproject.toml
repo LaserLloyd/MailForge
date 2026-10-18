@@ -76,7 +76,21 @@ constraint-dependencies = ["cryptography>=46"]
 # pyproject.toml / setup.* change. The Dockerfile keeps that cache in a persistent
 # build mount with a non-editable install, so without these keys a rebuild after a
 # source-only change would ship the previous code (found in the 2026-10 review).
-cache-keys = [{ file = "pyproject.toml" }, { file = "src/**/*.py" }, { file = "src/**/*.html" }, { file = "src/**/*.css" }, { file = "src/**/*.js" }]
+# Package data counts too (prompts, schema, the vendored theme bundle and its
+# manifest); tests/unit/test_package_data.py fails when a new kind is not listed.
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "src/**/*.py" },
+    { file = "src/**/*.html" },
+    { file = "src/**/*.css" },
+    { file = "src/**/*.js" },
+    { file = "src/**/*.ts" },
+    { file = "src/**/*.json" },
+    { file = "src/**/*.txt" },
+    { file = "src/**/*.sql" },
+    { file = "src/**/*.md" },
+    { file = "src/**/VERSION" },
+]
 
 [tool.pytest.ini_options]
 markers = [

@@ -102,9 +102,20 @@ def ui_port_override() -> int | None:
 
 
 def ui_extra_allowed_hosts() -> set[str]:
-    """Extra ``Host`` header values to accept (comma-separated ``host:port``)."""
+    """Extra ``Host`` header values to accept (comma-separated ``host:port``).
+
+    Browsers leave a default port out of ``Host`` and ``Origin`` (a TLS proxy at
+    ``https://mail.example.lan`` sends ``Host: mail.example.lan``), so an entry
+    written as ``name:443`` or ``name:80`` also accepts the bare ``name``;
+    otherwise every request through the proxy would answer 403.
+    """
     raw = os.environ.get(UI_ALLOWED_HOSTS_ENV, "")
-    return {h.strip().lower() for h in raw.split(",") if h.strip()}
+    hosts = {h.strip().lower() for h in raw.split(",") if h.strip()}
+    for h in list(hosts):
+        name, sep, port = h.rpartition(":")
+        if sep and name and port in ("80", "443") and not name.endswith(":"):
+            hosts.add(name)
+    return hosts
 
 
 def desktop_entry_path() -> Path:

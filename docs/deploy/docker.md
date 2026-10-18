@@ -52,7 +52,7 @@ three things (unset, behaviour is unchanged):
 |---|---|---|
 | `MAILFORGE_UI_HOST` | `0.0.0.0` | interface the UI binds (native default `127.0.0.1`) |
 | `MAILFORGE_UI_PORT` | `8090` | fixed UI port instead of a random persisted one |
-| `MAILFORGE_UI_ALLOWED_HOSTS` | set by compose | extra `Host` header values to accept, comma-separated `host:port`. The browser's `Host` carries the **published** port, so compose sets `localhost:${HOST_PORT}` and `127.0.0.1:${HOST_PORT}`; without this every page answers 403 whenever `HOST_PORT` is not 8090 |
+| `MAILFORGE_UI_ALLOWED_HOSTS` | set by compose | extra `Host` header values to accept, comma-separated `host:port` (or a bare `host`: browsers omit :443/:80, so `name:443` also accepts `name`). The browser's `Host` carries the **published** port, so compose sets `localhost:${HOST_PORT}` and `127.0.0.1:${HOST_PORT}`; without this every page answers 403 whenever `HOST_PORT` is not 8090 |
 
 ## Configuration
 
@@ -63,7 +63,7 @@ it is git-ignored and excluded from the build context, so it cannot end up in an
 |---|---|---|
 | `MAILFORGE_KEYRING_PASSWORD` | empty | Unlocks the encrypted credential store. See below. |
 | `MAILFORGE_KEYRING_PASSWORD_FILE` | empty | Same, read from a file (a Docker/compose secret at `/run/secrets/...`). Wins over the plain variable. |
-| `LLM_BASE_URL` | `http://host.docker.internal:1234/v1` | Your local LLM server **as the container sees it**. Reduced to `host:port` and exported as `MAILFORGE_LLM__LM_STUDIO_HOST` (MailForge talks to LM Studio / StudioForge over their OpenAI-compatible HTTP API; the LM Studio SDK is only used for optional just-in-time model loading). The environment beats `config.toml`, so if you prefer to keep `[llm] lm_studio_host` in the file, unset `LLM_BASE_URL` and set the host there. |
+| `LLM_BASE_URL` | `http://host.docker.internal:1234/v1` | Your local LLM server **as the container sees it**. Reduced to `host:port` (`https://host:port` for an `https://` URL, so TLS and the API key are kept) and exported as `MAILFORGE_LLM__LM_STUDIO_HOST` (MailForge talks to LM Studio / StudioForge over their OpenAI-compatible HTTP API; the LM Studio SDK is only used for optional just-in-time model loading). The environment beats `config.toml`, and compose always sets `LLM_BASE_URL` (an empty value falls back to the default), so in the container `[llm] lm_studio_host` in the file is overridden: change the server here, or set `MAILFORGE_LLM__LM_STUDIO_HOST` in `.env` (it wins over `LLM_BASE_URL`). |
 | `BIND_ADDR` / `HOST_PORT` / `UI_EXTRA_HOSTS` | `127.0.0.1` / `8090` / empty | Host side of the port mapping, as above. |
 | `MAILFORGE_*` | | Any MailForge setting: `MAILFORGE_SECURITY__QUARANTINE_THRESHOLD=0.9` and so on. |
 | `DATA_PATH` | named volume `mailforge-data` | A host directory (owned by UID 1000) to browse and back up. |
@@ -98,9 +98,11 @@ provide at run time:
 
 Choose a long random value and keep a copy in your password manager. It is
 **not recoverable**: lose it and the stored mailbox passwords are unreadable
-(re-enter them with `setup-wizard`). A wrong password fails with
-`MAC check failed`; no password and no terminal fails with a clear
-"credential store is locked" error instead of hanging.
+(re-enter them with `setup-wizard`). A wrong password fails with "the
+credential store ... did not unlock ... wrong password?"; no password and no
+terminal fails with a clear "credential store is locked" error instead of
+hanging. Commands started with `docker compose exec` skip the entrypoint but read
+the same two variables, so they unlock the store too.
 
 The image selects the keyring backend through `PYTHON_KEYRING_BACKEND` and a
 small module, `deploy/container_keyring.py`, because `keyrings.cryptfile` can
@@ -184,8 +186,8 @@ the mailbox itself. The credentials inside are useless without
 `MAILFORGE_KEYRING_PASSWORD`, which is **not** in the archive; keep that
 separately (password manager). Back up and restore them as a pair. (With no
 password the credentials read as missing: `mailforge account-list` shows
-`[MISSING CREDENTIAL]`. With a wrong password the command fails with
-`MAC check failed`; correct `MAILFORGE_KEYRING_PASSWORD` and retry.)
+`[MISSING CREDENTIAL]`. With a wrong password the store reports "did not
+unlock ... wrong password?"; correct `MAILFORGE_KEYRING_PASSWORD` and retry.)
 
 ### Volume permissions (bind mounts)
 

@@ -89,3 +89,20 @@ def test_no_deprecated_action_majors(ci):
             if major < floor:
                 stale.append(f"{name}: {uses} (needs >= v{floor})")
     assert stale == [], stale
+
+
+def test_the_tree_the_privacy_job_scans_is_clean(ci):
+    """Run the privacy job's own "Scan the tree" command (generic rules) on this
+    checkout. A 40-hex commit pin added to ci.yml without a pragma made that very
+    step fail: a red privacy job on every push reads as noise and gets ignored."""
+    import shlex
+    import subprocess
+    import sys
+
+    step = next(s for s in _steps(ci["jobs"]["privacy"]) if s.get("name") == "Scan the tree")
+    words = shlex.split(step["run"].replace("\\n", " "))
+    assert words[:2] == ["python3", "scripts/scrub_check.py"], words
+    root = WORKFLOW.parents[2]
+    out = subprocess.run([sys.executable, *words[1:]], cwd=root, capture_output=True,
+                         text=True, timeout=120)
+    assert out.returncode == 0, out.stdout[-2000:] + out.stderr[-2000:]
