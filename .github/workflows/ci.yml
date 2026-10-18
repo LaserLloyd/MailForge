@@ -86,7 +86,7 @@ jobs:
         # another project); it is a dev tool, not a dependency of the app.
         run: |
           # ForgeUI 1.2.0 pinned to the ThemeForge commit; switch to @v1.2.0 once that tag exists (OWNER_ACTIONS #22)
-          uv pip install "forgeui @ git+https://github.com/LaserLloyd/ThemeForge@d70f6608bdf386fc095d43fc1caec61e88664795"
+          uv pip install "forgeui @ git+https://github.com/LaserLloyd/ThemeForge@d70f6608bdf386fc095d43fc1caec61e88664795"  # scrub-check: allow (git commit pin, not a secret)
           uv run --no-sync python -m forgeui vendor --check
 
       - name: Lint
