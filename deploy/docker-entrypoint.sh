@@ -11,8 +11,9 @@
 #     credential store to /data/backups/<old>-to-<new>-<timestamp>/ (keep the
 #     last 5). The app is not running yet, so the copy is consistent.
 #  4. LLM_BASE_URL (e.g. http://host.docker.internal:1234/v1) is reduced to the
-#     host:port MailForge's [llm] lm_studio_host wants and exported as
-#     MAILFORGE_LLM__LM_STUDIO_HOST, unless that variable is already set.
+#     host:port MailForge's [llm] lm_studio_host wants (https://host:port when the
+#     URL is https, so TLS and the bearer key are never downgraded) and exported
+#     as MAILFORGE_LLM__LM_STUDIO_HOST, unless that variable is already set.
 #  5. The encrypted credential store needs a password: MAILFORGE_KEYRING_PASSWORD,
 #     or the file named by MAILFORGE_KEYRING_PASSWORD_FILE (a Docker secret), is
 #     handed to deploy/container_keyring.py as MAILFORGE_KEYRING_KEY. Never
@@ -90,6 +91,11 @@ pre_upgrade_backup
 if [ -z "${MAILFORGE_LLM__LM_STUDIO_HOST:-}" ] && [ -n "${LLM_BASE_URL:-}" ]; then
     h="${LLM_BASE_URL#*://}"
     h="${h%%/*}"
+    # lm_studio_host keeps an https:// prefix (llm/bridge.py _scheme_of); dropping it
+    # would send requests, and the API key, over plain HTTP.
+    case "$LLM_BASE_URL" in
+        [Hh][Tt][Tt][Pp][Ss]://*) h="https://$h" ;;
+    esac
     MAILFORGE_LLM__LM_STUDIO_HOST="$h"
     export MAILFORGE_LLM__LM_STUDIO_HOST
 fi
