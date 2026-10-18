@@ -1,0 +1,11 @@
+{
+  "_note": "derived from client code: MailForge does not branch on error codes; every refusal must degrade to the sentinel (chat -> empty string, embed -> empty list) so drafts defer (DEFERRED_NO_LLM) and nothing raises. The codes are StudioForge's catalogue, pinned so a change is visible.",
+  "errors": [
+    {"http_status": 507, "body": {"error": {"code": "gpu_leased", "message": "x",
+      "studioforge": {"retry_after_s": 30, "lease": {"holder": "crucibleforge", "kind": "benchmark", "holder_family": "crucibleforge"}}}}},
+    {"http_status": 503, "body": {"error": {"code": "priority_hold", "message": "x", "studioforge": {"retry_after_s": 7}}}},
+    {"http_status": 507, "body": {"error": {"code": "insufficient_vram", "message": "x"}}},
+    {"http_status": 404, "body": {"error": {"code": "model_not_found", "message": "x"}}},
+    {"http_status": 401, "body": {"error": {"code": "unauthorized", "message": "x"}}}
+  ]
+}

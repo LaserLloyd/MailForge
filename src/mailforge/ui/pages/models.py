@@ -16,6 +16,8 @@ from typing import Any
 
 from nicegui import background_tasks, ui
 
+from ...llm.model_ids import describe_mismatch
+
 log = logging.getLogger(__name__)
 
 
@@ -103,6 +105,15 @@ def render(bridge: object | None) -> None:
                 if not models:
                     ui.label("No models reported by LM Studio.").classes("text-grey")
                     return
+                # Say so plainly when the configured ids are not served (a
+                # StudioForge server answers a short LM Studio id with 404).
+                served_ids = [_model_key(m) for m in models]
+                for role, wanted in (("chat", chat_id), ("embedding", embed_id)):
+                    note = describe_mismatch(str(wanted or ""), served_ids, role)
+                    if note:
+                        ui.label(note).classes("text-body2").style(
+                            "color: var(--warning-text); font-weight: 600"
+                        )
                 loaded_keys = {str(chat_id), str(embed_id)}
                 rows: list[dict[str, Any]] = []
                 for model in models:

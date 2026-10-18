@@ -1,0 +1,15 @@
+{
+  "_note": "derived from client code (llm/bridge.py _post_chat): POST /v1/chat/completions",
+  "expect_request_keys": ["model", "messages", "temperature", "priority"],
+  "expect_request_keys_with_schema": ["model", "messages", "temperature", "priority", "response_format"],
+  "expect_priority": 2,
+  "expect_request_headers": {"X-SF-Client": "mailforge"},
+  "response_content": {
+    "choices": [{"index": 0, "message": {"role": "assistant", "content": "hello"}, "finish_reason": "stop"}],
+    "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+    "studioforge": {"future_additive_field": true}
+  },
+  "response_reasoning_only": {
+    "choices": [{"index": 0, "message": {"role": "assistant", "content": "", "reasoning_content": "{\"ok\": true}"}}]
+  }
+}

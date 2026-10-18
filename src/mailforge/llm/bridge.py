@@ -45,6 +45,27 @@ except Exception:  # ImportError, or SDK import-time errors
 # Embedding dimension required to match the vec0 FLOAT[768] column (spec §6/§7).
 EMBED_DIM = 768
 
+# Shared name for "the StudioForge API key", honoured after the env var named by
+# ``llm.api_key_env`` (default ``MAILFORGE_LLM_API_KEY``).
+SHARED_API_KEY_ENV = "STUDIOFORGE_API_KEY"
+
+
+def resolve_llm_api_key(llm: Any) -> str:
+    """The bearer key for ``llm.lm_studio_host``, or ``""`` when none is set.
+
+    Read from the environment only (config.toml names the variable, it never
+    holds the key). The value is never logged or echoed anywhere.
+    """
+    import os
+
+    names = [str(getattr(llm, "api_key_env", "") or ""), SHARED_API_KEY_ENV]
+    for name in names:
+        if name:
+            value = (os.environ.get(name) or "").strip()
+            if value:
+                return value
+    return ""
+
 
 def _fit_dim(vectors: list[list[float]], model: str) -> list[list[float]]:
     """Fit embeddings to the store's ``EMBED_DIM`` column.
@@ -103,6 +124,29 @@ def _inline_refs(schema: dict[str, Any]) -> dict[str, Any]:
     return resolve(schema, frozenset())
 
 
+def _failure_hint(exc: Exception, model: str) -> str:
+    """A plain-language pointer for the two failures people actually hit.
+
+    Appended to the existing warning only; the caller still gets the same ``""``
+    sentinel. 404 on a chat call almost always means the model id is not one
+    the server serves (StudioForge ids are ``publisher/repo/stem``); 401/403
+    means the server wants an API key.
+    """
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status == 404:
+        return (
+            f" -- HTTP 404: the server does not know model {model!r}. StudioForge "
+            "ids are publisher/repo/stem; run `mailforge llm-check` to compare "
+            "against what it serves."
+        )
+    if status in (401, 403):
+        return (
+            f" -- HTTP {status}: the server requires an API key. Export it in the "
+            "env var named by llm.api_key_env (default MAILFORGE_LLM_API_KEY)."
+        )
+    return ""
+
+
 def _normalize_host(host: str) -> str:
     """Return a bare ``host:port`` (no scheme) for the SDK, tolerating URLs."""
     h = host.strip()
@@ -138,6 +182,7 @@ class LMStudioBridge:
         heavy_base_url: str = "",
         heavy_model: str = "",
         heavy_key: str = "",
+        api_key: str = "",
     ) -> None:
         self.host = _normalize_host(host)
         self.model_id = model_id
@@ -150,6 +195,25 @@ class LMStudioBridge:
         self.heavy_base_url = heavy_base_url.rstrip("/")
         self.heavy_model = heavy_model
         self.heavy_key = heavy_key
+        # Bearer key for the LOCAL server (StudioForge enforces keys on a
+        # non-loopback bind). Sent on every request to ``self.base_url``; the
+        # heavy-lift endpoint has its own ``heavy_key``. Never logged.
+        self._api_key = api_key or ""
+
+    def __repr__(self) -> str:  # never leak the keys through a debug print
+        return (
+            f"LMStudioBridge(host={self.host!r}, model_id={self.model_id!r}, "
+            f"embed_id={self.embed_id!r}, auth={'key' if self._api_key else 'none'})"
+        )
+
+    @property
+    def has_api_key(self) -> bool:
+        """Whether a bearer key is configured for the local server (never the key)."""
+        return bool(self._api_key)
+
+    def _auth_headers(self) -> dict[str, str]:
+        """``Authorization: Bearer <key>`` for the local server, when configured."""
+        return {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
 
     @property
     def has_heavy(self) -> bool:
@@ -180,6 +244,7 @@ class LMStudioBridge:
             heavy_base_url=heavy_base,
             heavy_model=heavy_model,
             heavy_key=heavy_key,
+            api_key=resolve_llm_api_key(llm),
         )
 
     # ----- transport helpers -----
@@ -205,7 +270,16 @@ class LMStudioBridge:
         # SDK validator is both stricter and dramatically slower for healthy
         # remote servers.
         try:
-            r = httpx.get(f"{self.base_url}/models", timeout=5.0)
+            r = httpx.get(
+                f"{self.base_url}/models", headers=self._auth_headers(), timeout=5.0
+            )
+            if r.status_code in (401, 403):
+                log.warning(
+                    "LLM server answered HTTP %s to /v1/models: it requires an API "
+                    "key. Export it in the env var named by llm.api_key_env "
+                    "(default MAILFORGE_LLM_API_KEY).",
+                    r.status_code,
+                )
             return r.status_code == 200
         except Exception as e:
             log.debug("LM Studio /v1/models probe failed: %s", e)
@@ -249,7 +323,7 @@ class LMStudioBridge:
         # take minutes to fail against an otherwise healthy remote host.
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as c:
-                r = await c.get(f"{self.base_url}/models")
+                r = await c.get(f"{self.base_url}/models", headers=self._auth_headers())
                 r.raise_for_status()
                 return list(r.json().get("data", []))
         except Exception as e:
@@ -297,6 +371,7 @@ class LMStudioBridge:
             messages,
             response_format=response_format,
             temperature=temperature,
+            api_key=self._api_key,
         )
 
     async def _post_chat(
@@ -348,7 +423,7 @@ class LMStudioBridge:
             # it so downstream JSON extraction still works.
             return msg.get("content") or msg.get("reasoning_content") or ""
         except Exception as e:
-            log.warning("chat POST to %s failed: %s", base_url, e)
+            log.warning("chat POST to %s failed: %s%s", base_url, e, _failure_hint(e, model))
             return ""
 
     async def _chat_heavy(
@@ -441,6 +516,30 @@ class LMStudioBridge:
             temperature=temperature,
         )
         return coerce_dict(raw2)
+
+    async def model_id_notes(self) -> list[str]:
+        """Plain-language problems with the configured chat/embedding ids.
+
+        Empty when the ids are served, or when the server's inventory cannot be
+        read (down, or it refused the key: nothing is known, so nothing is
+        claimed). Pure diagnostics; changes no state and no routing.
+        """
+        from .model_ids import describe_mismatch
+
+        try:
+            models = await self.list_models()
+        except Exception:
+            return []
+        ids = [
+            str(m.get("id") or m.get("model_key") or m.get("path") or "")
+            for m in models
+            if isinstance(m, dict)
+        ]
+        notes = [
+            describe_mismatch(self.model_id, ids, "chat"),
+            describe_mismatch(self.embed_id, ids, "embedding"),
+        ]
+        return [n for n in notes if n]
 
     # ----- standalone robustness: adapt to whatever LM Studio is serving -----
     async def resolve_served_models(self) -> dict[str, Any]:
@@ -539,7 +638,7 @@ class LMStudioBridge:
                         r = await c.post(
                             f"{self.base_url}/embeddings",
                             json=payload,
-                            headers={"X-SF-Client": "mailforge"},
+                            headers={"X-SF-Client": "mailforge", **self._auth_headers()},
                         )
                         if r.status_code >= 400:
                             raise RuntimeError(
