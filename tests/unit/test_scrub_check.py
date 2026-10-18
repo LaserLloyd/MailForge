@@ -270,3 +270,25 @@ def test_files_json_exemption_covers_sha256_digests_only():
     assert blobs(f'"note": "{token}",', files_json)
     assert blobs(f'"x": "{short_hex}",', files_json)
     assert blobs(f'"ui-theme.css": "{digest}",', Path("src/mailforge/ui/static/ui-theme/themes.json"))
+
+
+def test_git_commit_pin_in_a_vcs_requirement_is_not_a_secret():
+    """`pkg @ git+https://host/owner/repo@<40 hex>` pins a public commit: allowed, but
+    only that exact shape. Samples are built at run time so this file stays clean."""
+    import hashlib
+
+    sha = hashlib.sha1(b"pin").hexdigest()  # 40 hex
+    longer = sha + "ab"  # 42 hex: not a sha-1
+    pin = f"git+https://github.com/some-org/some-repo@{sha}"
+
+    def blobs(line):
+        return [h for h in scrub.scan_text(line, Path("ci.yml")) if h.category == "secret-blob"]
+
+    assert blobs(f'uv pip install "pkg @ {pin}"') == []
+    assert blobs(f'uv pip install "pkg @ {pin}" --hash {sha}')  # same sha elsewhere on the line
+    assert blobs(f'uv pip install "pkg @ git+https://github.com/some-org/some-repo@{longer}"')
+    assert blobs(f"token_ref: {sha}")  # a bare sha is still a blob
+    assert blobs(f"https://github.com/some-org/some-repo@{sha}")  # not a git+https requirement
+    # the pin exemption is for secret-blob only: other rules still fire on the line
+    other = scrub.scan_text(f'"pkg @ {pin}" # 192.168.222.11', Path("ci.yml"))  # scrub-check: allow
+    assert {h.category for h in other} == {"private-ip"}

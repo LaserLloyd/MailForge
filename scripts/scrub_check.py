@@ -246,6 +246,20 @@ VENDORED_THEME = "src/mailforge/ui/static/ui-theme/"
 VENDORED_CHECKSUMS = VENDORED_THEME + "files.json"
 _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 
+#: A pip VCS requirement pinned to a full commit sha, e.g.
+#: ``pkg @ git+https://github.com/<owner>/<repo>@<40 hex>``. A commit sha of a
+#: public repository is an address, not a credential, and pinning to one is the
+#: reproducible way to depend on an untagged commit. The exemption is as narrow
+#: as it can be made: only the ``secret-blob`` rule, only an EXACTLY 40-hex
+#: match (a longer run is not a sha-1), and only when that match is the ref of a
+#: ``git+https://<host>/<owner>/<repo>@`` URL. Any other hex blob on the same
+#: line, and every other rule, still applies.
+_GIT_COMMIT_PIN = re.compile(r"git\+https://[\w.-]+(?:/[\w.-]+){2}@([0-9a-f]{40})(?![0-9A-Za-z])")
+
+
+def _is_git_commit_pin(line: str, match: re.Match[str]) -> bool:
+    return any(pin.span(1) == match.span() for pin in _GIT_COMMIT_PIN.finditer(line))
+
 
 def _is_vendored_theme(path: Path) -> bool:
     return VENDORED_THEME in path.as_posix() + ("/" if path.is_dir() else "")
@@ -279,6 +293,17 @@ def iter_files(targets: Iterable[Path]) -> Iterator[Path]:
             yield path
 
 
+def _first_match(rule: Rule, line: str) -> re.Match[str] | None:
+    """The first hit of ``rule`` on ``line``; a ``secret-blob`` that is the ref of a
+    pinned VCS requirement (_GIT_COMMIT_PIN) does not count, so a second blob on the
+    same line is still found."""
+    if rule.category != "secret-blob":
+        return rule.pattern.search(line)
+    return next(
+        (m for m in rule.pattern.finditer(line) if not _is_git_commit_pin(line, m)), None
+    )
+
+
 def scan_text(text: str, path: Path = Path("<text>"),
               rules: tuple[Rule, ...] | None = None) -> list[Hit]:
     """Every denylist hit in ``text``, honouring the allowlist."""
@@ -301,7 +326,7 @@ def scan_text(text: str, path: Path = Path("<text>"),
             continue
         licence_notice = _is_copyright_notice(path, line)
         for rule in rules:
-            match = rule.pattern.search(line)
+            match = _first_match(rule, line)
             if not match:
                 continue
             if rule.category == LOCAL_CATEGORY and licence_notice:
