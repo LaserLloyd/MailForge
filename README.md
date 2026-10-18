@@ -110,19 +110,31 @@ For real mail you need a **local OpenAI-compatible LLM server**
 OpenAI-compatible endpoint, ...) serving a chat model and an embedding model.
 
 ```bash
-# 4. set up your real account: stores credentials in your OS keyring
+# 4. check the LLM server and the model ids MailForge will ask for (see below)
+mailforge llm-check
+
+# 5. set up your real account: stores credentials in your OS keyring
 mailforge setup-wizard
 
-# 5. run it
+# 6. run it
 mailforge serve
 
-# 6. (optional) install as a background service that survives reboot
+# 7. (optional) install as a background service that survives reboot
 mailforge service install
 ```
 
 `mailforge serve` prints a `http://127.0.0.1:<port>/?token=...` URL: open it. The
 token is one-shot and upgrades to a signed session cookie. Review each draft and
 **Approve / Edit / Reject**. Only Approve (or Edit → Approve) sends.
+
+**Model ids.** Out of the box MailForge asks the server for the LM Studio catalogue
+ids `qwen/qwen3.6-35b-a3b` (chat) and `text-embedding-nomic-embed-text-v1.5`
+(embeddings). A server that does not list those ids (StudioForge, for example,
+names models `publisher/repo/stem`) makes `mailforge llm-check` exit 1 and say so.
+Set the ids your server lists in the `[llm]` section of `config.toml`
+(`chat_model`, `embedding_model`; see [Configuration](#configuration)) or
+per run with the environment variables `MAILFORGE_LLM__CHAT_MODEL` and
+`MAILFORGE_LLM__EMBEDDING_MODEL`, then run `mailforge llm-check` again.
 
 The Windows service needs the third-party `WinSW-x64.exe`, which is not
 committed here; vendor it first as described in
@@ -220,7 +232,7 @@ Restore, bind-mount ownership (`PUID`/`PGID`), credentials and upgrades: [`docs/
 | `mailforge rescreen [--site <id>] [--apply]` | Re-apply spam screening and category rules (e.g. GitHub) to stored mail; dry run by default |
 | `mailforge audit-verify` | Verify the audit hash chain is intact |
 | `mailforge health` | Print the running service's `/healthz` JSON (exit 0 only when every mailbox is healthy; a fresh install with no mailbox is `degraded`, 503) |
-| `mailforge llm-check` | Is the LLM server reachable, is the API key accepted, are the configured model ids served? (exit 0 / 1 fix needed / 2 unreachable) |
+| `mailforge llm-check` | Is the LLM server reachable, is the API key accepted, are the configured model ids served? (exit 0 / 1 fix needed / 2 unreachable; default ids and overrides: see [Next steps](#next-steps-your-real-mailbox)) |
 | `mailforge eval-screening` | Leave-one-out replay of your own screening labels against the current rules |
 | `mailforge service install\|start\|stop\|desktop` | Manage the background service / launcher |
 | `mailforge redteam` | Run offline red-team suites (garak / promptfoo) |
