@@ -73,6 +73,40 @@ def prompt_override_dir() -> Path:
     return config_dir() / "prompts"
 
 
+# --- Web UI binding (container / reverse-proxy deployments) -------------------
+#: By default the UI binds 127.0.0.1 on a random persisted port and answers only
+#: ``Host: 127.0.0.1:PORT`` / ``localhost:PORT``. A container cannot be reached
+#: that way (the published port is not loopback inside it, and the browser's
+#: Host header carries the *published* port), so these three variables relax
+#: exactly those three things and nothing else; unset, behaviour is unchanged.
+UI_HOST_ENV = "MAILFORGE_UI_HOST"
+UI_PORT_ENV = "MAILFORGE_UI_PORT"
+UI_ALLOWED_HOSTS_ENV = "MAILFORGE_UI_ALLOWED_HOSTS"
+
+
+def ui_host() -> str:
+    """Interface the UI binds: ``MAILFORGE_UI_HOST`` or ``127.0.0.1``."""
+    return os.environ.get(UI_HOST_ENV, "").strip() or "127.0.0.1"
+
+
+def ui_port_override() -> int | None:
+    """Fixed UI port from ``MAILFORGE_UI_PORT`` (None: use the persisted random one)."""
+    raw = os.environ.get(UI_PORT_ENV, "").strip()
+    if not raw:
+        return None
+    try:
+        port = int(raw)
+    except ValueError:
+        return None
+    return port if 0 < port < 65536 else None
+
+
+def ui_extra_allowed_hosts() -> set[str]:
+    """Extra ``Host`` header values to accept (comma-separated ``host:port``)."""
+    raw = os.environ.get(UI_ALLOWED_HOSTS_ENV, "")
+    return {h.strip().lower() for h in raw.split(",") if h.strip()}
+
+
 def desktop_entry_path() -> Path:
     """``~/.local/share/applications/mailforge.desktop`` (XDG app drawer)."""
     base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
