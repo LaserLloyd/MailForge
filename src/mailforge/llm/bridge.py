@@ -124,7 +124,11 @@ def _inline_refs(schema: dict[str, Any]) -> dict[str, Any]:
     return resolve(schema, frozenset())
 
 
-def _failure_hint(exc: Exception, model: str) -> str:
+LOCAL_KEY_HINT = "llm.api_key_env (default MAILFORGE_LLM_API_KEY)"
+HEAVY_KEY_HINT = "openclaw.heavy_lift_key_env (default MAILFORGE_HEAVY_KEY)"
+
+
+def _failure_hint(exc: Exception, model: str, key_hint: str = LOCAL_KEY_HINT) -> str:
     """A plain-language pointer for the two failures people actually hit.
 
     Appended to the existing warning only; the caller still gets the same ``""``
@@ -142,7 +146,7 @@ def _failure_hint(exc: Exception, model: str) -> str:
     if status in (401, 403):
         return (
             f" -- HTTP {status}: the server requires an API key. Export it in the "
-            "env var named by llm.api_key_env (default MAILFORGE_LLM_API_KEY)."
+            f"env var named by {key_hint}."
         )
     return ""
 
@@ -395,6 +399,7 @@ class LMStudioBridge:
         response_format: dict[str, Any] | None = None,
         temperature: float = 0.2,
         api_key: str = "",
+        key_hint: str = LOCAL_KEY_HINT,
     ) -> str:
         """POST one OpenAI-compat chat completion to ``base_url``.
 
@@ -435,7 +440,9 @@ class LMStudioBridge:
             # it so downstream JSON extraction still works.
             return msg.get("content") or msg.get("reasoning_content") or ""
         except Exception as e:
-            log.warning("chat POST to %s failed: %s%s", base_url, e, _failure_hint(e, model))
+            log.warning(
+                "chat POST to %s failed: %s%s", base_url, e, _failure_hint(e, model, key_hint)
+            )
             return ""
 
     async def _chat_heavy(
@@ -453,6 +460,7 @@ class LMStudioBridge:
             response_format=response_format,
             temperature=temperature,
             api_key=self.heavy_key,
+            key_hint=HEAVY_KEY_HINT,
         )
 
     async def chat_structured(

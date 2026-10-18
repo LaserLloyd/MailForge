@@ -662,10 +662,27 @@ def llm_check_command(
         typer.secho(f"UNEXPECTED: GET /v1/models answered HTTP {resp.status_code}", fg="red")
         raise typer.Exit(code=1)
     try:
-        ids = [str(m.get("id") or "") for m in resp.json().get("data", []) if isinstance(m, dict)]
+        body = resp.json()
     except ValueError:
-        ids = []
+        body = None
+    items = body.get("data") if isinstance(body, dict) else None
+    ids = [
+        str(m.get("id") or m.get("model_key") or "")
+        for m in (items if isinstance(items, list) else [])
+        if isinstance(m, dict)
+    ]
+    ids = [i for i in ids if i]
     typer.echo(f"Served:     {len(ids)} model(s)")
+    if not ids:
+        # Nothing to compare against: never call that "OK" (wrong port, a non-OpenAI
+        # answer, or a server with no models).
+        typer.secho(
+            "NO MODELS: GET /v1/models answered 200 but listed no models. Is "
+            "llm.lm_studio_host the OpenAI-compatible API (not a panel), and does "
+            "the server have a model?",
+            fg="yellow",
+        )
+        raise typer.Exit(code=1)
     problems = [
         p
         for p in (

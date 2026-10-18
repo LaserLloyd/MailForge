@@ -238,3 +238,33 @@ def test_an_https_host_is_not_downgraded_to_plain_http(host, expected):
     bridge = LMStudioBridge(host, "m", "e", api_key=KEY)
     assert bridge.base_url == expected
     assert "://" not in bridge.host          # the SDK still gets a bare host:port
+
+
+@pytest.mark.parametrize(
+    "payload", [[{"id": "a/b/c"}], {"data": "nope"}, {"data": []}, {"object": "list"}]
+)
+def test_llm_check_never_says_ok_without_a_model_list(monkeypatch, payload):
+    """A 200 that is not an OpenAI model list (wrong port, a proxy page, no models)
+    must not traceback and must not print OK / exit 0."""
+    from typer.testing import CliRunner
+
+    from mailforge.cli import app
+
+    with FakeStudioForge() as sf:
+        sf.route("GET", "/v1/models", 200, payload)
+        settings = Settings(llm=LLMSettings(lm_studio_host=sf.url.removeprefix("http://")))
+        monkeypatch.setattr("mailforge.config.load_settings", lambda *a, **k: settings)
+        result = CliRunner().invoke(app, ["llm-check"])
+    assert result.exception is None or isinstance(result.exception, SystemExit), result.exception
+    assert result.exit_code == 1, result.output
+    assert "NO MODELS" in result.output and "OK" not in result.output.split("NO MODELS")[1]
+
+
+def test_heavy_lift_401_hint_names_the_heavy_key_variable(caplog):
+    with _server() as local, FakeStudioForge() as heavy:
+        heavy.route("POST", "/v1/chat/completions", 401, {"error": {"code": "unauthorized"}})
+        bridge = _bridge(local, heavy_base_url=heavy.url + "/v1", heavy_model="big")
+        with caplog.at_level(logging.WARNING):
+            assert asyncio.run(bridge._chat_heavy([{"role": "user", "content": "x"}])) == ""
+    assert "heavy_lift_key_env" in caplog.text and "MAILFORGE_HEAVY_KEY" in caplog.text
+    assert "MAILFORGE_LLM_API_KEY" not in caplog.text
