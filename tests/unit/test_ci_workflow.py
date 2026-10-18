@@ -14,6 +14,7 @@ import pytest
 yaml = pytest.importorskip("yaml")
 
 WORKFLOW = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"
+CONTAINERS = WORKFLOW.with_name("containers.yml")
 
 
 @pytest.fixture(scope="module")
@@ -61,6 +62,16 @@ def test_the_privacy_job_fetches_full_history(ci):
 #: Majors still receiving updates. v4/v5 are the end-of-life pair this repo
 #: shipped with; the sibling repositories already run these.
 MINIMUM_MAJOR = {"actions/checkout": 6, "astral-sh/setup-uv": 10}
+
+
+def test_the_container_workflow_runs_on_the_same_branches_as_ci(ci):
+    """The repository's default branch is ``master`` (CI lists both names). A
+    container workflow that triggers on ``main`` only never builds a default-
+    branch push, so the image check would stay silent until the first tag."""
+    containers = yaml.safe_load(CONTAINERS.read_text(encoding="utf-8"))
+    ci_branches = set(ci[True]["push"]["branches"])       # PyYAML reads ``on:`` as True
+    image_branches = set(containers[True]["push"]["branches"])
+    assert ci_branches <= image_branches, (ci_branches, image_branches)
 
 
 def test_no_deprecated_action_majors(ci):

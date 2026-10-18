@@ -63,7 +63,7 @@ ARG CREATED
 LABEL org.opencontainers.image.title="MailForge" \
       org.opencontainers.image.description="Local-LLM email assistant that triages, screens and drafts - and never auto-sends" \
       org.opencontainers.image.source="https://github.com/LaserLloyd/MailForge" \
-      org.opencontainers.image.documentation="https://github.com/LaserLloyd/MailForge/blob/main/docs/deploy/docker.md" \
+      org.opencontainers.image.documentation="https://github.com/LaserLloyd/MailForge/blob/HEAD/docs/deploy/docker.md" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${REVISION}" \
