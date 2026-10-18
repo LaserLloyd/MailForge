@@ -69,13 +69,9 @@ stays safe before you install any of the optional ML models.
 
 ---
 
-## Install & run
+## Quickstart (3 steps)
 
-You need this package and a **local OpenAI-compatible LLM server**
-([LM Studio](https://lmstudio.ai), llama.cpp's server, vLLM, Ollama's
-OpenAI-compatible endpoint, …) serving a chat model and an embedding model.
-
-### Linux
+Try it with fictional data first: no mailbox and no LLM server are needed for the demo.
 
 ```bash
 # 1. install uv (the Python package runner) if you don't have it.
@@ -84,13 +80,37 @@ OpenAI-compatible endpoint, …) serving a chat model and an embedding model.
 curl -LsSf https://astral.sh/uv/install.sh | sh
 source "$HOME/.local/bin/env"   # or open a new shell: puts uv (and later mailforge) on PATH
 
-# 2. install the app (from a checkout or an unpacked release), with the same extras the Docker image uses
+# 2. from a checkout or an unpacked release, install the app with the same extras the Docker image uses
 uv tool install ".[llm,rag]"
 
-# 3. look around first, with fictional data and no mailbox
+# 3. run the demo: fictional mail, a throwaway home, nothing real touched
 mailforge demo
+```
 
-# 4. set up your real account — stores credentials in your OS keyring
+On Windows (PowerShell) step 1 is `irm https://astral.sh/uv/install.ps1 | iex`; steps 2 and 3 are identical.
+
+`mailforge demo` opens the approval UI in your browser (add `--no-browser` to just
+print the URL; the line to look for is `MailForge UI: http://127.0.0.1:<port>/...`).
+Review each draft and **Approve / Edit / Reject**; in the demo nothing is ever sent.
+Stop it with Ctrl-C and the demo directory is deleted.
+
+The `[llm,rag]` extras are the same two the Docker image installs by default
+(`ARG EXTRAS="llm rag"`): `llm` adds the LM Studio SDK bridge to your local model
+server, and `rag` adds the sqlite-vec vector index and the PDF/DOCX document
+readers behind retrieval over your own mail and the Knowledge library. Without
+`rag`, vector search is disabled and uploads fall back to plain-text reading, so
+plain `uv tool install .` is only for a bare-bones trial.
+
+---
+
+## Next steps: your real mailbox
+
+For real mail you need a **local OpenAI-compatible LLM server**
+([LM Studio](https://lmstudio.ai), llama.cpp's server, vLLM, Ollama's
+OpenAI-compatible endpoint, ...) serving a chat model and an embedding model.
+
+```bash
+# 4. set up your real account: stores credentials in your OS keyring
 mailforge setup-wizard
 
 # 5. run it
@@ -100,31 +120,15 @@ mailforge serve
 mailforge service install
 ```
 
-### Windows (PowerShell)
-
-```powershell
-irm https://astral.sh/uv/install.ps1 | iex
-uv tool install ".[llm,rag]"
-mailforge setup-wizard
-mailforge service install        # installs a Windows service via WinSW
-```
+`mailforge serve` prints a `http://127.0.0.1:<port>/?token=...` URL: open it. The
+token is one-shot and upgrades to a signed session cookie. Review each draft and
+**Approve / Edit / Reject**. Only Approve (or Edit → Approve) sends.
 
 The Windows service needs the third-party `WinSW-x64.exe`, which is not
 committed here; vendor it first as described in
 [`installer/winsw/README.md`](installer/winsw/README.md). Without it
-`service install` writes the descriptor and tells you where the binary is
+`mailforge service install` writes the descriptor and tells you where the binary is
 expected, but installs nothing.
-
-Then open the `http://127.0.0.1:<port>/?token=…` URL it prints — the token is
-one-shot and upgrades to a signed session cookie. Review each draft and
-**Approve / Edit / Reject**. Only Approve (or Edit → Approve) sends.
-
-The `[llm,rag]` extras are the same two the Docker image installs by default
-(`ARG EXTRAS="llm rag"`): `llm` adds the LM Studio SDK bridge to your local model
-server, and `rag` adds the sqlite-vec vector index and the PDF/DOCX document
-readers behind retrieval over your own mail and the Knowledge library. Without
-`rag`, vector search is disabled and uploads fall back to plain-text reading, so
-plain `uv tool install .` is only for a bare-bones trial.
 
 ### Optional capability tiers
 
