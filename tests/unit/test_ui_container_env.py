@@ -88,3 +88,14 @@ def test_wildcard_bind_is_not_advertised_as_a_url_host():
     assert ui_app._display_host("0.0.0.0") == "127.0.0.1"
     assert ui_app._display_host("::") == "127.0.0.1"
     assert ui_app._display_host("192.0.2.7") == "192.0.2.7"
+
+
+def test_default_ports_also_accept_the_bare_name_browsers_send(monkeypatch):
+    """A browser at https://mail.example.lan sends Host: mail.example.lan and
+    Origin: https://mail.example.lan (no :443); the documented name:443 form must
+    not turn every proxied request into a 403."""
+    monkeypatch.setenv(paths.UI_ALLOWED_HOSTS_ENV, "mail.example.lan:443,plain.example.lan:80,[::1]:443,x.lan:8443")
+    hosts = paths.ui_extra_allowed_hosts()
+    assert {"mail.example.lan", "plain.example.lan", "[::1]"} <= hosts
+    assert "x.lan" not in hosts  # a non-default port is never dropped
+    assert ui_app.allowed_hosts(8090) >= {"mail.example.lan:443", "mail.example.lan"}

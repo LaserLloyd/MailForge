@@ -52,7 +52,7 @@ three things (unset, behaviour is unchanged):
 |---|---|---|
 | `MAILFORGE_UI_HOST` | `0.0.0.0` | interface the UI binds (native default `127.0.0.1`) |
 | `MAILFORGE_UI_PORT` | `8090` | fixed UI port instead of a random persisted one |
-| `MAILFORGE_UI_ALLOWED_HOSTS` | set by compose | extra `Host` header values to accept, comma-separated `host:port`. The browser's `Host` carries the **published** port, so compose sets `localhost:${HOST_PORT}` and `127.0.0.1:${HOST_PORT}`; without this every page answers 403 whenever `HOST_PORT` is not 8090 |
+| `MAILFORGE_UI_ALLOWED_HOSTS` | set by compose | extra `Host` header values to accept, comma-separated `host:port` (or a bare `host`: browsers omit :443/:80, so `name:443` also accepts `name`). The browser's `Host` carries the **published** port, so compose sets `localhost:${HOST_PORT}` and `127.0.0.1:${HOST_PORT}`; without this every page answers 403 whenever `HOST_PORT` is not 8090 |
 
 ## Configuration
 
