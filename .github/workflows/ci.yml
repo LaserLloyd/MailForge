@@ -36,7 +36,7 @@ jobs:
           python3 scripts/scrub_check.py \
             src tests scripts docs installer packaging .github \
             README.md LICENSE CHANGELOG.md CONTRIBUTING.md SECURITY.md \
-            pyproject.toml
+            THIRD_PARTY_NOTICES.md pyproject.toml
 
       - name: Scan the TREE of every commit in the pull request
         if: github.event_name == 'pull_request'
@@ -78,11 +78,26 @@ jobs:
         # hiding behind the heavy stack (and skips multi-GB model downloads).
         run: uv sync --frozen --extra dev
 
+      - name: Vendored ForgeUI bundle matches forgeui.json
+        # ui/static/ui-theme/ is the ForgeUI (ThemeForge) bundle, vendored whole. This fails
+        # on a different version, a stale or hand-edited bundle file, or settings naming a
+        # theme the bundle lacks. Fix: `python -m forgeui vendor` (docs/STYLE-GUIDE.md,
+        # section 2). forgeui comes from the release tag, not PyPI (that name belongs to
+        # another project); it is a dev tool, not a dependency of the app.
+        run: |
+          # ForgeUI 1.2.0 pinned to the ThemeForge commit; switch to @v1.2.0 once that tag exists (OWNER_ACTIONS #22)
+          uv pip install "forgeui @ git+https://github.com/LaserLloyd/ThemeForge@d70f6608bdf386fc095d43fc1caec61e88664795"  # scrub-check: allow (git commit pin, not a secret)
+          uv run --no-sync python -m forgeui vendor --check
+
       - name: Lint
         run: uv run ruff check .
 
       - name: Tests
-        run: uv run pytest -q --junitxml=pytest-results.xml
+        env:
+          # tests/unit/test_forgeui_vendor.py runs `forgeui vendor --check` too; with this set a
+          # missing forgeui package fails the test instead of skipping it.
+          FORGEUI_REQUIRED: "1"
+        run: uv run --no-sync pytest -q --junitxml=pytest-results.xml
 
       - name: Annotate test failures
         # Job logs need a signed-in browser or a token; annotations are on

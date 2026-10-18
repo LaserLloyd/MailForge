@@ -236,3 +236,59 @@ def test_vendored_theme_folder_exempts_only_local_identifiers():
     assert [h.category for h in scrub.scan_text(text, vendored, rules)] == ["private-ip"]
     assert sorted(h.category for h in scrub.scan_text(text, elsewhere, rules)) == [
         scrub.LOCAL_CATEGORY, "private-ip"]
+
+
+def test_vendored_checksum_table_exempts_only_secret_blobs():
+    """ForgeUI's files.json is a table of sha256 digests: not secrets. The exemption is for
+    that one file and that one category; the same digest anywhere else still fails."""
+    digest = "ab" * 32
+    text = '{"files": {"ui-theme.css": "' + digest + '"}}\n'
+    table = Path("src/mailforge/ui/static/ui-theme/files.json")
+    assert scrub.scan_text(text, table) == []
+    elsewhere = Path("src/mailforge/ui/static/ui-theme/ui-theme.css")
+    assert {h.category for h in scrub.scan_text(text, elsewhere)} == {"secret-blob"}
+    assert {h.category for h in scrub.scan_text(text, Path("docs/files.json"))} == {"secret-blob"}
+    key = '"sk-' + "a1" * 12 + '"'  # a real secret shape inside the table is still caught
+    assert scrub.scan_text(key + "\n", table) != []
+
+
+def test_files_json_exemption_covers_sha256_digests_only():
+    """The vendored bundle's files.json may carry its sha256 table; nothing else in it,
+    and no other file, gets the secret-blob exemption. Samples are built at run time so
+    this file itself stays clean for the scanner."""
+    import hashlib
+
+    digest = hashlib.sha256(b"ui-theme.css").hexdigest()
+    token = "Zq9+" * 16  # base64-shaped, 64 chars
+    short_hex = hashlib.sha1(b"x").hexdigest()  # 40 hex: not a sha256
+    files_json = Path("src/mailforge/ui/static/ui-theme/files.json")
+
+    def blobs(line, path):
+        return [h for h in scrub.scan_text(line, path) if h.category == "secret-blob"]
+
+    assert blobs(f'"ui-theme.css": "{digest}",', files_json) == []
+    assert blobs(f'"note": "{token}",', files_json)
+    assert blobs(f'"x": "{short_hex}",', files_json)
+    assert blobs(f'"ui-theme.css": "{digest}",', Path("src/mailforge/ui/static/ui-theme/themes.json"))
+
+
+def test_git_commit_pin_in_a_vcs_requirement_is_not_a_secret():
+    """`pkg @ git+https://host/owner/repo@<40 hex>` pins a public commit: allowed, but
+    only that exact shape. Samples are built at run time so this file stays clean."""
+    import hashlib
+
+    sha = hashlib.sha1(b"pin").hexdigest()  # 40 hex
+    longer = sha + "ab"  # 42 hex: not a sha-1
+    pin = f"git+https://github.com/some-org/some-repo@{sha}"
+
+    def blobs(line):
+        return [h for h in scrub.scan_text(line, Path("ci.yml")) if h.category == "secret-blob"]
+
+    assert blobs(f'uv pip install "pkg @ {pin}"') == []
+    assert blobs(f'uv pip install "pkg @ {pin}" --hash {sha}')  # same sha elsewhere on the line
+    assert blobs(f'uv pip install "pkg @ git+https://github.com/some-org/some-repo@{longer}"')
+    assert blobs(f"token_ref: {sha}")  # a bare sha is still a blob
+    assert blobs(f"https://github.com/some-org/some-repo@{sha}")  # not a git+https requirement
+    # the pin exemption is for secret-blob only: other rules still fire on the line
+    other = scrub.scan_text(f'"pkg @ {pin}" # 192.168.222.11', Path("ci.yml"))  # scrub-check: allow
+    assert {h.category for h in other} == {"private-ip"}

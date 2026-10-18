@@ -3,6 +3,91 @@
 All notable changes to this project are documented here. Dates are ISO-8601.
 Published by Laser Lloyd — https://www.laserlloyd.com
 
+## Unreleased
+
+### Changed
+- **UI theme: ForgeUI 1.2.0.** `ui/static/ui-theme/` was a pre-release copy (`ui-theme
+  2026-09-24 638060cc7dc6`); it is now the pristine ForgeUI 1.2.0 bundle (`ThemeForge 1.2.0
+  82d997e2846d`), vendored by `python -m forgeui vendor` from a new repository-root manifest,
+  `forgeui.json`. The picker gains **Slate**, **High Contrast** and **High Contrast Light**
+  (opt-in themes stay out; Night Red stays in). The theme list, default (`midnight-gold`) and
+  storage key (`mailforge.theme`) now live only in `forgeui.json`; `ui/theme.py` reads a
+  packaged copy (`ui/forgeui.json`, kept identical by a test). The unused `clawchat-compat`
+  and `dispatch-compat` adapters were dropped. Update procedure: `docs/STYLE-GUIDE.md` section 2.
+
+### Added
+- `tests/unit/test_forgeui_vendor.py` and a CI step run `forgeui vendor --check`, so the
+  vendored bundle cannot drift or be hand-edited unnoticed.
+
+### Fixed
+- `scripts/scrub_check.py` no longer reports the bundle's `files.json` sha256 table as
+  `secret-blob` (that one file, that one category, and only 64-hex digests; any other
+  blob in it is still reported; covered by a test).
+- **Container: an `https://` `LLM_BASE_URL` stays https.** The entrypoint reduced it to a
+  bare `host:port`, so the bridge spoke plain HTTP and sent the API key in clear.
+- **Container: `docker compose exec` commands unlock the credential store** (they skip the
+  entrypoint; the keyring helper now reads `MAILFORGE_KEYRING_PASSWORD[_FILE]` itself). A wrong
+  password is a plain "did not unlock ... wrong password?" error, not a `MAC check failed`
+  traceback.
+- **Container: the `compose.puid.yml` override works for a PUID other than 1000** (setpriv
+  `--init-groups` aborted because the read-only image has no passwd entry for that UID).
+- `MAILFORGE_UI_ALLOWED_HOSTS` / `UI_EXTRA_HOSTS`: an entry on `:443`/`:80` also accepts the bare
+  name browsers send, so a TLS reverse proxy no longer gets 403 on every request.
+- The PyInstaller spec bundles `ui/static/` and `ui/forgeui.json` (the UI could not import
+  without the manifest); `[tool.uv] cache-keys` cover every package-data kind.
+- `mailforge llm-check` no longer prints OK when `/v1/models` lists no models or is not a model
+  list; a heavy-lift 401 names `openclaw.heavy_lift_key_env`, not the local key variable.
+- Tests: the hermetic socket guard now also covers asyncio on Windows (the proactor loop
+  bypassed it, so async HTTP clients could reach real ports).
+
+## 0.6.0 — 2026-10-18
+
+### Added
+- **API key for the LLM server.** `Authorization: Bearer <key>` is now sent on
+  every request to `llm.lm_studio_host` (probe, model list, chat, embeddings),
+  so MailForge works with a StudioForge gateway that enforces keys. The key
+  comes from the environment only: the variable named by the new
+  `[llm] api_key_env` (default `MAILFORGE_LLM_API_KEY`), with
+  `STUDIOFORGE_API_KEY` as a fallback. It is never written to `config.toml`,
+  logged, or shown. The separate heavy-lift endpoint keeps its own key.
+- **`mailforge llm-check`**: reports whether the server is reachable, whether
+  an API key is set and accepted, and whether the configured chat and
+  embedding model ids are ones the server serves (exit 0 ok, 1 fix needed, 2
+  unreachable).
+- Plain-language model-id mismatch message on the Models page, in
+  `mailforge bridge status` (`model.notes`, additive) and in the chat warning
+  log. StudioForge names models `publisher/repo/stem`; the shipped defaults
+  are LM Studio ids, which it answers with HTTP 404. Behaviour is unchanged:
+  the draft is still deferred, but now the reason is stated.
+- StudioForge contract tests (`tests/contract_studioforge/`) pinning the
+  OpenAI-compatible surface MailForge relies on, derived from the client code.
+- `THIRD_PARTY_NOTICES.md` and `docs/LICENSING.md`: `html2text` is
+  GPL-3.0-or-later and a core dependency. It stays (owner decision); the notes
+  describe the obligations for a bundled installer and the MIT replacements
+  (`markdownify`, `html-to-markdown`) with the files they would touch.
+
+### Changed
+- Tests are hermetic: a socket guard refuses every connection except to
+  ephemeral loopback ports a test opens itself, and every test runs on the
+  heuristic fallbacks even when the `security-ml` extra is installed (no Hugging
+  Face or spaCy downloads). Tests that exercise the model tier are marked `ml`
+  and skip unless the weights are already cached.
+- Docs and comments that pointed the heavy-lift example at the StudioForge
+  panel port (`:8080`) now point at the gateway (`http://127.0.0.1:1234/v1`).
+
+### Fixed
+- `[llm] lm_studio_host` written as an `https://` URL is no longer downgraded
+  to plain HTTP (which would have sent the new bearer key in clear); the scheme
+  is kept for every request. The LM Studio SDK path still receives a bare
+  `host:port`.
+- The container workflow now also runs on pushes to `master` (the default
+  branch), not only `main`.
+
+### Upgrading
+- Nothing to do for existing installs. To use an authenticated server, export
+  `MAILFORGE_LLM_API_KEY` and run `mailforge llm-check`. Against StudioForge,
+  set `[llm] chat_model` and `embedding_model` to ids the server lists.
+
 ## 0.5.0 — 2026-10-10
 
 ### Added

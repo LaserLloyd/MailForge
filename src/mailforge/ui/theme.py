@@ -1,9 +1,10 @@
 """Shared UI theme + app shell — see docs/STYLE-GUIDE.md (the canonical guide).
 
-Colours come from the shared theme folder static/ui-theme/ (every theme the
-picker offers; generated files, replaced wholesale to update — never edited
-here). This module writes only layout and component styles, and those read
-contract tokens alone, so they follow whichever theme is picked. A labeled
+Colours come from the shared theme folder static/ui-theme/ (the ForgeUI
+bundle: every theme the picker offers; generated files, re-vendored whole by
+`python -m forgeui vendor` — never edited here). This module writes only layout
+and component styles, and those read contract tokens alone, so they follow
+whichever theme is picked. A labeled
 navigation drawer (with the theme picker at its foot), flat cards with 1px
 borders, system font fallbacks (the UI must work fully offline).
 
@@ -20,6 +21,7 @@ this module is presentation only.
 
 from __future__ import annotations
 
+import json
 import logging
 from contextlib import contextmanager
 from pathlib import Path
@@ -44,19 +46,23 @@ NAV: list[tuple[str, str, str, str]] = [
     ("settings", "Settings", "settings", "/settings"),
 ]
 
-# The themes come from the shared drop-in folder static/ui-theme/ (generated
-# files, never edited here: to update the themes, replace the whole folder, see
-# docs/STYLE-GUIDE.md "Themes"). It is served at THEME_URL with no-cache, so a
-# replaced folder is live on the next page load. MailForge's own settings for it
-# are THEME_SETTINGS, written onto the runtime's <script> tag; a theme added to
-# that list needs a restart.
+# The themes come from the shared drop-in folder static/ui-theme/: the ForgeUI
+# (ThemeForge) bundle, written whole by `python -m forgeui vendor` and never
+# edited here (docs/STYLE-GUIDE.md "Themes"). It is served at THEME_URL with
+# no-cache, so a re-vendored folder is live on the next page load. MailForge's
+# own settings for it (the picker's themes, the default, the storage key) live
+# in ONE place, the forgeui.json manifest: THEME_SETTINGS reads them and writes
+# them onto the runtime's <script> tag; a theme added there needs a restart.
 THEME_DIR = Path(__file__).resolve().parent / "static" / "ui-theme"
 THEME_URL = "/mf-theme"
-THEME_SETTINGS = {
-    "themes": ["midnight-gold", "glacier", "forest", "purple", "paper", "daylight", "night-red"],
-    "default": "midnight-gold",
-    "storage_key": "mailforge.theme",
-}
+#: The manifest as installed: a byte copy of the repository-root forgeui.json that
+#: travels with the package (the wheel, the container image and the frozen build have
+#: no repository root). tests/unit/test_forgeui_vendor.py fails if the two differ.
+MANIFEST_PATH = Path(__file__).resolve().parent / "forgeui.json"
+_MANIFEST: dict[str, Any] = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+THEME_SETTINGS: dict[str, Any] = dict(_MANIFEST["settings"])
+#: App-owned stylesheets the manifest lists under extra_files (loaded after the adapter).
+THEME_EXTRA_CSS: tuple[str, ...] = tuple(t for t in _MANIFEST.get("extra_files", {}) if t.endswith(".css"))
 
 
 def theme_version() -> str:
@@ -72,16 +78,21 @@ def _theme_head() -> str:
     painted before anything else), then the base layer, the Quasar adapter,
     MailForge's own CSS, and the tokens + Quasar mapping last so they win ties."""
     v = THEME_SETTINGS
+    extra = "".join(f'<link rel="stylesheet" href="{THEME_URL}/{rel}">\n' for rel in THEME_EXTRA_CSS)
+    optional = "".join(
+        f' data-{key.replace("_", "-")}="{v[key]}"' for key in ("default_dark", "default_light") if v.get(key)
+    )
     return (
         f'<script src="{THEME_URL}/ui-theme.js"'
         f' data-themes="{",".join(v["themes"])}"'
         f' data-default="{v["default"]}"'
-        f' data-storage-key="{v["storage_key"]}"></script>\n'
+        f' data-storage-key="{v["storage_key"]}"{optional}></script>\n'
         f'<script src="{THEME_URL}/adapters/quasar.js"></script>\n'
         f'<link rel="stylesheet" href="{THEME_URL}/ui-theme-base.css">\n'
         f"<style>{_CSS}</style>\n"
         f'<link rel="stylesheet" href="{THEME_URL}/ui-theme.css">\n'
         f'<link rel="stylesheet" href="{THEME_URL}/adapters/quasar.css">\n'
+        f"{extra}"
     )
 
 

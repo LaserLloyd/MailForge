@@ -1,0 +1,22 @@
+{
+  "dest": "src/mailforge/ui/static/ui-theme",
+  "version": "1.2",
+  "adapters": ["quasar"],
+  "extra_files": {},
+  "settings": {
+    "themes": [
+      "midnight-gold",
+      "glacier",
+      "forest",
+      "purple",
+      "paper",
+      "daylight",
+      "slate",
+      "high-contrast",
+      "high-contrast-light",
+      "night-red"
+    ],
+    "default": "midnight-gold",
+    "storage_key": "mailforge.theme"
+  }
+}

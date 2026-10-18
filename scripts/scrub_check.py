@@ -236,12 +236,37 @@ class Hit(NamedTuple):
 #: update, so it cannot carry pragmas). It names two of the shared themes by
 #: their brand slug, which is a local identifier here; that one category is
 #: exempt inside the folder. Every other rule (secrets, hosts, paths, ...)
-#: still scans it. Owner decision 2026-09-24.
+#: still scans it. Owner decision 2026-09-24. Since ForgeUI 1.2 the folder is written by
+#: ``python -m forgeui vendor`` (forgeui.json at the repository root) and carries a
+#: ``files.json`` table of sha256 digests: those 64-hex digests are checksums, not secrets,
+#: so the ``secret-blob`` category is exempt for that one file (VENDORED_CHECKSUMS) and
+#: nowhere else, and only for a match that IS a sha256 digest (64 lowercase hex): any
+#: other blob in that file (a pasted token, base64) is still reported.
 VENDORED_THEME = "src/mailforge/ui/static/ui-theme/"
+VENDORED_CHECKSUMS = VENDORED_THEME + "files.json"
+_SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+
+#: A pip VCS requirement pinned to a full commit sha, e.g.
+#: ``pkg @ git+https://github.com/<owner>/<repo>@<40 hex>``. A commit sha of a
+#: public repository is an address, not a credential, and pinning to one is the
+#: reproducible way to depend on an untagged commit. The exemption is as narrow
+#: as it can be made: only the ``secret-blob`` rule, only an EXACTLY 40-hex
+#: match (a longer run is not a sha-1), and only when that match is the ref of a
+#: ``git+https://<host>/<owner>/<repo>@`` URL. Any other hex blob on the same
+#: line, and every other rule, still applies.
+_GIT_COMMIT_PIN = re.compile(r"git\+https://[\w.-]+(?:/[\w.-]+){2}@([0-9a-f]{40})(?![0-9A-Za-z])")
+
+
+def _is_git_commit_pin(line: str, match: re.Match[str]) -> bool:
+    return any(pin.span(1) == match.span() for pin in _GIT_COMMIT_PIN.finditer(line))
 
 
 def _is_vendored_theme(path: Path) -> bool:
     return VENDORED_THEME in path.as_posix() + ("/" if path.is_dir() else "")
+
+
+def _is_vendored_checksums(path: Path) -> bool:
+    return path.as_posix().endswith(VENDORED_CHECKSUMS)
 
 
 def _is_local_rules(path: Path) -> bool:
@@ -268,6 +293,17 @@ def iter_files(targets: Iterable[Path]) -> Iterator[Path]:
             yield path
 
 
+def _first_match(rule: Rule, line: str) -> re.Match[str] | None:
+    """The first hit of ``rule`` on ``line``; a ``secret-blob`` that is the ref of a
+    pinned VCS requirement (_GIT_COMMIT_PIN) does not count, so a second blob on the
+    same line is still found."""
+    if rule.category != "secret-blob":
+        return rule.pattern.search(line)
+    return next(
+        (m for m in rule.pattern.finditer(line) if not _is_git_commit_pin(line, m)), None
+    )
+
+
 def scan_text(text: str, path: Path = Path("<text>"),
               rules: tuple[Rule, ...] | None = None) -> list[Hit]:
     """Every denylist hit in ``text``, honouring the allowlist."""
@@ -276,6 +312,7 @@ def scan_text(text: str, path: Path = Path("<text>"),
     hits: list[Hit] = []
     exempt_region = False
     vendored_theme = _is_vendored_theme(path)
+    checksums = _is_vendored_checksums(path)
     for line_no, line in enumerate(text.splitlines(), start=1):
         if REGION_BEGIN in line:
             exempt_region = True
@@ -289,13 +326,16 @@ def scan_text(text: str, path: Path = Path("<text>"),
             continue
         licence_notice = _is_copyright_notice(path, line)
         for rule in rules:
-            match = rule.pattern.search(line)
+            match = _first_match(rule, line)
             if not match:
                 continue
             if rule.category == LOCAL_CATEGORY and licence_notice:
                 continue  # a copyright holder is published on purpose
             if rule.category == LOCAL_CATEGORY and vendored_theme:
                 continue  # the shared theme folder's slugs (VENDORED_THEME)
+            if (rule.category == "secret-blob" and checksums
+                    and _SHA256_HEX.fullmatch(match.group(0))):
+                continue  # a digest in the bundle's files.json table (VENDORED_CHECKSUMS)
             if rule.category == "secret-assignment" and _SAFE_VALUE.search(line):
                 continue
             hits.append(Hit(path, line_no, rule.category, match.group(0)[:80]))

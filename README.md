@@ -1,5 +1,18 @@
 # MailForge
 
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/readme/dashboard.png" alt="MailForge dashboard on the Glacier theme: counts of new, unread, quarantined and filtered mail, one card per inbox, and what needs your action"><br><sub><b>Dashboard.</b> Every mailbox at a glance: what is new, what needs a reply, what was quarantined or filtered.</sub></td>
+    <td width="50%"><img src="docs/screenshots/readme/draft-approval.png" alt="MailForge draft approval screen: the incoming message, provenance and guardrail checks, a new-recipient confirmation field and the Approve and Send button"><br><sub><b>Approval.</b> Nothing sends without you: edit the draft, retype a new recipient to confirm it, then Approve &amp; Send.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/readme/inbox.png" alt="MailForge inbox listing messages with their screening status and site"><br><sub><b>Inbox.</b> Screened mail with its status and site, bulk actions and keyboard shortcuts.</sub></td>
+    <td width="50%"><img src="docs/screenshots/readme/models.png" alt="MailForge Models page showing the configured chat and embedding model and the models served by the local LLM server"><br><sub><b>Models.</b> Which models are configured and whether your local LLM server is up and serving them.</sub></td>
+  </tr>
+</table>
+
+<sub>Captured in <code>mailforge demo</code>: fictional mail, no mailbox connected, and a stand-in local model server.</sub>
+
 Local-LLM email assistant that triages, screens and drafts — and never auto-sends. Rule-of-Two security, IMAP across multiple mailboxes, inbound spam and phishing screening, a two-stage deletion policy that reaches the mail server, and sqlite-vec RAG over your own mail.
 
 A **self-contained, cross-platform (Linux + Windows) local-LLM email assistant**.
@@ -11,11 +24,15 @@ click **Approve** before anything is ever sent.
 > SMTP fires exclusively after an explicit human click in the local web UI.
 > This is an architectural invariant, not a setting you can flip.
 
-Try it in one command, with fictional data and no mailbox:
+Once installed (see [Install](#install)), try it with fictional data and no mailbox; from a clone, prefix `uv run`:
 
 ```bash
-uv run mailforge demo
+mailforge demo
 ```
+
+`mailforge demo` opens the approval UI in your browser (add `--no-browser` to just print the URL; the line to look for is
+`MailForge UI: http://127.0.0.1:<port>/...`). Review each draft and **Approve / Edit / Reject**; in the demo nothing is ever sent.
+Stop it with Ctrl-C and the demo directory is deleted.
 
 ---
 
@@ -69,68 +86,307 @@ stays safe before you install any of the optional ML models.
 
 ---
 
-## Install & run
+## Install
 
-You need this package and a **local OpenAI-compatible LLM server**
-([LM Studio](https://lmstudio.ai), llama.cpp's server, vLLM, Ollama's
-OpenAI-compatible endpoint, …) serving a chat model and an embedding model.
+Pick your platform; in each, method 1 is the simplest. MailForge needs Python 3.12 or newer (the `uv` methods fetch it for you) and a **local
+OpenAI-compatible LLM server** serving a chat model and an embedding model: the StudioForge gateway, LM Studio, llama.cpp's server, vLLM or Ollama.
+By default MailForge looks for it at `localhost:1234`.
+
+Ports: 8090 in Docker (the approval UI and `/healthz`, published on the host's loopback only). Natively the UI binds `127.0.0.1` on a random port
+that `mailforge serve` prints in its login URL; set `MAILFORGE_UI_PORT` to pin one. If your server needs a key, set `MAILFORGE_LLM_API_KEY`.
+
+The `[llm,rag]` extras add the LM Studio SDK bridge to your local model server (`llm`) and the sqlite-vec vector index plus the PDF/DOCX document readers
+behind retrieval over your own mail and the Knowledge library (`rag`). They are the same two the Docker image installs by default (`ARG EXTRAS="llm rag"`).
+Without `rag`, vector search is disabled and uploads fall back to plain-text reading, so a plain `uv tool install .` is only for a bare-bones trial. `security-ml` is a
+separate optional extra (torch and model downloads, several GB) that most installs can skip: without it the regex and heuristic guardrails still run.
+
+**Model ids.** Out of the box MailForge asks the server for the LM Studio catalogue ids `qwen/qwen3.6-35b-a3b` (chat) and
+`text-embedding-nomic-embed-text-v1.5` (embeddings). A server that does not list those ids (StudioForge, for example, names models
+`publisher/repo/stem`) makes `mailforge llm-check` exit 1 and say so. Set the ids your server lists in the `[llm]` section of `config.toml`
+(`chat_model`, `embedding_model`; see [Configuration](#configuration)) or per run with the environment variables
+`MAILFORGE_LLM__CHAT_MODEL` and `MAILFORGE_LLM__EMBEDDING_MODEL`, then run `mailforge llm-check` again.
+
+### Windows
+
+Run the blocks in PowerShell. After a `winget install`, close and reopen PowerShell. A Windows background service is not available yet (it needs the
+third-party WinSW binary, which is not shipped; see [`installer/winsw/README.md`](installer/winsw/README.md)), and no Windows installer is released.
+Run `mailforge serve` in a terminal, or use Docker Desktop for something that restarts on its own.
+
+#### 1. `uv tool install` (simplest)
+
+Choose this to get a `mailforge` command with no clone and no venv to manage.
+
+```powershell
+winget install --id Git.Git -e --source winget
+winget install --id astral-sh.uv -e --source winget
+# close and reopen PowerShell, then:
+uv tool install --python 3.12 "mailforge[llm,rag] @ git+https://github.com/LaserLloyd/MailForge"   # scrub-ok: public repo URL
+uv tool update-shell        # puts uv's tool folder on PATH; close and reopen PowerShell if it says so
+mailforge version           # prints: mailforge 0.6.0
+```
+
+Then look around with fictional data (no mailbox, nothing sent), and set up your real account:
+
+```powershell
+mailforge demo                 # throwaway demo UI; Ctrl+C removes it
+mailforge setup-wizard         # stores credentials in Windows Credential Manager
+mailforge llm-check            # is the LLM server reachable, are the model ids served?
+mailforge serve                # prints http://127.0.0.1:<port>/?token=... ; open it
+```
+
+| Pros | Cons |
+|---|---|
+| One command after uv; `mailforge` is on `PATH` | No background service on Windows yet: `mailforge serve` runs in a terminal |
+| Smallest footprint; uv fetches Python 3.12 itself | You manage updates (`uv tool install --reinstall ...`) |
+| Credentials go to Windows Credential Manager | Needs git for the first fetch |
+
+#### 2. Docker Desktop
+
+Choose this for a container that restarts on its own, with your mail database on a volume that survives image updates.
+
+```powershell
+winget install --id Git.Git -e --source winget
+winget install --id Docker.DockerDesktop -e --source winget
+# start Docker Desktop once and wait until it says the engine is running, then:
+git clone https://github.com/LaserLloyd/MailForge.git   # scrub-ok: public repo URL
+cd MailForge
+Copy-Item deploy\compose\.env.example deploy\compose\.env
+$pw = [guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')     # a random 64-character password
+(Get-Content deploy\compose\.env) -replace '^MAILFORGE_KEYRING_PASSWORD=.*', "MAILFORGE_KEYRING_PASSWORD=$pw" | Set-Content -Encoding ascii deploy\compose\.env
+docker compose -f deploy/compose/compose.yml up -d
+docker compose -f deploy/compose/compose.yml ps                                    # STATUS: healthy
+docker compose -f deploy/compose/compose.yml logs app | Select-String "MailForge UI"   # open the printed http://127.0.0.1:8090/?token=... URL
+```
+
+`MAILFORGE_KEYRING_PASSWORD` unlocks the encrypted file that holds your mailbox passwords. It cannot be recovered: copy the value from
+`deploy\compose\.env` into your password manager now. Then add your mailbox:
+`docker compose -f deploy/compose/compose.yml run --rm -it app setup-wizard`. A key for the LLM server goes in the same `.env` as `MAILFORGE_LLM_API_KEY=...`.
+
+| Pros | Cons |
+|---|---|
+| Nothing to install but Docker; read-only, non-root image | Docker Desktop is a large install and needs virtualisation enabled |
+| Restarts on boot; data on a named volume; automatic pre-upgrade backup | You keep the keyring password safe yourself |
+| Same files and steps on Linux and macOS | The LLM server on the host must accept connections from the container, not only on the host's `127.0.0.1` |
+
+#### 3. From a clone (development)
+
+Choose this to read or change the code, or to run the test suite.
+
+```powershell
+winget install --id Git.Git -e --source winget
+winget install --id astral-sh.uv -e --source winget
+# close and reopen PowerShell, then:
+git clone https://github.com/LaserLloyd/MailForge.git   # scrub-ok: public repo URL
+cd MailForge
+uv sync --python 3.12 --extra dev
+uv run mailforge version
+uv run mailforge demo
+uv run --extra dev pytest -q          # the test suite
+```
+
+| Pros | Cons |
+|---|---|
+| Edit the code and re-run at once | Most steps; the command is `uv run mailforge` from the clone |
+| Runs the test suite and linter | You manage updates (`git pull`, `uv sync`) |
 
 ### Linux
 
+Blocks assume Ubuntu or Debian (apt). A bare Ubuntu image has no `curl` or `git`; without curl the uv installer line prints nothing and installs nothing,
+so the first line installs them.
+
+#### 1. `uv tool install` (simplest)
+
+Choose this to get a `mailforge` command with no clone and no venv to manage.
+
 ```bash
-# 1. install uv (the Python package runner) if you don't have it
+sudo apt-get update && sudo apt-get install -y git curl ca-certificates
 curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 2. install the app (from a checkout or an unpacked release)
-uv tool install .
-
-# 3. look around first, with fictional data and no mailbox
-mailforge demo
-
-# 4. set up your real account — stores credentials in your OS keyring
-mailforge setup-wizard
-
-# 5. run it
-mailforge serve
-
-# 6. (optional) install as a background service that survives reboot
-mailforge service install
+source "$HOME/.local/bin/env"       # puts uv (and mailforge) on PATH for this shell
+uv tool install --python 3.12 "mailforge[llm,rag] @ git+https://github.com/LaserLloyd/MailForge"   # scrub-ok: public repo URL
+mailforge version                   # prints: mailforge 0.6.0
 ```
 
-### Windows (PowerShell)
+Then look around with fictional data (no mailbox, nothing sent), and set up your real account:
 
-```powershell
-irm https://astral.sh/uv/install.ps1 | iex
-uv tool install .
-mailforge setup-wizard
-mailforge service install        # installs a Windows service via WinSW
+```bash
+mailforge demo --no-browser    # throwaway demo UI; prints a login URL; Ctrl+C removes it
+mailforge setup-wizard         # stores credentials in your OS keyring
+mailforge llm-check            # is the LLM server reachable, are the model ids served?
+mailforge serve                # prints http://127.0.0.1:<port>/?token=... ; open it
 ```
 
-The Windows service needs the third-party `WinSW-x64.exe`, which is not
-committed here; vendor it first as described in
-[`installer/winsw/README.md`](installer/winsw/README.md). Without it
-`service install` writes the descriptor and tells you where the binary is
-expected, but installs nothing.
+On a desktop session the credentials go to the Secret Service keyring. On a headless server there is none, so MailForge falls back to an encrypted
+file keyring that asks for its password in a terminal; for a server, use method 3 (Docker), which reads the password from `.env`.
 
-Then open the `http://127.0.0.1:<port>/?token=…` URL it prints — the token is
-one-shot and upgrades to a signed session cookie. Review each draft and
+| Pros | Cons |
+|---|---|
+| One command after uv; no PEP 668 error; `mailforge` is on `PATH` | Needs git and uv |
+| Smallest footprint; uv fetches Python 3.12 itself, so an old system Python does not matter | You manage updates (`uv tool install --reinstall ...`) |
+| `mailforge service install` can add autostart (method 2) | Credentials need a desktop keyring or a terminal (see above) |
+
+#### 2. Background service (systemd user unit)
+
+Choose this when method 1 is installed and you want MailForge to start at boot and survive logout. It is the same install plus one command.
+
+```bash
+mailforge service install      # writes ~/.config/systemd/user/mailforge.service, enables linger, enables and starts it
+systemctl --user status mailforge --no-pager
+journalctl --user -u mailforge -n 20 --no-pager
+mailforge open                 # prints/opens an authenticated login URL for the running service
+```
+
+An LLM server key must reach the unit: put `MAILFORGE_LLM_API_KEY=...` in a file readable only by you and point the unit at it.
+
+```bash
+install -d -m 700 ~/.config/mailforge-service && install -m 600 /dev/null ~/.config/mailforge-service/llm.env
+echo 'MAILFORGE_LLM_API_KEY=...' >> ~/.config/mailforge-service/llm.env
+mkdir -p ~/.config/systemd/user/mailforge.service.d
+printf '[Service]\nEnvironmentFile=%%h/.config/mailforge-service/llm.env\n' > ~/.config/systemd/user/mailforge.service.d/llm-key.conf
+systemctl --user daemon-reload && systemctl --user restart mailforge
+```
+
+| Pros | Cons |
+|---|---|
+| Starts at boot, restarts on failure, hardened unit (`NoNewPrivileges`, `ProtectSystem`) | Less transparent than running `mailforge serve` yourself; read the journal to see it |
+| No Docker needed | Needs systemd and a keyring the service can unlock (a desktop session); headless servers should use Docker |
+| `service install` also adds an app-drawer launcher | There is no `service uninstall`; see Upgrade and uninstall |
+
+#### 3. Docker Compose
+
+Choose this for a server, or for a container that restarts on its own with your mail database on a volume that survives image updates.
+
+```bash
+sudo apt-get update && sudo apt-get install -y git docker.io docker-compose-v2
+sudo usermod -aG docker $USER      # log out and in once, or prefix the docker lines below with sudo
+git clone https://github.com/LaserLloyd/MailForge.git && cd MailForge   # scrub-ok: public repo URL
+cp deploy/compose/.env.example deploy/compose/.env && chmod 0600 deploy/compose/.env
+sed -i "s|^MAILFORGE_KEYRING_PASSWORD=.*|MAILFORGE_KEYRING_PASSWORD=$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')|" deploy/compose/.env
+docker compose -f deploy/compose/compose.yml up -d
+docker compose -f deploy/compose/compose.yml ps                              # STATUS: healthy
+docker compose -f deploy/compose/compose.yml logs app | grep "MailForge UI"  # open the printed http://127.0.0.1:8090/?token=... URL
+```
+
+`MAILFORGE_KEYRING_PASSWORD` unlocks the encrypted file that holds your mailbox passwords. It cannot be recovered: copy the value from
+`deploy/compose/.env` into your password manager now (or use `MAILFORGE_KEYRING_PASSWORD_FILE` with a Docker secret). Then add your mailbox:
+`docker compose -f deploy/compose/compose.yml run --rm -it app setup-wizard`. A key for the LLM server goes in the same `.env` as `MAILFORGE_LLM_API_KEY=...`.
+The log shows the container's port (8090); if you changed `HOST_PORT`, use that port in the URL. Lost the login URL? `docker compose -f deploy/compose/compose.yml exec app mailforge open --no-browser` prints a fresh one.
+
+| Pros | Cons |
+|---|---|
+| Works headless: the keyring password comes from `.env`, no desktop keyring needed | Needs a Docker engine and about 600 MB of disk for the default image |
+| Restarts on boot; data on a named volume; automatic pre-upgrade backup | You keep the keyring password safe yourself |
+| Read-only, non-root, no capabilities, loopback-only port | The LLM server on the host must listen on an address the container can reach |
+
+#### 4. From a clone (development)
+
+Choose this to read or change the code, or to run the test suite.
+
+```bash
+sudo apt-get update && sudo apt-get install -y git curl ca-certificates
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source "$HOME/.local/bin/env"
+git clone https://github.com/LaserLloyd/MailForge.git && cd MailForge   # scrub-ok: public repo URL
+uv sync --python 3.12 --extra dev
+uv run mailforge version
+uv run mailforge demo --no-browser
+uv run --extra dev pytest -q          # the test suite
+uv run ruff check src tests scripts   # lint
+```
+
+| Pros | Cons |
+|---|---|
+| Edit the code and re-run at once | Most steps; the command is `uv run mailforge` from the clone |
+| Runs the test suite and linter | You manage updates (`git pull`, `uv sync`) |
+
+### macOS
+
+The code is plain Python, so a native install should work as on Linux; there is no service installer for macOS (`mailforge service install` targets systemd and WinSW).
+
+#### 1. `uv tool install` (simplest)
+
+```bash
+brew install git uv
+uv tool install --python 3.12 "mailforge[llm,rag] @ git+https://github.com/LaserLloyd/MailForge"   # scrub-ok: public repo URL
+uv tool update-shell        # then open a new Terminal window
+mailforge version           # prints: mailforge 0.6.0
+mailforge demo              # look around with fictional data
+```
+
+| Pros | Cons |
+|---|---|
+| One command after Homebrew; credentials go to the macOS Keychain | Needs Homebrew (<https://brew.sh>); no autostart |
+
+#### 2. Docker Desktop
+
+Same files and steps as Linux method 3, with Docker Desktop in place of the engine:
+
+```bash
+brew install git
+brew install --cask docker     # then open Docker Desktop once and wait for "Engine running"
+git clone https://github.com/LaserLloyd/MailForge.git && cd MailForge   # scrub-ok: public repo URL
+cp deploy/compose/.env.example deploy/compose/.env && chmod 0600 deploy/compose/.env
+sed -i '' "s|^MAILFORGE_KEYRING_PASSWORD=.*|MAILFORGE_KEYRING_PASSWORD=$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')|" deploy/compose/.env
+docker compose -f deploy/compose/compose.yml up -d
+docker compose -f deploy/compose/compose.yml logs app | grep "MailForge UI"
+```
+
+| Pros | Cons |
+|---|---|
+| Restarts with Docker; data on a named volume | Docker Desktop is a large install |
+
+### Upgrade and uninstall
+
+- **`uv tool` (Windows, Linux, macOS):** `uv tool install --reinstall --python 3.12 "mailforge[llm,rag] @ git+https://github.com/LaserLloyd/MailForge"`   <!-- scrub-ok: public repo URL -->
+  upgrades (rollback: add `@<tag or commit>` after the repository URL). `uv tool uninstall mailforge` removes the program. Your config, database and
+  credentials are kept (Windows: `%LOCALAPPDATA%\mailforge`; Linux: `~/.config/mailforge` and `~/.local/share/mailforge`; macOS: `~/Library/Application Support/mailforge`); delete them yourself only if you are done with the mail.
+- **systemd service:** after upgrading the tool run `systemctl --user restart mailforge`. To remove it:
+  `systemctl --user disable --now mailforge && rm ~/.config/systemd/user/mailforge.service && rm -r ~/.config/systemd/user/mailforge.service.d`
+  (the `.d` folder exists only if you made the key file), then `systemctl --user daemon-reload`. `mailforge service install` also wrote an app-drawer
+  entry; `rm ~/.local/share/applications/mailforge.desktop` removes it.
+- **Docker:** `git pull` then `docker compose -f deploy/compose/compose.yml up -d --build`; roll back with `git checkout` of the earlier commit and the same
+  command. The mail database (with its sqlite-vec index), `config.toml` and the encrypted credential store live only in the `mailforge-data` volume.
+  Before a new image version starts, they are copied to `/data/backups/<old>-to-<new>-<timestamp>/` (last 5 kept) and the database migrates itself.
+  `docker compose ... down` keeps the volume; **`down -v` deletes your mail database, config and stored credentials**. Back up with the app stopped
+  (keep `MAILFORGE_KEYRING_PASSWORD` separately; it is not in the archive):
+
+  ```bash
+  docker compose -f deploy/compose/compose.yml stop app
+  docker run --rm -v mailforge_mailforge-data:/data:ro -v "$PWD":/backup alpine tar czf /backup/mailforge-data-$(date +%F).tgz -C /data .
+  docker compose -f deploy/compose/compose.yml start app
+  ```
+
+  Restore, bind-mounted data (`PUID`/`PGID`), credentials and the full list of settings: [`docs/deploy/docker.md`](docs/deploy/docker.md).
+- **From a clone:** `git pull && uv sync --python 3.12 --extra dev`; uninstall = delete the clone.
+
+Docker settings in `deploy/compose/.env`:
+
+| Variable | Default | |
+|---|---|---|
+| `MAILFORGE_KEYRING_PASSWORD` / `_FILE` | empty | unlocks the credential store |
+| `MAILFORGE_LLM_API_KEY` | not set | bearer key for the LLM server; add the line to `.env` |
+| `LLM_BASE_URL` | `http://host.docker.internal:1234/v1` | your local LLM server as the container sees it (host:port is used) |
+| `BIND_ADDR` / `HOST_PORT` | `127.0.0.1` / `8090` | host side of the port mapping |
+| `MAILFORGE_UI_HOST` / `_PORT` / `_ALLOWED_HOSTS` | `0.0.0.0` / `8090` / set by compose | bind address, fixed port and accepted `Host` headers inside the container (unset natively: unchanged `127.0.0.1`, random port) |
+
+Run any command inside the same image and volume:
+
+```bash
+docker compose -f deploy/compose/compose.yml run --rm app account-list
+docker compose -f deploy/compose/compose.yml exec app mailforge health
+docker compose -f deploy/compose/compose.yml run --rm -p 127.0.0.1:8091:8091 -e MAILFORGE_UI_PORT=8091 app demo --no-browser    # demo, no mailbox
+```
+
+Then open the `http://127.0.0.1:<port>/?token=…` URL it prints: the token is one-shot and upgrades to a signed session cookie. Review each draft and
 **Approve / Edit / Reject**. Only Approve (or Edit → Approve) sends.
 
 ### Optional capability tiers
 
 ```bash
-uv tool install ".[llm,rag]"          # local-LLM SDK + vector RAG
-uv tool install ".[security-ml]"      # Prompt Guard, Presidio, llm-guard, detect-secrets
-uv tool install ".[policy,redteam]"   # offline flow policy + garak/promptfoo CI
+uv tool install --reinstall --python 3.12 "mailforge[llm,rag,security-ml] @ git+https://github.com/LaserLloyd/MailForge"   # scrub-ok: public repo URL
 ```
 
-### Working from a checkout
-
-```bash
-uv run mailforge demo            # no install needed
-uv run --extra dev pytest -q          # the test suite
-uv run ruff check src tests scripts   # lint
-```
+`security-ml` adds Prompt Guard, Presidio, llm-guard and detect-secrets (torch; several GB). `policy` and `redteam` are further extras (offline flow policy,
+garak/promptfoo CI). In Docker, set `EXTRAS="llm rag security-ml"` in `.env` and rebuild.
 
 ---
 
@@ -151,6 +407,9 @@ uv run ruff check src tests scripts   # lint
 | `mailforge purge-trash` | Report the deletion queue; `--yes` runs the sweep now (`--now` ignores the holding period) |
 | `mailforge rescreen [--site <id>] [--apply]` | Re-apply spam screening and category rules (e.g. GitHub) to stored mail; dry run by default |
 | `mailforge audit-verify` | Verify the audit hash chain is intact |
+| `mailforge health` | Print the running service's `/healthz` JSON (exit 0 only when every mailbox is healthy; a fresh install with no mailbox is `degraded`, 503) |
+| `mailforge llm-check` | Is the LLM server reachable, is the API key accepted, are the configured model ids served? (exit 0 / 1 fix needed / 2 unreachable; default ids and overrides: see [Install](#install)) |
+| `mailforge eval-screening` | Leave-one-out replay of your own screening labels against the current rules |
 | `mailforge service install\|start\|stop\|desktop` | Manage the background service / launcher |
 | `mailforge redteam` | Run offline red-team suites (garak / promptfoo) |
 | `mailforge version` | Print the installed version |
@@ -297,9 +556,11 @@ triage_guidance = ""             # extra policy text shown to the triage prompt
 signature = "Alex"               # fills {{signature}} in templates and the composer
 
 [llm]
-lm_studio_host = "127.0.0.1:1234"   # any OpenAI-compatible server
+lm_studio_host = "127.0.0.1:1234"   # any OpenAI-compatible server (StudioForge gateway, not the :8080 panel); "https://host:port" keeps TLS
+api_key_env = "MAILFORGE_LLM_API_KEY"  # sent as Authorization: Bearer; STUDIOFORGE_API_KEY is the fallback
 chat_model = "your-chat-model"
 embedding_model = "your-embedding-model"
+# Against StudioForge both ids are `publisher/repo/stem`; run `mailforge llm-check` to verify them.
 ttl_seconds = 1800
 context_length = 8192
 
@@ -407,8 +668,8 @@ agent bridge), `service/` (systemd + WinSW), `demo.py` (demo dataset).
 
 Paths resolve per-OS through `platformdirs`, so the same build behaves correctly
 on Linux and Windows. `packaging/pyinstaller.spec` (folder mode, never one-file)
-plus `installer/inno/mailforge.iss` produce a double-click Windows
-installer for machines with no Python.
+plus `installer/inno/mailforge.iss` are build skeletons for a Windows
+installer; none is released yet, so use the Windows methods under Install.
 
 ---
 
@@ -432,6 +693,7 @@ installer for machines with no Python.
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+MIT — see [`LICENSE`](LICENSE). The bundled installer and container image include `html2text`
+(GPL-3.0-or-later); see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and [`docs/LICENSING.md`](docs/LICENSING.md).
 
 Published by Laser Lloyd — https://www.laserlloyd.com

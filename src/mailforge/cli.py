@@ -512,7 +512,11 @@ def audit_verify() -> None:
     from .config import load_settings
 
     settings = load_settings()
-    ok, n, bad = verify_chain(settings.resolved_db_path())
+    db_path = settings.resolved_db_path()
+    if not db_path.exists():
+        typer.echo("No audit log yet: nothing to verify.")
+        return
+    ok, n, bad = verify_chain(db_path)
     if ok:
         typer.secho(f"Audit chain OK ({n} entries).", fg="green")
     else:
@@ -587,14 +591,16 @@ def health_command(
     import urllib.error
     import urllib.request
 
-    from .paths import runtime_file
+    from .paths import runtime_file, ui_port_override
 
     port_file = runtime_file("ui_port")
-    try:
-        port = int(port_file.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
-        typer.secho("No ui_port recorded - has the service ever started?", fg="red")
-        raise typer.Exit(code=2) from None
+    port = ui_port_override()
+    if port is None:
+        try:
+            port = int(port_file.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            typer.secho("No ui_port recorded - has the service ever started?", fg="red")
+            raise typer.Exit(code=2) from None
     url = f"http://127.0.0.1:{port}/healthz"
     try:
         # Direct opener: never route a loopback probe through a proxy.
@@ -612,6 +618,84 @@ def health_command(
     except ValueError:
         typer.echo(raw.decode("utf-8", "replace")[:500])
     raise typer.Exit(code=0 if code == 200 else 1)
+
+
+@app.command("llm-check")
+def llm_check_command(
+    timeout: float = typer.Option(5.0, "--timeout", help="Seconds to wait for the server."),
+) -> None:
+    """Check the configured LLM server: reachable, API key accepted, model ids served.
+
+    Exit 0 = ready, 1 = reachable but something needs fixing (key refused, or a
+    configured model id the server does not serve), 2 = unreachable. Prints
+    whether a key is set, never the key.
+    """
+    import httpx
+
+    from .config import load_settings
+    from .llm.bridge import LMStudioBridge
+    from .llm.model_ids import describe_mismatch
+
+    settings = load_settings()
+    bridge = LMStudioBridge.from_settings(settings)
+    env_name = settings.llm.api_key_env or "MAILFORGE_LLM_API_KEY"
+    typer.echo(f"Server:     {bridge.base_url}")
+    typer.echo(
+        "API key:    "
+        + ("set (sent as Authorization: Bearer)" if bridge.has_api_key else f"not set (${env_name})")
+    )
+    typer.echo(f"Chat model: {bridge.model_id}")
+    typer.echo(f"Embeddings: {bridge.embed_id}")
+    try:
+        resp = httpx.get(f"{bridge.base_url}/models", headers=bridge._auth_headers(), timeout=timeout)
+    except Exception as e:  # noqa: BLE001 - report, never traceback
+        typer.secho(f"UNREACHABLE: {e}", fg="red")
+        raise typer.Exit(code=2) from None
+    if resp.status_code in (401, 403):
+        typer.secho(
+            f"REFUSED (HTTP {resp.status_code}): the server requires an API key. "
+            f"Export it in ${env_name} (or STUDIOFORGE_API_KEY) and retry.",
+            fg="red",
+        )
+        raise typer.Exit(code=1)
+    if resp.status_code != 200:
+        typer.secho(f"UNEXPECTED: GET /v1/models answered HTTP {resp.status_code}", fg="red")
+        raise typer.Exit(code=1)
+    try:
+        body = resp.json()
+    except ValueError:
+        body = None
+    items = body.get("data") if isinstance(body, dict) else None
+    ids = [
+        str(m.get("id") or m.get("model_key") or "")
+        for m in (items if isinstance(items, list) else [])
+        if isinstance(m, dict)
+    ]
+    ids = [i for i in ids if i]
+    typer.echo(f"Served:     {len(ids)} model(s)")
+    if not ids:
+        # Nothing to compare against: never call that "OK" (wrong port, a non-OpenAI
+        # answer, or a server with no models).
+        typer.secho(
+            "NO MODELS: GET /v1/models answered 200 but listed no models. Is "
+            "llm.lm_studio_host the OpenAI-compatible API (not a panel), and does "
+            "the server have a model?",
+            fg="yellow",
+        )
+        raise typer.Exit(code=1)
+    problems = [
+        p
+        for p in (
+            describe_mismatch(bridge.model_id, ids, "chat"),
+            describe_mismatch(bridge.embed_id, ids, "embedding"),
+        )
+        if p
+    ]
+    for p in problems:
+        typer.secho(p, fg="yellow")
+    if problems:
+        raise typer.Exit(code=1)
+    typer.secho("OK", fg="green")
 
 
 @app.command("eval-screening")
