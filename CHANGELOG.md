@@ -3,6 +3,26 @@
 All notable changes to this project are documented here. Dates are ISO-8601.
 Published by Laser Lloyd — https://www.laserlloyd.com
 
+## Unreleased
+
+### Changed
+- **UI theme: ForgeUI 1.2.0.** `ui/static/ui-theme/` was a pre-release copy (`ui-theme
+  2026-09-24 638060cc7dc6`); it is now the pristine ForgeUI 1.2.0 bundle (`ThemeForge 1.2.0
+  82d997e2846d`), vendored by `python -m forgeui vendor` from a new repository-root manifest,
+  `forgeui.json`. The picker gains **Slate**, **High Contrast** and **High Contrast Light**
+  (opt-in themes stay out; Night Red stays in). The theme list, default (`midnight-gold`) and
+  storage key (`mailforge.theme`) now live only in `forgeui.json`; `ui/theme.py` reads a
+  packaged copy (`ui/forgeui.json`, kept identical by a test). The unused `clawchat-compat`
+  and `dispatch-compat` adapters were dropped. Update procedure: `docs/STYLE-GUIDE.md` section 2.
+
+### Added
+- `tests/unit/test_forgeui_vendor.py` and a CI step run `forgeui vendor --check`, so the
+  vendored bundle cannot drift or be hand-edited unnoticed.
+
+### Fixed
+- `scripts/scrub_check.py` no longer reports the bundle's `files.json` sha256 table as
+  `secret-blob` (that one file, that one category; covered by a test).
+
 ## 0.6.0 — 2026-10-18
 
 ### Added

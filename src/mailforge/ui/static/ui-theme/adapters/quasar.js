@@ -1,5 +1,6 @@
-/* Theme revision 2026-09-24 — adapter quasar.js. Generated file, do not edit by hand:
-   replace the whole ui-theme/ folder to update it.
+/* GENERATED adapter quasar.js: ThemeForge 1.2.0, drop-in bundle (ui-theme/).
+   https://github.com/LaserLloyd/ThemeForge . Do not edit this copy: update the whole
+   folder (python ui-theme/update.py) and keep app styles in the app.
    body sha256: a558aa540d7d0947 */
 
 /* ---- adapter: quasar.js — Quasar / NiceGUI ----

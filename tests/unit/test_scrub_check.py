@@ -236,3 +236,17 @@ def test_vendored_theme_folder_exempts_only_local_identifiers():
     assert [h.category for h in scrub.scan_text(text, vendored, rules)] == ["private-ip"]
     assert sorted(h.category for h in scrub.scan_text(text, elsewhere, rules)) == [
         scrub.LOCAL_CATEGORY, "private-ip"]
+
+
+def test_vendored_checksum_table_exempts_only_secret_blobs():
+    """ForgeUI's files.json is a table of sha256 digests: not secrets. The exemption is for
+    that one file and that one category; the same digest anywhere else still fails."""
+    digest = "ab" * 32
+    text = '{"files": {"ui-theme.css": "' + digest + '"}}\n'
+    table = Path("src/mailforge/ui/static/ui-theme/files.json")
+    assert scrub.scan_text(text, table) == []
+    elsewhere = Path("src/mailforge/ui/static/ui-theme/ui-theme.css")
+    assert {h.category for h in scrub.scan_text(text, elsewhere)} == {"secret-blob"}
+    assert {h.category for h in scrub.scan_text(text, Path("docs/files.json"))} == {"secret-blob"}
+    key = '"sk-' + "a1" * 12 + '"'  # a real secret shape inside the table is still caught
+    assert scrub.scan_text(key + "\n", table) != []
