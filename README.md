@@ -84,8 +84,8 @@ OpenAI-compatible endpoint, …) serving a chat model and an embedding model.
 curl -LsSf https://astral.sh/uv/install.sh | sh
 source "$HOME/.local/bin/env"   # or open a new shell: puts uv (and later mailforge) on PATH
 
-# 2. install the app (from a checkout or an unpacked release)
-uv tool install .
+# 2. install the app (from a checkout or an unpacked release), with the same extras the Docker image uses
+uv tool install ".[llm,rag]"
 
 # 3. look around first, with fictional data and no mailbox
 mailforge demo
@@ -104,7 +104,7 @@ mailforge service install
 
 ```powershell
 irm https://astral.sh/uv/install.ps1 | iex
-uv tool install .
+uv tool install ".[llm,rag]"
 mailforge setup-wizard
 mailforge service install        # installs a Windows service via WinSW
 ```
@@ -119,10 +119,20 @@ Then open the `http://127.0.0.1:<port>/?token=…` URL it prints — the token i
 one-shot and upgrades to a signed session cookie. Review each draft and
 **Approve / Edit / Reject**. Only Approve (or Edit → Approve) sends.
 
+The `[llm,rag]` extras are the same two the Docker image installs by default
+(`ARG EXTRAS="llm rag"`): `llm` adds the LM Studio SDK bridge to your local model
+server, and `rag` adds the sqlite-vec vector index and the PDF/DOCX document
+readers behind retrieval over your own mail and the Knowledge library. Without
+`rag`, vector search is disabled and uploads fall back to plain-text reading, so
+plain `uv tool install .` is only for a bare-bones trial.
+
 ### Optional capability tiers
 
+Add these on top of `llm` and `rag` by listing every extra you want in one
+command (re-running `uv tool install` replaces the previous install):
+
 ```bash
-uv tool install ".[llm,rag]"          # local-LLM SDK + vector RAG
+uv tool install ".[llm,rag]"          # the baseline above
 uv tool install ".[security-ml]"      # Prompt Guard, Presidio, llm-guard, detect-secrets
 uv tool install ".[policy,redteam]"   # offline flow policy + garak/promptfoo CI
 ```
