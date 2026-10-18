@@ -587,14 +587,16 @@ def health_command(
     import urllib.error
     import urllib.request
 
-    from .paths import runtime_file
+    from .paths import runtime_file, ui_port_override
 
     port_file = runtime_file("ui_port")
-    try:
-        port = int(port_file.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
-        typer.secho("No ui_port recorded - has the service ever started?", fg="red")
-        raise typer.Exit(code=2) from None
+    port = ui_port_override()
+    if port is None:
+        try:
+            port = int(port_file.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            typer.secho("No ui_port recorded - has the service ever started?", fg="red")
+            raise typer.Exit(code=2) from None
     url = f"http://127.0.0.1:{port}/healthz"
     try:
         # Direct opener: never route a loopback probe through a proxy.

@@ -27,7 +27,12 @@ from typing import Any
 from nicegui import app as nicegui_app
 from nicegui import ui
 
-from ..paths import runtime_file
+from ..paths import (
+    runtime_file,
+    ui_extra_allowed_hosts,
+    ui_host,
+    ui_port_override,
+)
 from . import theme
 from .pages import activity as activity_page
 from .pages import compose as compose_page
@@ -106,7 +111,11 @@ def _random_high_port() -> int:
 
 
 def persistent_port() -> int:
-    """Return the persisted UI port, generating + storing one on first run."""
+    """Return the UI port: ``MAILFORGE_UI_PORT`` if set, else the persisted
+    random one (generated + stored on first run)."""
+    fixed = ui_port_override()
+    if fixed is not None:
+        return fixed
     f = runtime_file("ui_port")
     if f.exists():
         try:
@@ -233,7 +242,7 @@ def _denied() -> None:
 # Host-header enforcement middleware (spec §0.7 / §11)
 # --------------------------------------------------------------------------- #
 def allowed_hosts(port: int) -> set[str]:
-    return {f"127.0.0.1:{port}", f"localhost:{port}"}
+    return {f"127.0.0.1:{port}", f"localhost:{port}"} | ui_extra_allowed_hosts()
 
 
 def _install_host_guard(port: int) -> None:
@@ -248,6 +257,8 @@ def _install_host_guard(port: int) -> None:
     """
     allowed = allowed_hosts(port)
     allowed_origins = {f"http://{h}" for h in allowed}
+    # Behind a TLS-terminating proxy the browser's Origin is https://<host>.
+    allowed_origins |= {f"https://{h}" for h in ui_extra_allowed_hosts()}
 
     class _HostHeaderGuard:
         def __init__(self, app: Any) -> None:
@@ -559,11 +570,16 @@ def refresh_inbox() -> None:
 # --------------------------------------------------------------------------- #
 # Wiring + launch
 # --------------------------------------------------------------------------- #
+def _display_host(host: str) -> str:
+    """0.0.0.0 / :: are bind addresses, not something a browser can open."""
+    return "127.0.0.1" if host in ("0.0.0.0", "::") else host
+
+
 def build_app(
     store: object,
     settings: object,
     bridge: object | None = None,
-    host: str = "127.0.0.1",
+    host: str | None = None,
     *,
     port: int | None = None,
 ) -> dict[str, Any]:
@@ -575,6 +591,7 @@ def build_app(
     """
     global _PORT, _LAUNCH_TOKEN, _TOKEN_CONSUMED, _LAUNCHER_KEY
 
+    host = host or ui_host()
     _PORT = int(port) if port is not None else persistent_port()
     _LAUNCH_TOKEN = _pysecrets.token_urlsafe(32)
     _TOKEN_CONSUMED = False
@@ -591,7 +608,7 @@ def build_app(
         "port": _PORT,
         "token": _LAUNCH_TOKEN,
         "storage_secret": storage_secret,
-        "url": f"http://{host}:{_PORT}/?token={_LAUNCH_TOKEN}",
+        "url": f"http://{_display_host(host)}:{_PORT}/?token={_LAUNCH_TOKEN}",
     }
 
 
@@ -616,15 +633,17 @@ def run_ui(
     store: object,
     settings: object,
     bridge: object | None = None,
-    host: str = "127.0.0.1",
+    host: str | None = None,
     *,
     port: int | None = None,
 ) -> None:
     """Build the app and start the NiceGUI server (spec §0.7, §9).
 
-    Binds ``127.0.0.1`` only, on the persisted random high port, prints the
-    one-shot launch URL to stdout, and runs with ``show=False``.
+    Binds ``127.0.0.1`` only (unless ``MAILFORGE_UI_HOST`` says otherwise, for
+    containers), on the persisted random high port (or ``MAILFORGE_UI_PORT``),
+    prints the one-shot launch URL to stdout, and runs with ``show=False``.
     """
+    host = host or ui_host()
     cfg = build_app(store, settings, bridge, host=host, port=port)
     print(f"MailForge UI: {cfg['url']}", flush=True)
     log.info("UI listening on %s:%s (token in URL above)", cfg["host"], cfg["port"])

@@ -134,6 +134,57 @@ uv run ruff check src tests scripts   # lint
 
 ---
 
+## Run in Docker
+
+No Python or `uv` on the host; your LLM stays where it is (StudioForge or LM Studio on the Docker host, reached through `host.docker.internal`).
+
+```bash
+git clone https://github.com/LaserLloyd/MailForge.git && cd MailForge   # scrub-ok: public repo URL  (or: git pull)
+cp deploy/compose/.env.example deploy/compose/.env && chmod 0600 deploy/compose/.env   # then set MAILFORGE_KEYRING_PASSWORD
+docker compose -f deploy/compose/compose.yml up -d
+```
+
+Open the one-shot login URL from `docker compose -f deploy/compose/compose.yml logs app | grep "MailForge UI"`
+(or mint another with `... exec app mailforge open --no-browser`; use `HOST_PORT` in place of 8090 if you changed it),
+then add your mailbox: `docker compose -f deploy/compose/compose.yml run --rm -it app setup-wizard`.
+Prefer to look around first? `... run --rm -p 127.0.0.1:8091:8091 -e MAILFORGE_UI_PORT=8091 app demo --no-browser`.
+
+**Credentials are never baked in.** Mailbox passwords go to an encrypted store in the `/data` volume; the password
+that unlocks it comes from `deploy/compose/.env` (`MAILFORGE_KEYRING_PASSWORD`, file mode `0600`, git-ignored and
+excluded from the build context) or from a mounted secret (`MAILFORGE_KEYRING_PASSWORD_FILE`). It is not recoverable:
+keep a copy in your password manager.
+
+| Variable | Default | |
+|---|---|---|
+| `MAILFORGE_KEYRING_PASSWORD` / `_FILE` | empty | unlocks the credential store |
+| `LLM_BASE_URL` | `http://host.docker.internal:1234/v1` | your local LLM server as the container sees it (host:port is used) |
+| `BIND_ADDR` / `HOST_PORT` | `127.0.0.1` / `8090` | host side of the port mapping |
+| `MAILFORGE_UI_HOST` / `_PORT` / `_ALLOWED_HOSTS` | `0.0.0.0` / `8090` / set by compose | bind address, fixed port and accepted `Host` headers inside the container (unset natively: unchanged `127.0.0.1`, random port) |
+
+| Port | What |
+|---|---|
+| 8090 | approval UI and `/healthz`; published on the host's loopback only (MailForge is localhost-only by design) |
+
+Run any command inside the same image and volume:
+
+```bash
+docker compose -f deploy/compose/compose.yml run --rm app account-list
+docker compose -f deploy/compose/compose.yml exec app mailforge health
+```
+
+**Your data survives updates.** The mail database (with its sqlite-vec index), `config.toml` and the encrypted credential
+store live only in the `mailforge-data` volume (the image is read-only). `docker compose down` keeps it; **`down -v` deletes
+it**. Before a new image version first starts, the database, config and credential store are copied to `/data/backups/`
+(last 5 kept). Back up (app stopped; keep `MAILFORGE_KEYRING_PASSWORD` separately, it is not in the archive):
+
+```bash
+docker compose -f deploy/compose/compose.yml stop app
+docker run --rm -v mailforge_mailforge-data:/data:ro -v "$PWD":/backup alpine tar czf /backup/mailforge-data-$(date +%F).tgz -C /data .
+docker compose -f deploy/compose/compose.yml start app
+```
+
+Restore, bind-mount ownership (`PUID`/`PGID`), credentials and upgrades: [`docs/deploy/docker.md`](docs/deploy/docker.md).
+
 ## Commands
 
 | Command | What it does |
