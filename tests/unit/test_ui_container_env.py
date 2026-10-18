@@ -94,7 +94,9 @@ def test_default_ports_also_accept_the_bare_name_browsers_send(monkeypatch):
     """A browser at https://mail.example.lan sends Host: mail.example.lan and
     Origin: https://mail.example.lan (no :443); the documented name:443 form must
     not turn every proxied request into a 403."""
-    monkeypatch.setenv(paths.UI_ALLOWED_HOSTS_ENV, "mail.example.lan:443,plain.example.lan:80,[::1]:443,x.lan:8443")
+    monkeypatch.setenv(
+        paths.UI_ALLOWED_HOSTS_ENV, "mail.example.lan:443,plain.example.lan:80,[::1]:443,x.lan:8443"
+    )
     hosts = paths.ui_extra_allowed_hosts()
     assert {"mail.example.lan", "plain.example.lan", "[::1]"} <= hosts
     assert "x.lan" not in hosts  # a non-default port is never dropped
