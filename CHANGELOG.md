@@ -38,6 +38,14 @@ Published by Laser Lloyd — https://www.laserlloyd.com
 - Docs and comments that pointed the heavy-lift example at the StudioForge
   panel port (`:8080`) now point at the gateway (`http://127.0.0.1:1234/v1`).
 
+### Fixed
+- `[llm] lm_studio_host` written as an `https://` URL is no longer downgraded
+  to plain HTTP (which would have sent the new bearer key in clear); the scheme
+  is kept for every request. The LM Studio SDK path still receives a bare
+  `host:port`.
+- The container workflow now also runs on pushes to `master` (the default
+  branch), not only `main`.
+
 ### Upgrading
 - Nothing to do for existing installs. To use an authenticated server, export
   `MAILFORGE_LLM_API_KEY` and run `mailforge llm-check`. Against StudioForge,

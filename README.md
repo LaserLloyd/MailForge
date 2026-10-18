@@ -78,8 +78,11 @@ OpenAI-compatible endpoint, …) serving a chat model and an embedding model.
 ### Linux
 
 ```bash
-# 1. install uv (the Python package runner) if you don't have it
+# 1. install uv (the Python package runner) if you don't have it.
+#    A bare Debian/Ubuntu needs curl first (sudo apt-get install -y curl ca-certificates);
+#    without it the line below prints nothing and installs nothing.
 curl -LsSf https://astral.sh/uv/install.sh | sh
+source "$HOME/.local/bin/env"   # or open a new shell: puts uv (and later mailforge) on PATH
 
 # 2. install the app (from a checkout or an unpacked release)
 uv tool install .
@@ -202,6 +205,9 @@ Restore, bind-mount ownership (`PUID`/`PGID`), credentials and upgrades: [`docs/
 | `mailforge purge-trash` | Report the deletion queue; `--yes` runs the sweep now (`--now` ignores the holding period) |
 | `mailforge rescreen [--site <id>] [--apply]` | Re-apply spam screening and category rules (e.g. GitHub) to stored mail; dry run by default |
 | `mailforge audit-verify` | Verify the audit hash chain is intact |
+| `mailforge health` | Print the running service's `/healthz` JSON (exit 0 only when every mailbox is healthy; a fresh install with no mailbox is `degraded`, 503) |
+| `mailforge llm-check` | Is the LLM server reachable, is the API key accepted, are the configured model ids served? (exit 0 / 1 fix needed / 2 unreachable) |
+| `mailforge eval-screening` | Leave-one-out replay of your own screening labels against the current rules |
 | `mailforge service install\|start\|stop\|desktop` | Manage the background service / launcher |
 | `mailforge redteam` | Run offline red-team suites (garak / promptfoo) |
 | `mailforge version` | Print the installed version |
@@ -348,7 +354,7 @@ triage_guidance = ""             # extra policy text shown to the triage prompt
 signature = "Alex"               # fills {{signature}} in templates and the composer
 
 [llm]
-lm_studio_host = "127.0.0.1:1234"   # any OpenAI-compatible server (StudioForge gateway, not the :8080 panel)
+lm_studio_host = "127.0.0.1:1234"   # any OpenAI-compatible server (StudioForge gateway, not the :8080 panel); "https://host:port" keeps TLS
 api_key_env = "MAILFORGE_LLM_API_KEY"  # sent as Authorization: Bearer; STUDIOFORGE_API_KEY is the fallback
 chat_model = "your-chat-model"
 embedding_model = "your-embedding-model"

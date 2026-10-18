@@ -219,3 +219,22 @@ def test_llm_check_refused_key_exits_1(monkeypatch):
 
 def test_openclaw_settings_unchanged_by_the_new_key():
     assert OpenClawSettings().heavy_lift_key_env == "MAILFORGE_HEAVY_KEY"
+
+
+# ------------------------------------------------------------------ scheme
+@pytest.mark.parametrize(
+    ("host", "expected"),
+    [
+        ("127.0.0.1:1234", "http://127.0.0.1:1234/v1"),
+        ("http://127.0.0.1:1234", "http://127.0.0.1:1234/v1"),
+        ("http://127.0.0.1:1234/", "http://127.0.0.1:1234/v1"),
+        ("https://llm.example.test:1234", "https://llm.example.test:1234/v1"),
+        ("HTTPS://llm.example.test", "https://llm.example.test/v1"),
+    ],
+)
+def test_an_https_host_is_not_downgraded_to_plain_http(host, expected):
+    """The bearer key rides on every request: an ``https://`` setting must stay
+    TLS instead of being silently stripped to ``http://`` (the key in clear)."""
+    bridge = LMStudioBridge(host, "m", "e", api_key=KEY)
+    assert bridge.base_url == expected
+    assert "://" not in bridge.host          # the SDK still gets a bare host:port
