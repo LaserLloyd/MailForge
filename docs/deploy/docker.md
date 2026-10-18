@@ -98,9 +98,11 @@ provide at run time:
 
 Choose a long random value and keep a copy in your password manager. It is
 **not recoverable**: lose it and the stored mailbox passwords are unreadable
-(re-enter them with `setup-wizard`). A wrong password fails with
-`MAC check failed`; no password and no terminal fails with a clear
-"credential store is locked" error instead of hanging.
+(re-enter them with `setup-wizard`). A wrong password fails with "the
+credential store ... did not unlock ... wrong password?"; no password and no
+terminal fails with a clear "credential store is locked" error instead of
+hanging. Commands started with `docker compose exec` skip the entrypoint but read
+the same two variables, so they unlock the store too.
 
 The image selects the keyring backend through `PYTHON_KEYRING_BACKEND` and a
 small module, `deploy/container_keyring.py`, because `keyrings.cryptfile` can
@@ -184,8 +186,8 @@ the mailbox itself. The credentials inside are useless without
 `MAILFORGE_KEYRING_PASSWORD`, which is **not** in the archive; keep that
 separately (password manager). Back up and restore them as a pair. (With no
 password the credentials read as missing: `mailforge account-list` shows
-`[MISSING CREDENTIAL]`. With a wrong password the command fails with
-`MAC check failed`; correct `MAILFORGE_KEYRING_PASSWORD` and retry.)
+`[MISSING CREDENTIAL]`. With a wrong password the store reports "did not
+unlock ... wrong password?"; correct `MAILFORGE_KEYRING_PASSWORD` and retry.)
 
 ### Volume permissions (bind mounts)
 
