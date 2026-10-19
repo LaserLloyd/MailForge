@@ -549,6 +549,7 @@ LocalSystem keeps them under `C:\Windows\System32\config\systemprofile\AppData\L
 F="docker compose -f deploy/compose/compose.yml"
 $F exec app mailforge unlock status
 $F exec app mailforge unlock reset --yes                      # wipe the stored mailbox passwords
+read -rs NEW_MAILBOX_PW      # hidden prompt: keeps it out of shell history
 printf '%s\n' "$NEW_MAILBOX_PW" | $F exec -T app mailforge users passwd <name> --password-stdin
 $F exec app mailforge token show                              # container-internal launcher URL (use the published port)
 $F exec app sh -c ': > /data/RESET_LOGIN' && $F restart app   # the sentinel form: credential store + UI keys

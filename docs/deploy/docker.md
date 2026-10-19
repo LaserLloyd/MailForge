@@ -127,6 +127,7 @@ Everything below needs shell access to the Docker host; nothing can be triggered
 $F exec app mailforge unlock status                    # LOCKED: ... wrong password? / unlocked
 $F exec app mailforge unlock reset --yes               # store file -> cryptfile_pass.cfg.reset-<time>.bak; mail DB and config.toml kept
 # put the password you want to keep in .env (MAILFORGE_KEYRING_PASSWORD) and `$F up -d` first, then:
+read -rs MAILBOX_PW      # hidden prompt: keeps it out of shell history
 printf '%s\n' "$MAILBOX_PW" | $F exec -T app mailforge users passwd <name> --password-stdin
 $F restart app
 $F exec app mailforge users list                       # also: users add | delete
