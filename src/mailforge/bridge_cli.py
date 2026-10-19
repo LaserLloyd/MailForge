@@ -196,7 +196,23 @@ async def _async_action(action: str, site: str, data: dict[str, Any], store: Any
         texts = await retrieve(
             store, bridge, query, k=limit, site_id=site, reference_only=True
         )
-        return {"query": query, "results": [{"text": text} for text in texts]}
+        result: dict[str, Any] = {"query": query, "results": [{"text": text} for text in texts]}
+        if not texts:
+            # An empty list must not read as "the references say nothing":
+            # say when the search could not run at all (additive fields).
+            status = await asyncio.to_thread(_model_status, bridge)
+            reason: list[str] = []
+            if not status["up"]:
+                reason = status["notes"] or ["The LLM server is unavailable."]
+            elif not await bridge.embed([query]):
+                reason = [
+                    f"The embedding model {bridge.embed_id!r} did not answer "
+                    "(see the MailForge log for the server's reason)."
+                ]
+            if reason:
+                result["searched"] = False
+                result["note"] = " ".join(["Reference search did not run."] + reason)
+        return result
     raise BridgeInputError("unsupported async action")
 
 
@@ -508,12 +524,22 @@ def _do_agent_send(data: dict[str, Any], site: str, store: Any, settings: Any) -
 
 def _model_status(bridge: LMStudioBridge) -> dict[str, Any]:
     """``status.model``: reachability, the configured chat id, and (additive)
-    ``notes`` - plain sentences when a configured id is not one the server
-    serves (e.g. an LM Studio id against StudioForge's publisher/repo/stem ids).
+    ``notes`` - plain sentences when the server is unreachable, refuses the
+    API key, or does not serve a configured id (e.g. an LM Studio id against
+    StudioForge's publisher/repo/stem ids).
     """
-    up = bridge.is_up()
+    from .llm.bridge import auth_problem
+
+    code = bridge.probe()
+    up = code == 200
     notes: list[str] = []
-    if up:
+    if code is None:
+        notes = [f"The LLM server at {bridge.base_url} cannot be reached."]
+    elif code in (401, 403):
+        notes = [auth_problem(code, bridge.has_api_key)]
+    elif not up:
+        notes = [f"The LLM server answered HTTP {code} to /v1/models."]
+    else:
         try:
             notes = asyncio.run(bridge.model_id_notes())
         except Exception:  # diagnostics must never break the status op

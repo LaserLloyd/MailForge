@@ -124,8 +124,35 @@ def _inline_refs(schema: dict[str, Any]) -> dict[str, Any]:
     return resolve(schema, frozenset())
 
 
-LOCAL_KEY_HINT = "llm.api_key_env (default MAILFORGE_LLM_API_KEY)"
+LOCAL_KEY_HINT = "llm.api_key_env (default MAILFORGE_LLM_API_KEY) or STUDIOFORGE_API_KEY"
 HEAVY_KEY_HINT = "openclaw.heavy_lift_key_env (default MAILFORGE_HEAVY_KEY)"
+
+
+def auth_problem(status: int, key_set: bool) -> str:
+    """Plain sentence for a 401/403 from the local server (never the key)."""
+    if key_set:
+        return (
+            f"HTTP {status}: the server refused the API key that is set. Check the "
+            "key in the env var named by llm.api_key_env or STUDIOFORGE_API_KEY."
+        )
+    return (
+        f"HTTP {status}: the server requires an API key and this process has none. "
+        "Export it in the env var named by llm.api_key_env (default "
+        "MAILFORGE_LLM_API_KEY) or STUDIOFORGE_API_KEY; a long-running parent "
+        "(a service, an agent gateway) must be restarted to see a new variable."
+    )
+
+
+def _describe_exc(exc: BaseException) -> str:
+    """``str(exc)``, or the exception's type when that is empty.
+
+    httpx timeouts stringify to ``""``, which turned "chat POST failed: " into
+    a warning that named no cause at all.
+    """
+    text = str(exc).strip()
+    if isinstance(exc, httpx.TimeoutException):
+        return f"{type(exc).__name__} (no answer within the client timeout{': ' + text if text else ''})"
+    return text or type(exc).__name__
 
 
 def _failure_hint(exc: Exception, model: str, key_hint: str = LOCAL_KEY_HINT) -> str:
@@ -276,30 +303,33 @@ class LMStudioBridge:
 
         return await asyncio.to_thread(self.is_up)
 
-    def is_up(self) -> bool:
-        """Return True iff the LM Studio server answers (spec §6).
-
-        Prefers the SDK's host validator; otherwise pings the OpenAI-compat
-        ``/v1/models`` endpoint. Any failure → ``False`` (DEFERRED_NO_LLM).
-        """
-        # Probe the API actually used for chat and embeddings first. The native
-        # SDK validator is both stricter and dramatically slower for healthy
-        # remote servers.
+    def probe(self) -> int | None:
+        """HTTP status of ``GET /v1/models`` (with the key), or ``None`` when
+        the server cannot be reached at all. Diagnostics only."""
         try:
             r = httpx.get(
                 f"{self.base_url}/models", headers=self._auth_headers(), timeout=5.0
             )
-            if r.status_code in (401, 403):
-                log.warning(
-                    "LLM server answered HTTP %s to /v1/models: it requires an API "
-                    "key. Export it in the env var named by llm.api_key_env "
-                    "(default MAILFORGE_LLM_API_KEY).",
-                    r.status_code,
-                )
-            return r.status_code == 200
         except Exception as e:
-            log.debug("LM Studio /v1/models probe failed: %s", e)
-            return False
+            log.debug("LM Studio /v1/models probe failed: %s", _describe_exc(e))
+            return None
+        if r.status_code in (401, 403):
+            log.warning(
+                "LLM server answered HTTP %s to /v1/models: %s",
+                r.status_code,
+                auth_problem(r.status_code, self.has_api_key),
+            )
+        return r.status_code
+
+    def is_up(self) -> bool:
+        """Return True iff the LM Studio server answers (spec §6).
+
+        Pings the OpenAI-compat ``/v1/models`` endpoint (the API actually used
+        for chat and embeddings; the native SDK validator is stricter and much
+        slower for healthy remote servers). Any failure → ``False``
+        (DEFERRED_NO_LLM).
+        """
+        return self.probe() == 200
 
     # ----- native SDK session (JIT load w/ TTL, spec §6) -----
     @asynccontextmanager
@@ -441,7 +471,10 @@ class LMStudioBridge:
             return msg.get("content") or msg.get("reasoning_content") or ""
         except Exception as e:
             log.warning(
-                "chat POST to %s failed: %s%s", base_url, e, _failure_hint(e, model, key_hint)
+                "chat POST to %s failed: %s%s",
+                base_url,
+                _describe_exc(e),
+                _failure_hint(e, model, key_hint),
             )
             return ""
 
@@ -694,5 +727,5 @@ class LMStudioBridge:
                     vectors.extend(await _request_batch(batch))
             return _fit_dim(vectors, self.embed_id)
         except Exception as e:
-            log.warning("embed() failed (LM Studio down?): %s", e)
+            log.warning("embed() failed (LM Studio down?): %s", _describe_exc(e))
             return []

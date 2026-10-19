@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
+import httpx
+
 import pytest
 from _fakesf import FakeStudioForge
 
@@ -268,3 +270,66 @@ def test_heavy_lift_401_hint_names_the_heavy_key_variable(caplog):
             assert asyncio.run(bridge._chat_heavy([{"role": "user", "content": "x"}])) == ""
     assert "heavy_lift_key_env" in caplog.text and "MAILFORGE_HEAVY_KEY" in caplog.text
     assert "MAILFORGE_LLM_API_KEY" not in caplog.text
+
+
+# ------------------------------------------- diagnostics an operator can act on
+def test_a_timeout_names_itself_instead_of_an_empty_reason(caplog):
+    """httpx timeouts stringify to "", so the warning used to end in
+    "failed: " with no cause at all."""
+    from mailforge.llm.bridge import _describe_exc
+
+    assert str(httpx.ReadTimeout("")) == ""
+    assert _describe_exc(httpx.ReadTimeout("")).startswith("ReadTimeout")
+    assert _describe_exc(ValueError("boom")) == "boom"
+    assert _describe_exc(RuntimeError()) == "RuntimeError"
+
+
+def test_bridge_status_explains_a_missing_key(monkeypatch):
+    """A process started before the key existed (an agent gateway) reported
+    model.up = false with no notes: indistinguishable from a dead rig."""
+    from mailforge.bridge_cli import _model_status
+
+    with FakeStudioForge() as sf:
+        sf.route("GET", "/v1/models", 401, {"error": {"code": "unauthorized"}})
+        out = _model_status(_bridge(sf))
+        refused = _model_status(_bridge(sf, api_key=KEY))
+    assert out["up"] is False
+    assert any("has none" in n and "restarted" in n for n in out["notes"])
+    assert any("refused the API key" in n for n in refused["notes"])
+    assert KEY not in str(refused)
+
+
+def test_bridge_status_says_when_the_server_is_unreachable():
+    from mailforge.bridge_cli import _model_status
+
+    sf = FakeStudioForge()           # never started: the port refuses
+    host = sf.url.removeprefix("http://")
+    sf._srv.server_close()
+    bridge = LMStudioBridge(host=host, model_id="m", embed_id="e")
+    out = _model_status(bridge)
+    assert out["up"] is False and "cannot be reached" in out["notes"][0]
+
+
+@pytest.mark.parametrize("models_status, embed_status, expect", [
+    (401, 200, "has none"),
+    (200, 507, "did not answer"),
+])
+def test_reference_search_says_when_it_could_not_search(tmp_path, models_status,
+                                                        embed_status, expect):
+    """An empty result used to read as "the references say nothing" while the
+    embedder was refused or could not load."""
+    from mailforge.bridge_cli import _async_action
+    from mailforge.db.store import open_store
+
+    with FakeStudioForge() as sf:
+        sf.route("GET", "/v1/models", models_status, {"data": [{"id": "pub/repo/stem"}]})
+        sf.route("POST", "/v1/embeddings", embed_status, {"error": {"message": "no GPU"}})
+        settings = Settings(llm=LLMSettings(lm_studio_host=sf.url.removeprefix("http://"),
+                                            chat_model="pub/repo/stem",
+                                            embedding_model="pub/repo/emb"))
+        with open_store(tmp_path / "agent.db") as store:
+            out = asyncio.run(_async_action("reference-search", "default",
+                                            {"query": "pricing"}, store, settings))
+    assert out["results"] == []
+    assert out["searched"] is False
+    assert expect in out["note"]

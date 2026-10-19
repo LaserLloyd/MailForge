@@ -20,6 +20,17 @@ Published by Laser Lloyd — https://www.laserlloyd.com
   vendored bundle cannot drift or be hand-edited unnoticed.
 
 ### Fixed
+- **Bridge `status` and `reference-search` say why the LLM link is down.** A process started
+  before the API key existed (e.g. an agent gateway running the plugin) got `model.up: false`
+  with empty `notes`, and `reference-search` returned an empty result that read as "the
+  references say nothing". `status.model.notes` now names an unreachable server, a missing key
+  (and that a long-running parent must be restarted to see it) or a refused key;
+  `reference-search` adds `searched: false` and a `note` when the server or the embedding model
+  did not answer (additive fields).
+- LLM warnings name a timeout (`ReadTimeout (no answer within the client timeout)`) instead of
+  ending in `failed: ` with no cause; the 401 hint also mentions `STUDIOFORGE_API_KEY`.
+- Docs used a look-alike allow marker the scrub gate does not recognise; public repository and image
+  URLs now carry the real `scrub-check: allow` pragma (a test rejects the look-alike).
 - `scripts/scrub_check.py` no longer reports the bundle's `files.json` sha256 table as
   `secret-blob` (that one file, that one category, and only 64-hex digests; any other
   blob in it is still reported; covered by a test).
