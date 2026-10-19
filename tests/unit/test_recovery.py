@@ -361,14 +361,14 @@ def test_sentinel_is_consumed_and_cannot_replay(armed, file_kr):
 
 
 def test_unknown_content_is_consumed_but_resets_nothing_and_is_not_logged(armed, file_kr, caplog):
-    (armed / "RESET_LOGIN").write_text("admin:hunter2-typo", encoding="utf-8")
+    (armed / "RESET_LOGIN").write_text("zq9user:hunter2-typo", encoding="utf-8")
     keys = _ui_files(armed)
     with caplog.at_level(logging.INFO):
         res = recovery.consume_reset_sentinel(Settings(imap_accounts=[]))
     assert res[0].action is None
     assert not (armed / "RESET_LOGIN").exists()
     assert Path(file_kr.file_path).exists() and _ui_files(armed) == keys
-    assert "hunter2" not in caplog.text and "admin" not in caplog.text
+    assert "hunter2" not in caplog.text and "zq9user" not in caplog.text
 
 
 def test_undeletable_sentinel_is_not_acted_on(armed, file_kr, monkeypatch, caplog):
