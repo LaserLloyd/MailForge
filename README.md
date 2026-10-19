@@ -120,7 +120,7 @@ Choose this to get a `mailforge` command with no clone and no venv to manage.
 winget install --id Git.Git -e --source winget
 winget install --id astral-sh.uv -e --source winget
 # close and reopen PowerShell, then:
-uv tool install --python 3.12 "mailforge[llm,rag] @ git+https://github.com/LaserLloyd/MailForge"   # scrub-ok: public repo URL
+uv tool install --python 3.12 "mailforge[llm,rag] @ git+https://github.com/LaserLloyd/MailForge"   # scrub-check: allow (public repo URL)
 uv tool update-shell        # puts uv's tool folder on PATH; close and reopen PowerShell if it says so
 mailforge version           # prints: mailforge 0.6.0
 ```
@@ -148,7 +148,7 @@ Choose this for a container that restarts on its own, with your mail database on
 winget install --id Git.Git -e --source winget
 winget install --id Docker.DockerDesktop -e --source winget
 # start Docker Desktop once and wait until it says the engine is running, then:
-git clone https://github.com/LaserLloyd/MailForge.git   # scrub-ok: public repo URL
+git clone https://github.com/LaserLloyd/MailForge.git   # scrub-check: allow (public repo URL)
 cd MailForge
 Copy-Item deploy\compose\.env.example deploy\compose\.env
 $pw = [guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')     # a random 64-character password
@@ -176,7 +176,7 @@ Choose this to read or change the code, or to run the test suite.
 winget install --id Git.Git -e --source winget
 winget install --id astral-sh.uv -e --source winget
 # close and reopen PowerShell, then:
-git clone https://github.com/LaserLloyd/MailForge.git   # scrub-ok: public repo URL
+git clone https://github.com/LaserLloyd/MailForge.git   # scrub-check: allow (public repo URL)
 cd MailForge
 uv sync --python 3.12 --extra dev
 uv run mailforge version
@@ -202,7 +202,7 @@ Choose this to get a `mailforge` command with no clone and no venv to manage.
 sudo apt-get update && sudo apt-get install -y git curl ca-certificates
 curl -LsSf https://astral.sh/uv/install.sh | sh
 source "$HOME/.local/bin/env"       # puts uv (and mailforge) on PATH for this shell
-uv tool install --python 3.12 "mailforge[llm,rag] @ git+https://github.com/LaserLloyd/MailForge"   # scrub-ok: public repo URL
+uv tool install --python 3.12 "mailforge[llm,rag] @ git+https://github.com/LaserLloyd/MailForge"   # scrub-check: allow (public repo URL)
 mailforge version                   # prints: mailforge 0.6.0
 ```
 
@@ -258,7 +258,7 @@ Choose this for a server, or for a container that restarts on its own with your 
 ```bash
 sudo apt-get update && sudo apt-get install -y git docker.io docker-compose-v2
 sudo usermod -aG docker $USER      # log out and in once, or prefix the docker lines below with sudo
-git clone https://github.com/LaserLloyd/MailForge.git && cd MailForge   # scrub-ok: public repo URL
+git clone https://github.com/LaserLloyd/MailForge.git && cd MailForge   # scrub-check: allow (public repo URL)
 cp deploy/compose/.env.example deploy/compose/.env && chmod 0600 deploy/compose/.env
 sed -i "s|^MAILFORGE_KEYRING_PASSWORD=.*|MAILFORGE_KEYRING_PASSWORD=$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')|" deploy/compose/.env
 docker compose -f deploy/compose/compose.yml up -d
@@ -285,7 +285,7 @@ Choose this to read or change the code, or to run the test suite.
 sudo apt-get update && sudo apt-get install -y git curl ca-certificates
 curl -LsSf https://astral.sh/uv/install.sh | sh
 source "$HOME/.local/bin/env"
-git clone https://github.com/LaserLloyd/MailForge.git && cd MailForge   # scrub-ok: public repo URL
+git clone https://github.com/LaserLloyd/MailForge.git && cd MailForge   # scrub-check: allow (public repo URL)
 uv sync --python 3.12 --extra dev
 uv run mailforge version
 uv run mailforge demo --no-browser
@@ -306,7 +306,7 @@ The code is plain Python, so a native install should work as on Linux; there is 
 
 ```bash
 brew install git uv
-uv tool install --python 3.12 "mailforge[llm,rag] @ git+https://github.com/LaserLloyd/MailForge"   # scrub-ok: public repo URL
+uv tool install --python 3.12 "mailforge[llm,rag] @ git+https://github.com/LaserLloyd/MailForge"   # scrub-check: allow (public repo URL)
 uv tool update-shell        # then open a new Terminal window
 mailforge version           # prints: mailforge 0.6.0
 mailforge demo              # look around with fictional data
@@ -323,7 +323,7 @@ Same files and steps as Linux method 3, with Docker Desktop in place of the engi
 ```bash
 brew install git
 brew install --cask docker     # then open Docker Desktop once and wait for "Engine running"
-git clone https://github.com/LaserLloyd/MailForge.git && cd MailForge   # scrub-ok: public repo URL
+git clone https://github.com/LaserLloyd/MailForge.git && cd MailForge   # scrub-check: allow (public repo URL)
 cp deploy/compose/.env.example deploy/compose/.env && chmod 0600 deploy/compose/.env
 sed -i '' "s|^MAILFORGE_KEYRING_PASSWORD=.*|MAILFORGE_KEYRING_PASSWORD=$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')|" deploy/compose/.env
 docker compose -f deploy/compose/compose.yml up -d
@@ -336,7 +336,7 @@ docker compose -f deploy/compose/compose.yml logs app | grep "MailForge UI"
 
 ### Upgrade and uninstall
 
-- **`uv tool` (Windows, Linux, macOS):** `uv tool install --reinstall --python 3.12 "mailforge[llm,rag] @ git+https://github.com/LaserLloyd/MailForge"`   <!-- scrub-ok: public repo URL -->
+- **`uv tool` (Windows, Linux, macOS):** `uv tool install --reinstall --python 3.12 "mailforge[llm,rag] @ git+https://github.com/LaserLloyd/MailForge"`   <!-- scrub-check: allow (public repo URL) -->
   upgrades (rollback: add `@<tag or commit>` after the repository URL). `uv tool uninstall mailforge` removes the program. Your config, database and
   credentials are kept (Windows: `%LOCALAPPDATA%\mailforge`; Linux: `~/.config/mailforge` and `~/.local/share/mailforge`; macOS: `~/Library/Application Support/mailforge`); delete them yourself only if you are done with the mail.
 - **systemd service:** after upgrading the tool run `systemctl --user restart mailforge`. To remove it:
@@ -382,7 +382,7 @@ Then open the `http://127.0.0.1:<port>/?token=…` URL it prints: the token is o
 ### Optional capability tiers
 
 ```bash
-uv tool install --reinstall --python 3.12 "mailforge[llm,rag,security-ml] @ git+https://github.com/LaserLloyd/MailForge"   # scrub-ok: public repo URL
+uv tool install --reinstall --python 3.12 "mailforge[llm,rag,security-ml] @ git+https://github.com/LaserLloyd/MailForge"   # scrub-check: allow (public repo URL)
 ```
 
 `security-ml` adds Prompt Guard, Presidio, llm-guard and detect-secrets (torch; several GB). `policy` and `redteam` are further extras (offline flow policy,

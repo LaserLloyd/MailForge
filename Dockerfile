@@ -63,6 +63,7 @@ ARG VERSION=dev
 ARG REVISION=unknown
 ARG CREATED
 
+# scrub-check: begin-allow  (public repo URLs in the OCI labels; a LABEL continuation cannot carry a trailing comment)
 LABEL org.opencontainers.image.title="MailForge" \
       org.opencontainers.image.description="Local-LLM email assistant that triages, screens and drafts - and never auto-sends" \
       org.opencontainers.image.source="https://github.com/LaserLloyd/MailForge" \
@@ -71,6 +72,7 @@ LABEL org.opencontainers.image.title="MailForge" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${REVISION}" \
       org.opencontainers.image.created="${CREATED}"
+# scrub-check: end-allow
 
 # tzdata so TZ= resolves; ca-certificates for IMAP/SMTP over TLS and HTTPS.
 # Every wheel in the lock is a prebuilt manylinux wheel: no compiler needed.

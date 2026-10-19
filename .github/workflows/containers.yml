@@ -3,7 +3,7 @@ name: containers
 # Build the container image on every push and pull request; on a version tag
 # (v*) also push it to GHCR, sign it, and attach provenance and an SBOM.
 #
-#   ghcr.io/laserlloyd/mailforge:<version>   (and :latest on a release tag)
+#   ghcr.io/laserlloyd/mailforge:<version>   (and :latest on a release tag)  # scrub-check: allow (public image name)
 #
 # Nothing here runs until the workflow is pushed to GitHub. GHCR package
 # visibility (public/private) is an owner decision made once in the package
@@ -29,7 +29,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  IMAGE: ghcr.io/laserlloyd/mailforge
+  IMAGE: ghcr.io/laserlloyd/mailforge  # scrub-check: allow (public image name)
 
 permissions:
   contents: read

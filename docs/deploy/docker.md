@@ -6,7 +6,7 @@ without a human click in its web UI. The image runs the listener, the agent and
 the UI in one process; all state is in one volume, `/data`. No GPU is needed.
 
 ```bash
-git clone https://github.com/LaserLloyd/MailForge.git && cd MailForge          # scrub-ok: public repo URL  (or: git pull)
+git clone https://github.com/LaserLloyd/MailForge.git && cd MailForge          # scrub-check: allow (public repo URL)  (or: git pull)
 cp deploy/compose/.env.example deploy/compose/.env && chmod 0600 deploy/compose/.env
 $EDITOR deploy/compose/.env        # set MAILFORGE_KEYRING_PASSWORD (see "Credentials")
 docker compose -f deploy/compose/compose.yml up -d
@@ -210,6 +210,6 @@ Built `FROM ghcr.io/astral-sh/uv:python3.12-trixie-slim` and run on
 `python:3.12-slim-trixie` (same interpreter at the same path, uv not in the
 runtime image), non-root UID 1000, `/data` volume, tini via `init: true`,
 `HEALTHCHECK`. sqlite-vec is verified to load at build time. Tagged releases
-are published as `ghcr.io/laserlloyd/mailforge:<version>` with a CycloneDX SBOM,
+are published as `ghcr.io/laserlloyd/mailforge:<version>` with a CycloneDX SBOM, <!-- scrub-check: allow (public image name) -->
 SHA256SUMS, a cosign keyless signature and build-provenance attestation (see
 `.github/workflows/containers.yml`).

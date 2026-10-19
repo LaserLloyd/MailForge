@@ -292,3 +292,32 @@ def test_git_commit_pin_in_a_vcs_requirement_is_not_a_secret():
     # the pin exemption is for secret-blob only: other rules still fire on the line
     other = scrub.scan_text(f'"pkg @ {pin}" # 192.168.222.11', Path("ci.yml"))  # scrub-check: allow
     assert {h.category for h in other} == {"private-ip"}
+
+
+def test_no_unrecognised_allow_pragma_in_the_tree():
+    """Only ``scrub-check: allow`` exempts a line. A look-alike such as
+    ``scrub-ok`` is silently ignored by the gate, so the line it was meant to
+    exempt fails the scan on any machine that has the local rules (and CI,
+    which has none, never notices)."""
+    import re
+
+    root = SCRIPT.parents[1]
+    bogus = re.compile(r"scrub[-_ ]ok\b", re.IGNORECASE)
+    offenders = []
+    for base in ("src", "tests", "scripts", "docs", "installer", "packaging", ".github"):
+        for path in (root / base).rglob("*"):
+            if not path.is_file() or "__pycache__" in path.parts or path == Path(__file__):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            offenders += [f"{path.relative_to(root)}:{n}" for n, line in
+                          enumerate(text.splitlines(), 1) if bogus.search(line)]
+    for name in ("README.md", "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md"):
+        path = root / name
+        if path.exists():
+            offenders += [f"{name}:{n}" for n, line in
+                          enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+                          if bogus.search(line)]
+    assert offenders == [], f"use '{scrub.PRAGMA}' instead: {offenders}"

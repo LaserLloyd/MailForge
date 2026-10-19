@@ -53,7 +53,7 @@ the next page load.
 To update the bundle (no private registry, no copy-paste):
 
 ```bash
-uv pip install "forgeui @ git+https://github.com/LaserLloyd/ThemeForge@v1.2.0"   # the release forgeui.json accepts (not PyPI)
+uv pip install "forgeui @ git+https://github.com/LaserLloyd/ThemeForge@v1.2.0"   # the release forgeui.json accepts (not PyPI)  # scrub-check: allow (public repo URL)
 python -m forgeui vendor            # replace the folder, verified against files.json, VERSION last
 python -m forgeui vendor --check    # exit 1 on drift (CI and tests/unit/test_forgeui_vendor.py run this)
 # offline: python -m forgeui vendor --source <ThemeForge checkout, ui-theme folder, zip or wheel>
@@ -72,7 +72,7 @@ runtime's `<script>` tag. The package carries a byte copy of the manifest,
 `src/mailforge/ui/forgeui.json` (the wheel, the container image and the frozen build have
 no repository root); after editing `forgeui.json`, run
 `cp forgeui.json src/mailforge/ui/forgeui.json` (a test fails if they differ). A theme added
-to the list needs a service restart. Opt-in themes (`electric-yellow`, `laserlloyd*`) are
+to the list needs a service restart. Opt-in themes (`electric-yellow`, `laserlloyd*`) are <!-- scrub-check: allow (public theme id) -->
 offered only if listed there.
 
 Component CSS in `theme.py` and inline styles in page files read **contract
