@@ -3,7 +3,7 @@
 All notable changes to this project are documented here. Dates are ISO-8601.
 Published by Laser Lloyd — https://www.laserlloyd.com
 
-## Unreleased
+## 0.7.0 — 2026-10-19
 
 ### Changed
 - **UI theme: ForgeUI 1.2.0.** `ui/static/ui-theme/` was a pre-release copy (`ui-theme
@@ -16,6 +16,23 @@ Published by Laser Lloyd — https://www.laserlloyd.com
   and `dispatch-compat` adapters were dropped. Update procedure: `docs/STYLE-GUIDE.md` section 2.
 
 ### Added
+- **Accounts and lockout recovery** (README section of the same name; Docker: `docs/deploy/docker.md`).
+  - `mailforge users list | add | passwd | delete`: the mailbox logins under the verbs every forge uses
+    (MailForge has no separate web-UI user). `account-passwd <name>` replaces one mailbox's stored IMAP password
+    without touching `config.toml` or the database; a stored SMTP password is kept unless `--also-smtp`, a second stdin line
+    or `--smtp-password-env` says otherwise (a missing one is filled in). `users add` / `account-add` take the label as an argument.
+  - Passwords come from `--password-stdin` or the new `--password-env VAR` (`account-add`, `account-passwd`), never argv.
+  - `mailforge unlock status | reset`: where the credential store is, whether it opens, and a wipe for a lost password
+    (store file renamed to `*.reset-<time>.bak`, newest 3 kept; `--no-backup` only deletes MailForge's own file, never the shared
+    native `python_keyring` one; an OS keyring loses only the configured mailboxes'
+    entries). Config, mail database and audit log are kept.
+  - `mailforge token show | rotate`: the web-UI launcher URL, and a new launcher key + cookie-signing secret.
+  - **`RESET_LOGIN` sentinel** in the data folder (or `MAILFORGE_HOME`, i.e. the Docker volume root): read once at
+    `mailforge serve` start, deleted before anything is reset, never replays; if it cannot be deleted nothing is done.
+    Empty/`all`, `unlock` or `ui`. No web route reads or creates it (tested).
+  - Every `users`, `account-*`, `unlock` and `token` command prints the config and data folders it is acting on (stderr).
+- `tests/unit/test_recovery.py`: every verb, both keyring kinds, a real encrypted store with a forgotten
+  password, sentinel consumption/replay/unknown content/read-only, and HTTP probes that cannot trigger the sentinel.
 - `tests/unit/test_forgeui_vendor.py` and a CI step run `forgeui vendor --check`, so the
   vendored bundle cannot drift or be hand-edited unnoticed.
 
@@ -31,6 +48,8 @@ Published by Laser Lloyd — https://www.laserlloyd.com
   ending in `failed: ` with no cause; the 401 hint also mentions `STUDIOFORGE_API_KEY`.
 - Docs used a look-alike allow marker the scrub gate does not recognise; public repository and image
   URLs now carry the real `scrub-check: allow` pragma (a test rejects the look-alike).
+- Docker docs told a user who lost the credential password to re-run `setup-wizard`, which rewrites `config.toml`;
+  they now point at `unlock reset` + `users passwd`.
 - `scripts/scrub_check.py` no longer reports the bundle's `files.json` sha256 table as
   `secret-blob` (that one file, that one category, and only 64-hex digests; any other
   blob in it is still reported; covered by a test).
