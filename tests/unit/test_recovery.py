@@ -123,7 +123,7 @@ def test_users_verbs_end_to_end(home, kr, runner, monkeypatch):
     assert r.exit_code == 0 and "support" in r.output and "[ok]" in r.output
     assert MAILBOX_PW not in r.output
 
-    r = runner.invoke(cli.app, ["users", "passwd", "support", "--password-stdin"], input="new-pw\nignored\n")
+    r = runner.invoke(cli.app, ["users", "passwd", "support", "--password-stdin", "--also-smtp"], input="new-pw\n")
     assert r.exit_code == 0, r.output
     assert kr.items[("mailforge.imap.support", "support")] == "new-pw"
     assert kr.items[("mailforge.smtp.sam@shop.example.com", "sam@shop.example.com")] == "new-pw"
@@ -510,13 +510,22 @@ def test_list_with_wrong_keyring_password_says_locked_not_missing(home, runner, 
         keyring.set_keyring(previous)
 
 
-def test_restart_hint_is_docker_aware(home, kr, runner, monkeypatch):
+def test_restart_hint_fits_the_platform(home, kr, runner, monkeypatch):
     monkeypatch.setenv("MF_TEST_PW", MAILBOX_PW)
     monkeypatch.setattr(recovery, "in_container", lambda: False)
+    monkeypatch.setattr(recovery.sys, "platform", "linux")
     r = _add(runner, ["support", "--password-env", "MF_TEST_PW", "--no-input"])
-    assert "Restart mailforge.service" in r.output and "docker compose" not in r.output
+    assert "systemctl --user restart mailforge" in r.output and "docker compose" not in r.output
+    # Windows and macOS have no service installer: the hint must not name one.
+    for plat in ("win32", "darwin"):
+        monkeypatch.setattr(recovery.sys, "platform", plat)
+        assert recovery.service_kind() == "terminal"
+        r = runner.invoke(cli.app, ["unlock", "reset", "--yes"])
+        assert "Stop and start 'mailforge serve'" in r.output
+        assert "systemctl" not in r.output and "mailforge.service" not in r.output
 
     monkeypatch.setattr(recovery, "in_container", lambda: True)
+    assert recovery.service_kind() == "docker"
     for argv in (
         ["users", "passwd", "support", "--password-stdin"],
         ["unlock", "reset", "--yes"],
@@ -524,7 +533,7 @@ def test_restart_hint_is_docker_aware(home, kr, runner, monkeypatch):
     ):
         r = runner.invoke(cli.app, argv, input="pw\n")
         assert r.exit_code == 0, (argv, r.output)
-        assert "docker compose restart app" in r.output and "mailforge.service" not in r.output, argv
+        assert "docker compose restart app" in r.output and "systemctl" not in r.output, argv
 
 
 def test_in_container_detection(monkeypatch):
@@ -537,3 +546,74 @@ def test_in_container_detection(monkeypatch):
     assert recovery.in_container() is True
     monkeypatch.setattr(recovery.os.path, "exists", lambda p: False)
     assert recovery.in_container() is False
+
+
+# --------------------------------------------------------------------------- #
+# review fixes: SMTP secret handling, shared store file
+# --------------------------------------------------------------------------- #
+SMTP_KEY = ("mailforge.smtp.sam@shop.example.com", "sam@shop.example.com")
+
+
+def test_passwd_keeps_a_distinct_smtp_password_unless_told(home, kr, runner, monkeypatch):
+    r = _add(runner, ["support", "--password-stdin"], input="imap-1\nsmtp-app-pw\n")
+    assert r.exit_code == 0, r.output
+    r = runner.invoke(cli.app, ["users", "passwd", "support", "--password-stdin"], input="imap-2\n")
+    assert r.exit_code == 0, r.output
+    assert kr.items[("mailforge.imap.support", "support")] == "imap-2"
+    assert kr.items[SMTP_KEY] == "smtp-app-pw"  # not overwritten with the IMAP password
+    assert "SMTP password kept" in r.output and "--also-smtp" in r.output
+
+    r = runner.invoke(cli.app, ["users", "passwd", "support", "--password-stdin"], input="imap-3\nsmtp-new\n")
+    assert r.exit_code == 0 and kr.items[SMTP_KEY] == "smtp-new" and "replaced" in r.output
+
+    monkeypatch.setenv("MF_SMTP", "smtp-from-env")
+    monkeypatch.setenv("MF_IMAP", "imap-from-env")
+    r = runner.invoke(
+        cli.app, ["users", "passwd", "support", "--password-env", "MF_IMAP", "--smtp-password-env", "MF_SMTP"]
+    )
+    assert r.exit_code == 0 and kr.items[SMTP_KEY] == "smtp-from-env"
+
+    r = runner.invoke(cli.app, ["users", "passwd", "support", "--password-stdin", "--also-smtp"], input="same\n")
+    assert r.exit_code == 0 and kr.items[SMTP_KEY] == "same"
+    assert all(v not in r.output for v in ("same", "smtp-from-env", "imap-from-env"))
+
+
+def test_passwd_fills_a_missing_smtp_secret_after_a_reset(home, kr, runner, monkeypatch):
+    monkeypatch.setenv("MF_TEST_PW", MAILBOX_PW)
+    assert _add(runner, ["support", "--password-env", "MF_TEST_PW", "--no-input"]).exit_code == 0
+    assert runner.invoke(cli.app, ["unlock", "reset", "--yes"]).exit_code == 0
+    r = runner.invoke(cli.app, ["users", "passwd", "support", "--password-stdin"], input="fresh\n")
+    assert r.exit_code == 0 and "filled in" in r.output
+    assert kr.items[SMTP_KEY] == "fresh"
+
+
+def test_no_backup_never_deletes_a_shared_store_file(home, runner, monkeypatch, tmp_path):
+    previous = keyring.get_keyring()
+    shared = tmp_path / "python_keyring" / "cryptfile_pass.cfg"  # outside MAILFORGE_HOME
+    backend = FileKeyring(shared)
+    keyring.set_keyring(backend)
+    monkeypatch.setattr(secrets_mod, "_fallback_configured", True)
+    monkeypatch.setattr(recovery, "in_container", lambda: False)
+    try:
+        backend.set_password("mailforge.imap.x", "x", "s")
+        assert recovery.store_is_dedicated(shared) is False
+        declined = runner.invoke(cli.app, ["unlock", "reset"], input="n\n")
+        assert "shared Python keyring file" in declined.output and shared.exists()
+        r = runner.invoke(cli.app, ["unlock", "reset", "--yes", "--no-backup"])
+        assert r.exit_code == 0, r.output
+        assert "--no-backup ignored" in r.output
+        assert len(list(shared.parent.glob("*.bak"))) == 1  # the file other apps share is recoverable
+    finally:
+        keyring.set_keyring(previous)
+
+
+def test_no_backup_deletes_the_store_inside_mailforge_home_or_a_container(home, file_kr, monkeypatch):
+    store = Path(file_kr.file_path)  # lives under MAILFORGE_HOME
+    file_kr.set_password("mailforge.imap.x", "x", "s")
+    assert recovery.store_is_dedicated(store) is True
+    report = recovery.reset_credential_store(Settings(imap_accounts=[]), backup=False, backend=file_kr)
+    assert report.backup is None and not store.exists() and not list(store.parent.glob("*.bak"))
+
+    monkeypatch.delenv("MAILFORGE_HOME")
+    monkeypatch.setattr(recovery, "in_container", lambda: True)
+    assert recovery.store_is_dedicated(Path("/data/xdg/python_keyring/cryptfile_pass.cfg")) is True

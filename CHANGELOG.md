@@ -18,11 +18,13 @@ Published by Laser Lloyd — https://www.laserlloyd.com
 ### Added
 - **Accounts and lockout recovery** (README section of the same name; Docker: `docs/deploy/docker.md`).
   - `mailforge users list | add | passwd | delete`: the mailbox logins under the verbs every forge uses
-    (MailForge has no separate web-UI user). `account-passwd <name>` replaces one mailbox's stored password
-    without touching `config.toml` or the database. `users add` / `account-add` take the label as an argument.
+    (MailForge has no separate web-UI user). `account-passwd <name>` replaces one mailbox's stored IMAP password
+    without touching `config.toml` or the database; a stored SMTP password is kept unless `--also-smtp`, a second stdin line
+    or `--smtp-password-env` says otherwise (a missing one is filled in). `users add` / `account-add` take the label as an argument.
   - Passwords come from `--password-stdin` or the new `--password-env VAR` (`account-add`, `account-passwd`), never argv.
   - `mailforge unlock status | reset`: where the credential store is, whether it opens, and a wipe for a lost password
-    (store file renamed to `*.reset-<time>.bak`, newest 3 kept; an OS keyring loses only the configured mailboxes'
+    (store file renamed to `*.reset-<time>.bak`, newest 3 kept; `--no-backup` only deletes MailForge's own file, never the shared
+    native `python_keyring` one; an OS keyring loses only the configured mailboxes'
     entries). Config, mail database and audit log are kept.
   - `mailforge token show | rotate`: the web-UI launcher URL, and a new launcher key + cookie-signing secret.
   - **`RESET_LOGIN` sentinel** in the data folder (or `MAILFORGE_HOME`, i.e. the Docker volume root): read once at

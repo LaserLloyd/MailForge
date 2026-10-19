@@ -328,13 +328,22 @@ def set_account_password(
     name: str,
     imap_secret: str,
     smtp_secret: str | None = None,
-) -> IMAPAccount:
+    *,
+    also_smtp: bool = False,
+) -> tuple[IMAPAccount, str]:
     """Replace the stored credentials of an EXISTING mailbox (config untouched).
 
     This is the "I changed my mail password" / "the credential store was reset"
     path: ``config.toml`` and the message database stay as they are, only the
     keyring entries ``mailforge.imap.<name>`` and ``mailforge.smtp.<username>``
-    are rewritten. ``smtp_secret`` defaults to ``imap_secret``.
+    are touched.
+
+    The IMAP secret is always replaced. The SMTP secret is replaced when
+    ``smtp_secret`` is given, or when ``also_smtp`` says it is the same password;
+    otherwise an SMTP secret that already exists is KEPT (it may be a distinct
+    app password) and one that is missing (after ``unlock reset``) is filled with
+    the IMAP secret. Returns ``(account, smtp_action)`` with ``smtp_action`` one of
+    ``"set"``, ``"filled"`` or ``"kept"``.
     """
     target = (name or "").strip().lower()
     account = next((a for a in settings.imap_accounts if a.name.lower() == target), None)
@@ -344,12 +353,21 @@ def set_account_password(
         raise AccountError("IMAP password or OAuth2 token is required.")
     prior_imap = secrets_mod.get_secret("imap", account.name)
     prior_smtp = secrets_mod.get_secret("smtp", account.username)
+    if smtp_secret:
+        action, new_smtp = "set", smtp_secret
+    elif also_smtp:
+        action, new_smtp = "set", imap_secret
+    elif prior_smtp is None:
+        action, new_smtp = "filled", imap_secret
+    else:
+        action, new_smtp = "kept", None
     try:
         secrets_mod.set_imap_secret(account.name, imap_secret)
-        secrets_mod.set_smtp_secret(account.username, smtp_secret or imap_secret)
+        if new_smtp is not None:
+            secrets_mod.set_smtp_secret(account.username, new_smtp)
     except Exception as e:  # noqa: BLE001 - keyring backends raise many types
         _restore_secret("imap", account.name, prior_imap)
         _restore_secret("smtp", account.username, prior_smtp)
         raise AccountError(f"Could not save the credential: {e}") from None
     log.info("Updated stored credential for mailbox %s (%s).", account.username, account.name)
-    return account
+    return account, action

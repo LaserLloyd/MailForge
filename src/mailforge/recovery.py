@@ -26,6 +26,7 @@ from __future__ import annotations
 import datetime as _dt
 import logging
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -74,6 +75,18 @@ def acting_on_line() -> str:
     home = paths.app_home()
     source = f"MAILFORGE_HOME={home}" if home else "OS default (no MAILFORGE_HOME)"
     return f"MailForge data: config={paths.config_file()} data={paths.data_dir()} [{source}]"
+
+
+def service_kind() -> str:
+    """How a restart is done where this runs: ``docker``, ``systemd`` or ``terminal``.
+
+    Only Linux has a service installer (a systemd user unit). Windows and macOS run
+    ``mailforge serve`` in a terminal (WinSW is not shipped), so the hint there is to
+    stop and start that process.
+    """
+    if in_container():
+        return "docker"
+    return "systemd" if sys.platform.startswith("linux") else "terminal"
 
 
 def in_container() -> bool:
@@ -157,10 +170,29 @@ class ResetReport:
     def summary(self) -> str:
         if self.kind == "file":
             tail = f" (kept as {self.backup.name})" if self.backup else " (no backup kept)"
-            return f"credential store file removed: {self.path}{tail}"
+            extra = "; " + "; ".join(self.notes) if self.notes else ""
+            return f"credential store file removed: {self.path}{tail}{extra}"
         if self.kind == "entries":
             return f"{self.removed} mailbox credential(s) removed from the OS keyring"
         return "no credential store was present; nothing to remove"
+
+
+def store_is_dedicated(path: Path) -> bool:
+    """Is this store file MailForge's own (inside its home, or the container volume)?
+
+    The native cryptfile fallback lives in the shared ``python_keyring`` folder, where
+    any other Python program using ``keyrings.cryptfile`` keeps its entries too.
+    """
+    if in_container():
+        return True
+    home = paths.app_home()
+    if home is None:
+        return False
+    try:
+        Path(os.path.realpath(path)).relative_to(os.path.realpath(home))
+    except ValueError:
+        return False
+    return True
 
 
 def _prune_backups(path: Path) -> None:
@@ -176,7 +208,8 @@ def reset_credential_store(settings, *, backup: bool = True, backend=None) -> Re
     """Wipe the stored mailbox passwords. Config, mail database and audit log stay.
 
     File-backed store (cryptfile): the file is renamed to
-    ``<name>.reset-<UTC timestamp>.bak`` (``backup=False`` deletes it), so the next
+    ``<name>.reset-<UTC timestamp>.bak`` (``backup=False`` deletes it, but only when
+    the file is MailForge's own; a shared native file is always kept), so the next
     credential saved creates a fresh store under whatever password is then supplied.
     OS keyring: the ``mailforge.imap.<name>`` / ``mailforge.smtp.<username>`` entries
     of the configured mailboxes are deleted (other applications' entries are never
@@ -189,6 +222,11 @@ def reset_credential_store(settings, *, backup: bool = True, backend=None) -> Re
         if not info.exists:
             return ResetReport("nothing", info.path)
         bak: Path | None = None
+        report_notes: list[str] = []
+        if not backup and not store_is_dedicated(info.path):
+            # Never destroy a file other programs share: keep the .bak, say so.
+            backup = True
+            report_notes.append("shared store file: --no-backup ignored, backup kept")
         if backup:
             stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             bak = info.path.with_name(f"{info.path.name}.reset-{stamp}.bak")
@@ -198,7 +236,7 @@ def reset_credential_store(settings, *, backup: bool = True, backend=None) -> Re
             info.path.unlink()
         if hasattr(be, "_keyring_key"):
             be._keyring_key = None  # forget a password cached for the old file
-        return ResetReport("file", info.path, bak)
+        return ResetReport("file", info.path, bak, notes=report_notes)
 
     removed = 0
     for acct in getattr(settings, "imap_accounts", []):

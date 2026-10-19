@@ -455,13 +455,27 @@ environment variable, never from a command-line argument (which would land in sh
 ```bash
 mailforge users list                                     # mailboxes, and whether each has a stored credential
 mailforge users add support --username sam@example.com --site main --imap-host imap.example.com --password-stdin
-mailforge users passwd support --password-stdin          # new password for an existing mailbox (config and mail kept)
+mailforge users passwd support --password-stdin          # new IMAP password for an existing mailbox (config and mail kept)
 mailforge users delete support --yes                     # stop listening; message history is kept
 ```
 
-`--password-env VAR` reads the secret from environment variable `VAR` instead of stdin
-(`MF_PW='...' mailforge users passwd support --password-env MF_PW`). `users add` without
-`--password-*` prompts (hidden). Restart the service afterwards so the listeners pick the change up.
+`--password-env VAR` reads the secret from environment variable `VAR` instead of stdin. Put it there without
+typing it into the command line, which shell history would keep:
+
+```bash
+read -rs MF_PW && export MF_PW                 # hidden prompt (bash/zsh); nothing is echoed or saved
+mailforge users passwd support --password-env MF_PW; unset MF_PW
+```
+```powershell
+$env:MF_PW = Read-Host -MaskInput "Mailbox password"
+mailforge users passwd support --password-env MF_PW; Remove-Item Env:MF_PW
+```
+
+`users passwd` always replaces the **IMAP** password. A stored **SMTP** password is kept as it is (it may be a
+different app password) unless you pass a second stdin line, `--smtp-password-env VAR` (a different one) or
+`--also-smtp` (the same one); an SMTP password that is missing, for example after `unlock reset`, is filled in
+with the IMAP one. `users add` without `--password-*` prompts (hidden). Restart `mailforge serve` (or the Linux
+service) afterwards so the listeners pick the change up.
 
 ### Forgot the credential-store password
 
@@ -472,9 +486,9 @@ mailforge users passwd <name> --password-stdin     # once per mailbox
 ```
 
 * **Wiped:** the stored mailbox passwords. A store *file* (headless Linux, Docker) is renamed to
-  `cryptfile_pass.cfg.reset-<UTC time>.bak` (newest 3 kept; `--no-backup` deletes it instead). Note that this
-  file is the standard Python keyring file, so on a headless Linux box any other Python program using it
-  loses its entries too; the `.bak` is the way back. With an OS keyring only the `mailforge.imap.*` and
+  `cryptfile_pass.cfg.reset-<UTC time>.bak` (newest 3 kept). On a headless Linux box that file is the standard, **shared** Python keyring file, so any
+  other Python program using it loses its entries too and the `.bak` is the way back: `--no-backup` is honoured only
+  for MailForge's own file (inside `MAILFORGE_HOME`, or the Docker volume) and ignored for a shared one. With an OS keyring only the `mailforge.imap.*` and
   `mailforge.smtp.*` entries of your configured mailboxes are deleted.
 * **Kept:** `config.toml`, the mail database (drafts, history, audit log), the UI keys.
 * With the wrong password `users list` shows each mailbox as `[LOCKED: wrong keyring password ...]` and exits 1; the credentials are still there, the store just does not open.
@@ -485,7 +499,7 @@ mailforge users passwd <name> --password-stdin     # once per mailbox
 ```bash
 mailforge open --no-browser      # prints a login URL (service must be running)
 mailforge token show             # prints the launcher URL from the key file, service running or not
-mailforge token rotate           # new launcher key + cookie secret; restart the service afterwards
+mailforge token rotate           # new launcher key + cookie secret; restart `mailforge serve` afterwards
 ```
 
 `token show` prints a secret that logs a browser in: do not paste it anywhere shared.
@@ -512,15 +526,22 @@ data folder; no web route reads or writes it, and a test sends requests at every
 There is deliberately no environment-variable form: a variable in `.env` or a unit file would fire on every restart.
 
 ```powershell
-# Windows
-New-Item -ItemType File "$env:LOCALAPPDATA\mailforge\RESET_LOGIN"; mailforge service stop; mailforge service start
+# Windows: stop the `mailforge serve` terminal (Ctrl+C), then
+New-Item -ItemType File "$env:LOCALAPPDATA\mailforge\RESET_LOGIN"
+mailforge serve
 ```
 ```bash
-# macOS
-touch "$HOME/Library/Application Support/mailforge/RESET_LOGIN" && mailforge service stop; mailforge service start
+# macOS: stop `mailforge serve` (Ctrl+C), then
+touch "$HOME/Library/Application Support/mailforge/RESET_LOGIN" && mailforge serve
 # Linux (user service)
 touch ~/.local/share/mailforge/RESET_LOGIN && systemctl --user restart mailforge
 ```
+
+Windows and macOS have no shipped service installer, so `mailforge serve` in your own session is what reads the file and
+the folders above are yours. A service runs as its own account with its own folders (a Windows service as
+LocalSystem keeps them under `C:\Windows\System32\config\systemprofile\AppData\Local\mailforge`, not your
+`%LOCALAPPDATA%`); `mailforge unlock status` prints the sentinel paths for the account you run it as, and
+`mailforge service ...` / `RESET_LOGIN` must use that account's folder.
 
 ### Docker
 
