@@ -122,7 +122,7 @@ winget install --id astral-sh.uv -e --source winget
 # close and reopen PowerShell, then:
 uv tool install --python 3.12 "mailforge[llm,rag] @ git+https://github.com/LaserLloyd/MailForge"   # scrub-check: allow (public repo URL)
 uv tool update-shell        # puts uv's tool folder on PATH; close and reopen PowerShell if it says so
-mailforge version           # prints: mailforge 0.6.0
+mailforge version           # prints: mailforge 0.7.0
 ```
 
 Then look around with fictional data (no mailbox, nothing sent), and set up your real account:
@@ -203,7 +203,7 @@ sudo apt-get update && sudo apt-get install -y git curl ca-certificates
 curl -LsSf https://astral.sh/uv/install.sh | sh
 source "$HOME/.local/bin/env"       # puts uv (and mailforge) on PATH for this shell
 uv tool install --python 3.12 "mailforge[llm,rag] @ git+https://github.com/LaserLloyd/MailForge"   # scrub-check: allow (public repo URL)
-mailforge version                   # prints: mailforge 0.6.0
+mailforge version                   # prints: mailforge 0.7.0
 ```
 
 Then look around with fictional data (no mailbox, nothing sent), and set up your real account:
@@ -308,7 +308,7 @@ The code is plain Python, so a native install should work as on Linux; there is 
 brew install git uv
 uv tool install --python 3.12 "mailforge[llm,rag] @ git+https://github.com/LaserLloyd/MailForge"   # scrub-check: allow (public repo URL)
 uv tool update-shell        # then open a new Terminal window
-mailforge version           # prints: mailforge 0.6.0
+mailforge version           # prints: mailforge 0.7.0
 mailforge demo              # look around with fictional data
 ```
 
@@ -398,6 +398,9 @@ garak/promptfoo CI). In Docker, set `EXTRAS="llm rag security-ml"` in `.env` and
 | `mailforge setup-wizard` | Interactive account / credential / config / DB setup |
 | `mailforge account-add` | Add another mailbox without replacing existing configuration |
 | `mailforge account-list` / `account-remove <name>` | Inspect / detach mailboxes (history is kept) |
+| `mailforge users list\|add\|passwd\|delete` | The same mailbox logins under the verbs every forge uses; `account-passwd <name>` replaces one mailbox password |
+| `mailforge unlock status\|reset` | Credential store: where it is and whether it opens; wipe it when its password is lost |
+| `mailforge token show\|rotate` | Web-UI launcher URL; new keys that sign every browser out |
 | `mailforge serve` | Run the listener + agent + web UI |
 | `mailforge serve --no-ui` | Headless (e.g. under the service) |
 | `mailforge open` | Start the background service if needed, then open an authenticated browser session |
@@ -421,6 +424,119 @@ application home (config + database) under your system temp directory, seeds ~25
 fictional messages across two sites, and starts the normal UI against it. It
 configures **no** IMAP account, so no mail is ever fetched or sent, and it never
 opens your real config or database. The directory is deleted when you stop it.
+
+---
+
+## Accounts and lockout recovery
+
+MailForge has no user table. Two things protect it, and each has a recovery path that needs
+only access to the machine (never the network):
+
+| What | Where it lives | If you lose it |
+|---|---|---|
+| **Mailbox passwords** (the credential store) | the OS keyring (Windows Credential Manager, macOS Keychain, GNOME/KDE Secret Service); on a headless Linux box and in Docker an encrypted file opened with a password you chose (`MAILFORGE_KEYRING_PASSWORD` in Docker) | `unlock reset` wipes the store; you re-enter each mailbox password. Config and mail are **kept**. |
+| **Web-UI access** (a one-shot login URL, a launcher key, and the secret that signs browser cookies) | `ui_launcher_key` and `ui_storage_secret` (both 0600) in the data folder | `token rotate` makes new ones and signs every browser out. |
+
+Where the folders are (every command prints the ones it is acting on, so you can check):
+
+| | config (`config.toml`) | data (database, UI keys, `RESET_LOGIN`) |
+|---|---|---|
+| Windows | `%LOCALAPPDATA%\mailforge` | `%LOCALAPPDATA%\mailforge` |
+| macOS | `~/Library/Application Support/mailforge` | `~/Library/Application Support/mailforge` |
+| Linux | `~/.config/mailforge` | `~/.local/share/mailforge` |
+| Docker | `/data/config` | `/data/data` (volume root `/data`; the compose volume is `mailforge_mailforge-data`) |
+| any, with `MAILFORGE_HOME=<dir>` | `<dir>/config` | `<dir>/data` |
+
+### Manage mailbox logins
+
+`users` is `account-*` under the verbs every forge uses. Passwords come from stdin or a named
+environment variable, never from a command-line argument (which would land in shell history).
+
+```bash
+mailforge users list                                     # mailboxes, and whether each has a stored credential
+mailforge users add support --username sam@example.com --site main --imap-host imap.example.com --password-stdin
+mailforge users passwd support --password-stdin          # new password for an existing mailbox (config and mail kept)
+mailforge users delete support --yes                     # stop listening; message history is kept
+```
+
+`--password-env VAR` reads the secret from environment variable `VAR` instead of stdin
+(`MF_PW='...' mailforge users passwd support --password-env MF_PW`). `users add` without
+`--password-*` prompts (hidden). Restart the service afterwards so the listeners pick the change up.
+
+### Forgot the credential-store password
+
+```bash
+mailforge unlock status        # backend, store file, "unlocked" or "LOCKED: ...", mailboxes without a credential
+mailforge unlock reset         # asks first; --yes skips the question
+mailforge users passwd <name> --password-stdin     # once per mailbox
+```
+
+* **Wiped:** the stored mailbox passwords. A store *file* (headless Linux, Docker) is renamed to
+  `cryptfile_pass.cfg.reset-<UTC time>.bak` (newest 3 kept; `--no-backup` deletes it instead). Note that this
+  file is the standard Python keyring file, so on a headless Linux box any other Python program using it
+  loses its entries too; the `.bak` is the way back. With an OS keyring only the `mailforge.imap.*` and
+  `mailforge.smtp.*` entries of your configured mailboxes are deleted.
+* **Kept:** `config.toml`, the mail database (drafts, history, audit log), the UI keys.
+* Do not re-run `setup-wizard` for this: it writes a fresh `config.toml`. `users passwd` only touches the credential.
+
+### Lost web-UI access
+
+```bash
+mailforge open --no-browser      # prints a login URL (service must be running)
+mailforge token show             # prints the launcher URL from the key file, service running or not
+mailforge token rotate           # new launcher key + cookie secret; restart the service afterwards
+```
+
+`token show` prints a secret that logs a browser in: do not paste it anywhere shared.
+Everything binds `127.0.0.1` unless you set `MAILFORGE_UI_HOST`. The server also prints a one-shot
+`http://127.0.0.1:PORT/?token=...` URL at every start (in Docker: `docker compose logs app | grep "MailForge UI"`).
+
+### Recovery without the CLI: the `RESET_LOGIN` file
+
+If you can only reach the files (or the app will not start far enough to run a command), create an
+**empty file named `RESET_LOGIN`** in the data folder (table above; for Docker the volume root `/data`
+works too), then start or restart `mailforge serve`.
+
+| File content | Effect |
+|---|---|
+| empty, or `all` | wipe the credential store **and** rotate the UI keys |
+| `unlock` | credential store only |
+| `ui` | UI keys only |
+| anything else | ignored (a typo cannot wipe credentials), file still consumed, content never logged |
+
+The file is read **once**, at the start of `mailforge serve`, and **deleted before anything is reset**,
+so it cannot replay on the next start. If it cannot be deleted (read-only volume) nothing is done and an
+error is logged. One log line says what happened. It can only be created by someone who can write to the
+data folder; no web route reads or writes it, and a test sends requests at every kind of path to prove it.
+There is deliberately no environment-variable form: a variable in `.env` or a unit file would fire on every restart.
+
+```powershell
+# Windows
+New-Item -ItemType File "$env:LOCALAPPDATA\mailforge\RESET_LOGIN"; mailforge service stop; mailforge service start
+```
+```bash
+# macOS
+touch "$HOME/Library/Application Support/mailforge/RESET_LOGIN" && mailforge service stop; mailforge service start
+# Linux (user service)
+touch ~/.local/share/mailforge/RESET_LOGIN && systemctl --user restart mailforge
+```
+
+### Docker
+
+```bash
+F="docker compose -f deploy/compose/compose.yml"
+$F exec app mailforge unlock status
+$F exec app mailforge unlock reset --yes                      # wipe the stored mailbox passwords
+printf '%s\n' "$NEW_MAILBOX_PW" | $F exec -T app mailforge users passwd <name> --password-stdin
+$F exec app mailforge token show                              # container-internal launcher URL (use the published port)
+$F exec app sh -c ': > /data/RESET_LOGIN' && $F restart app   # the sentinel form: credential store + UI keys
+$F logs app | grep -E "RESET_LOGIN|MailForge UI"              # what was done, and the new one-shot login URL
+```
+
+The new store is created under whatever `MAILFORGE_KEYRING_PASSWORD` (or `_FILE`) is set when the
+first credential is saved, so set the password you want to keep *before* `users passwd`. With a bind mount
+instead of the named volume, `touch <host dir>/RESET_LOGIN` does the same. If the container will not start at
+all, `$F run --rm app sh -c ': > /data/RESET_LOGIN'` works on the stopped service.
 
 ---
 

@@ -69,6 +69,16 @@ def run_serve(start_ui: bool = True, ui_port: int | None = None) -> None:
     settings.assert_invariants()
     install_redaction()
 
+    # Lockout recovery: a RESET_LOGIN file in the data dir is read ONCE, here, before
+    # any credential is touched, and deleted (see recovery.consume_reset_sentinel).
+    # Filesystem access is the only way to trigger it; no route reads it.
+    try:
+        from .recovery import consume_reset_sentinel
+
+        consume_reset_sentinel(settings)
+    except Exception:  # noqa: BLE001 - recovery must never stop the service starting
+        log.exception("RESET_LOGIN handling failed; continuing to start")
+
     db_path = settings.resolved_db_path()
     store = open_store(db_path)  # graph/UI connection
     bridge = _make_bridge(settings)

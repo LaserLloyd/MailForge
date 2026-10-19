@@ -97,8 +97,10 @@ provide at run time:
 * `MAILFORGE_KEYRING_PASSWORD_FILE` pointing at a mounted secret.
 
 Choose a long random value and keep a copy in your password manager. It is
-**not recoverable**: lose it and the stored mailbox passwords are unreadable
-(re-enter them with `setup-wizard`). A wrong password fails with "the
+**not recoverable**: lose it and the stored mailbox passwords are unreadable.
+Wipe the store with `unlock reset` and re-enter each password with `users passwd`
+(see "Lost the credential password" below; `setup-wizard` would rewrite your
+`config.toml`, so do not use it for this). A wrong password fails with "the
 credential store ... did not unlock ... wrong password?"; no password and no
 terminal fails with a clear "credential store is locked" error instead of
 hanging. Commands started with `docker compose exec` skip the entrypoint but read
@@ -115,6 +117,29 @@ docker compose -f deploy/compose/compose.yml run --rm -it app setup-wizard      
 docker compose -f deploy/compose/compose.yml run --rm -T app account-add ... --password-stdin   # scripted
 docker compose -f deploy/compose/compose.yml restart app                          # listeners start at boot
 ```
+
+### Lost the credential password, or locked out of the UI
+
+Everything below needs shell access to the Docker host; nothing can be triggered over the network.
+`F` is `docker compose -f deploy/compose/compose.yml`.
+
+```bash
+$F exec app mailforge unlock status                    # LOCKED: ... wrong password? / unlocked
+$F exec app mailforge unlock reset --yes               # store file -> cryptfile_pass.cfg.reset-<time>.bak; mail DB and config.toml kept
+# put the password you want to keep in .env (MAILFORGE_KEYRING_PASSWORD) and `$F up -d` first, then:
+printf '%s\n' "$MAILBOX_PW" | $F exec -T app mailforge users passwd <name> --password-stdin
+$F restart app
+$F exec app mailforge users list                       # also: users add | delete
+$F exec app mailforge token show                       # launcher URL (published port instead of the container's)
+$F exec app mailforge token rotate --yes               # sign every browser out; restart afterwards
+```
+
+Without the CLI: an empty file `RESET_LOGIN` in the volume root (`/data/RESET_LOGIN`, or `<bind dir>/RESET_LOGIN`)
+is consumed once at the next start, deleted before anything is reset, and wipes the credential store and
+rotates the UI keys (`unlock` / `ui` in the file limit it to one of the two). Create it with
+`$F exec app sh -c ': > /data/RESET_LOGIN' && $F restart app`, or on a stopped service with
+`$F run --rm app sh -c ': > /data/RESET_LOGIN'`. The container log shows one `RESET_LOGIN consumed` line and the new
+one-shot login URL. There is no environment-variable form on purpose: it would replay on every restart.
 
 ## Health
 

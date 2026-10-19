@@ -321,3 +321,35 @@ def _restore_secret(kind: str, key: str, prior: object) -> None:
             secrets_mod.set_secret(kind, key, prior)  # type: ignore[arg-type]
     except Exception as e:  # noqa: BLE001 - rollback is best-effort
         log.warning("Could not roll back %s secret for %s: %s", kind, key, e)
+
+
+def set_account_password(
+    settings: "Settings",
+    name: str,
+    imap_secret: str,
+    smtp_secret: str | None = None,
+) -> IMAPAccount:
+    """Replace the stored credentials of an EXISTING mailbox (config untouched).
+
+    This is the "I changed my mail password" / "the credential store was reset"
+    path: ``config.toml`` and the message database stay as they are, only the
+    keyring entries ``mailforge.imap.<name>`` and ``mailforge.smtp.<username>``
+    are rewritten. ``smtp_secret`` defaults to ``imap_secret``.
+    """
+    target = (name or "").strip().lower()
+    account = next((a for a in settings.imap_accounts if a.name.lower() == target), None)
+    if account is None:
+        raise AccountError(f"No mailbox named '{name}' is configured.")
+    if not imap_secret:
+        raise AccountError("IMAP password or OAuth2 token is required.")
+    prior_imap = secrets_mod.get_secret("imap", account.name)
+    prior_smtp = secrets_mod.get_secret("smtp", account.username)
+    try:
+        secrets_mod.set_imap_secret(account.name, imap_secret)
+        secrets_mod.set_smtp_secret(account.username, smtp_secret or imap_secret)
+    except Exception as e:  # noqa: BLE001 - keyring backends raise many types
+        _restore_secret("imap", account.name, prior_imap)
+        _restore_secret("smtp", account.username, prior_smtp)
+        raise AccountError(f"Could not save the credential: {e}") from None
+    log.info("Updated stored credential for mailbox %s (%s).", account.username, account.name)
+    return account
