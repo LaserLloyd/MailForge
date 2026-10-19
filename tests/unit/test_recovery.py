@@ -466,3 +466,74 @@ def test_only_startup_and_cli_code_reference_the_sentinel():
     }
     assert users == {"recovery.py", "runtime.py"}
     assert not any(u.startswith("ui/") for u in users)
+
+
+# --------------------------------------------------------------------------- #
+# locked store is not "missing"; restart hint fits the environment
+# --------------------------------------------------------------------------- #
+def _real_cryptfile(monkeypatch, path: Path, password: str):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "ck_list_under_test", Path(__file__).resolve().parents[2] / "deploy" / "container_keyring.py"
+    )
+    ck = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ck)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
+    monkeypatch.setenv("MAILFORGE_KEYRING_KEY", password)
+    backend = ck.EnvCryptFileKeyring()
+    backend.file_path = str(path)
+    backend.time_cost, backend.memory_cost = 1, 1024
+    return backend
+
+
+def test_list_with_wrong_keyring_password_says_locked_not_missing(home, runner, monkeypatch, tmp_path):
+    previous = keyring.get_keyring()
+    monkeypatch.setattr(secrets_mod, "_fallback_configured", True)
+    path = tmp_path / "cryptfile_pass.cfg"
+    try:
+        keyring.set_keyring(_real_cryptfile(monkeypatch, path, "right-password-1"))
+        monkeypatch.setenv("MF_TEST_PW", MAILBOX_PW)
+        assert _add(runner, ["support", "--password-env", "MF_TEST_PW", "--no-input"]).exit_code == 0
+        ok = runner.invoke(cli.app, ["users", "list"])
+        assert ok.exit_code == 0 and "[ok]" in ok.output
+
+        keyring.set_keyring(_real_cryptfile(monkeypatch, path, "wrong-password-2"))
+        r = runner.invoke(cli.app, ["users", "list"])
+        assert r.exit_code == 1, r.output
+        assert "[LOCKED: wrong keyring password" in r.output and "unlock status" in r.output
+        assert "MISSING CREDENTIAL" not in r.output
+        assert "wrong-password-2" not in r.output and "right-password-1" not in r.output
+        again = runner.invoke(cli.app, ["account-list"])  # the alias path behaves the same
+        assert again.exit_code == 1 and "LOCKED" in again.output
+    finally:
+        keyring.set_keyring(previous)
+
+
+def test_restart_hint_is_docker_aware(home, kr, runner, monkeypatch):
+    monkeypatch.setenv("MF_TEST_PW", MAILBOX_PW)
+    monkeypatch.setattr(recovery, "in_container", lambda: False)
+    r = _add(runner, ["support", "--password-env", "MF_TEST_PW", "--no-input"])
+    assert "Restart mailforge.service" in r.output and "docker compose" not in r.output
+
+    monkeypatch.setattr(recovery, "in_container", lambda: True)
+    for argv in (
+        ["users", "passwd", "support", "--password-stdin"],
+        ["unlock", "reset", "--yes"],
+        ["token", "rotate", "--yes"],
+    ):
+        r = runner.invoke(cli.app, argv, input="pw\n")
+        assert r.exit_code == 0, (argv, r.output)
+        assert "docker compose restart app" in r.output and "mailforge.service" not in r.output, argv
+
+
+def test_in_container_detection(monkeypatch):
+    monkeypatch.setenv("MAILFORGE_HOME", "/data")
+    assert recovery.in_container() is True
+    monkeypatch.setenv("MAILFORGE_HOME", "/data/")
+    assert recovery.in_container() is True
+    monkeypatch.setenv("MAILFORGE_HOME", "/somewhere/else")
+    monkeypatch.setattr(recovery.os.path, "exists", lambda p: p == "/.dockerenv")
+    assert recovery.in_container() is True
+    monkeypatch.setattr(recovery.os.path, "exists", lambda p: False)
+    assert recovery.in_container() is False

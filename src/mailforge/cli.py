@@ -55,6 +55,15 @@ def _announce() -> None:
     typer.secho(acting_on_line(), err=True, fg="bright_black")
 
 
+def _restart_hint(purpose: str) -> str:
+    """The restart instruction that fits where the command runs (container or host)."""
+    from .recovery import in_container
+
+    if in_container():
+        return f"Run 'docker compose restart app' (on the Docker host) {purpose}."
+    return f"Restart mailforge.service {purpose}."
+
+
 def _read_password(password_stdin: bool, password_env: str | None, prompt: str) -> str:
     """The secret from stdin (first line) or a named environment variable, never argv.
 
@@ -283,7 +292,7 @@ def account_add(
         raise typer.Exit(code=2) from None
 
     typer.secho(f"Added {address} as '{label}' (site: {site_id}).", fg="green")
-    typer.secho("Restart mailforge.service for the listener to take effect.", fg="yellow")
+    typer.secho(_restart_hint("for the listener to take effect"), fg="yellow")
 
 
 @app.command("account-list")
@@ -297,6 +306,19 @@ def account_list() -> None:
     if not settings.imap_accounts:
         typer.secho("No mailboxes configured. Add one with: mailforge account-add", fg="yellow")
         return
+    from . import recovery
+
+    # A store that will not open is not a missing credential: say so, and fail.
+    lock_state = recovery.probe_unlock()
+    if lock_state.startswith("LOCKED"):
+        for acct in settings.imap_accounts:
+            typer.secho(
+                f"{acct.name:<16} {acct.username:<32} site={acct.site_id:<12} "
+                f"{acct.host}:{acct.port}  "
+                "[LOCKED: wrong keyring password — see 'mailforge unlock status']",
+                fg="red",
+            )
+        raise typer.Exit(code=1)
     for acct in settings.imap_accounts:
         has_imap = secrets_mod.get_imap_secret(acct.name) is not None
         has_smtp = secrets_mod.get_smtp_secret(acct.username) is not None
@@ -337,7 +359,7 @@ def account_remove(
         typer.secho(f"{e} Nothing changed.", fg="red")
         raise typer.Exit(code=2) from None
     typer.secho(f"Removed {account.username} ('{account.name}'). History retained.", fg="green")
-    typer.secho("Restart mailforge.service to stop the listener.", fg="yellow")
+    typer.secho(_restart_hint("to stop the listener"), fg="yellow")
 
 
 @app.command("account-passwd")
@@ -367,7 +389,7 @@ def account_passwd(
         typer.secho(f"{e} Nothing changed.", fg="red", err=True)
         raise typer.Exit(code=2) from None
     typer.secho(f"Stored a new credential for '{account.name}' ({account.username}).", fg="green")
-    typer.secho("Restart mailforge.service for a running listener to pick it up.", fg="yellow")
+    typer.secho(_restart_hint("for a running listener to pick it up"), fg="yellow")
 
 
 # `users` = the mailbox logins, under the verbs every forge uses.
@@ -441,7 +463,7 @@ def unlock_reset(
     report = recovery.reset_credential_store(load_settings(), backup=not no_backup)
     typer.secho(f"Done: {report.summary()}.", fg="green")
     typer.echo("Next: mailforge account-passwd <name>   (once per mailbox; see 'mailforge account-list')")
-    typer.secho("Restart mailforge.service so the listeners pick the new passwords up.", fg="yellow")
+    typer.secho(_restart_hint("so the listeners pick the new passwords up"), fg="yellow")
 
 
 @token_app.command("show")
@@ -474,7 +496,8 @@ def token_rotate(
         typer.secho("Nothing changed.", fg="yellow")
         raise typer.Exit(code=1)
     recovery.rotate_ui_access()
-    typer.secho("Rotated. Restart mailforge.service, then run 'mailforge token show'.", fg="green")
+    typer.secho("Rotated.", fg="green")
+    typer.secho(_restart_hint("to apply it, then run 'mailforge token show'"), fg="yellow")
 
 
 @app.command()

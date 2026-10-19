@@ -76,6 +76,11 @@ def acting_on_line() -> str:
     return f"MailForge data: config={paths.config_file()} data={paths.data_dir()} [{source}]"
 
 
+def in_container() -> bool:
+    """True inside the Docker image (``/.dockerenv``, or the image's ``MAILFORGE_HOME=/data``)."""
+    return os.path.exists("/.dockerenv") or os.environ.get("MAILFORGE_HOME", "").rstrip("/") == "/data"
+
+
 @dataclass
 class StoreInfo:
     backend: str

@@ -477,6 +477,7 @@ mailforge users passwd <name> --password-stdin     # once per mailbox
   loses its entries too; the `.bak` is the way back. With an OS keyring only the `mailforge.imap.*` and
   `mailforge.smtp.*` entries of your configured mailboxes are deleted.
 * **Kept:** `config.toml`, the mail database (drafts, history, audit log), the UI keys.
+* With the wrong password `users list` shows each mailbox as `[LOCKED: wrong keyring password ...]` and exits 1; the credentials are still there, the store just does not open.
 * Do not re-run `setup-wizard` for this: it writes a fresh `config.toml`. `users passwd` only touches the credential.
 
 ### Lost web-UI access
