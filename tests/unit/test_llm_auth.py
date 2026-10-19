@@ -328,7 +328,7 @@ def test_reference_search_says_when_it_could_not_search(tmp_path, models_status,
                                             chat_model="pub/repo/stem",
                                             embedding_model="pub/repo/emb"))
         with open_store(tmp_path / "agent.db") as store:
-            out = asyncio.run(_async_action("reference-search", "default",
+            out = asyncio.run(_async_action("reference-search", "main",
                                             {"query": "pricing"}, store, settings))
     assert out["results"] == []
     assert out["searched"] is False
