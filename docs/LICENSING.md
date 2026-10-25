@@ -5,7 +5,7 @@ was found, what the owner decided, and what each option would cost.
 
 ## The facts
 
-- MailForge is MIT-licensed (`LICENSE`).
+- MailForge is licensed MIT No Attribution (MIT-0, `LICENSE`).
 - `html2text` (GPL-3.0-or-later) is a **core** dependency: `pyproject.toml:26`,
   imported at `src/mailforge/mail/sanitize.py:18`, called in
   `_make_html2text()` (line 54) and `sanitize_html()` (line 84). Every install
@@ -25,8 +25,8 @@ binary release.
 
 | Channel | What is distributed | Consequence |
 |---|---|---|
-| Source checkout, `uv sync` / `pip install` from the repository | MailForge's own MIT source only. The user's machine downloads `html2text` from PyPI under its own licence. | Low risk: MailForge distributes no GPL code. The combination exists only on the user's computer. |
-| **PyInstaller bundle / Inno installer** | MailForge **and** `html2text` in one executable tree. | Distributing GPL-3.0 code means the GPL's conditions attach to that distribution. The conservative reading (the FSF's) is that a program that imports a GPL library in one process forms a combined work which, **as distributed**, must be offered under GPL-3.0-or-later terms as a whole. The MIT licence on MailForge's own files does not prevent that (MIT is GPL-compatible); it means the binary cannot be handed out under MIT-only terms. |
+| Source checkout, `uv sync` / `pip install` from the repository | MailForge's own MIT-0 source only. The user's machine downloads `html2text` from PyPI under its own licence. | Low risk: MailForge distributes no GPL code. The combination exists only on the user's computer. |
+| **PyInstaller bundle / Inno installer** | MailForge **and** `html2text` in one executable tree. | Distributing GPL-3.0 code means the GPL's conditions attach to that distribution. The conservative reading (the FSF's) is that a program that imports a GPL library in one process forms a combined work which, **as distributed**, must be offered under GPL-3.0-or-later terms as a whole. The MIT-0 licence on MailForge's own files does not prevent that (MIT-0 is GPL-compatible); it means the binary cannot be handed out under MIT-0-only terms. |
 
 ### Obligations if a binary containing `html2text` is distributed
 
@@ -37,7 +37,7 @@ binary release.
    at the released tag and the exact `html2text` source (the sdist pinned in
    `uv.lock`). A written offer valid for three years, or a link to the tagged
    release and the pinned sdist, meets this.
-3. Describe the binary honestly: "MailForge (MIT) bundled with html2text
+3. Describe the binary honestly: "MailForge (MIT-0) bundled with html2text
    (GPL-3.0-or-later); the combined installer is distributed under GPL-3.0-or-later
    terms." Do not attach extra restrictions (for example an EULA that forbids
    redistribution) to the installer.

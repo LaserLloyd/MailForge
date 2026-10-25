@@ -6,6 +6,12 @@ Published by Laser Lloyd — https://www.laserlloyd.com
 ## Unreleased
 
 ### Changed
+- **Licence: MIT No Attribution (MIT-0).** You can use, copy, change and ship MailForge with no
+  conditions; no copyright notice has to be kept. You don't need to credit this project — but if
+  you do, a link back is appreciated. `LICENSE`, `pyproject.toml`, the Docker image label, the
+  README and `docs/LICENSING.md` say so; the scrub check accepts the MIT-0 notice form
+  (`Copyright <year> <holder>`, no "(c)"). Releases up to 0.6.0 were MIT. The GPL `html2text`
+  notes in `docs/LICENSING.md` still apply to the bundled installer and image.
 - **UI theme: ForgeUI 1.2.0.** `ui/static/ui-theme/` was a pre-release copy (`ui-theme
   2026-09-24 638060cc7dc6`); it is now the pristine ForgeUI 1.2.0 bundle (`ThemeForge 1.2.0
   82d997e2846d`), vendored by `python -m forgeui vendor` from a new repository-root manifest,

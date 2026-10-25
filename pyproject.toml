@@ -4,7 +4,7 @@ version = "0.6.0"
 description = "Self-contained, cross-platform local-LLM email triage & auto-draft assistant (no auto-send)."
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "MIT" }
+license = { text = "MIT-0" }
 authors = [{ name = "Laser Lloyd" }]
 urls = { Homepage = "https://www.laserlloyd.com" }
 

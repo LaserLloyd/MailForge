@@ -73,8 +73,8 @@ ALLOWLIST = (
     'authors = [{ name = "Laser Lloyd" }]',
 )
 
-#: The one place a personal name is published ON PURPOSE. MIT requires the
-#: copyright notice to survive verbatim, and the holder of a copyright is a
+#: The one place a personal name is published ON PURPOSE. The LICENSE (MIT-0)
+#: carries a copyright notice, and the holder of a copyright is a
 #: deliberate public authorship statement — the opposite of a leak. The
 #: exception is therefore as narrow as it can be made:
 #:
@@ -86,7 +86,7 @@ ALLOWLIST = (
 #: applies to that line and to the rest of the file. A hostname in a LICENSE is
 #: still a leak; the author's name in the copyright line is not.
 LICENSE_FILENAMES = {"LICENSE", "LICENSE.md", "LICENSE.txt", "LICENCE", "COPYING"}
-COPYRIGHT_LINE = re.compile(r"^\s*Copyright\s*\(c\)\s*\d{4}(?:[-–]\d{4})?\s+\S", re.IGNORECASE)
+COPYRIGHT_LINE = re.compile(r"^\s*Copyright\s*(?:\(c\)|©)?\s*\d{4}(?:[-–]\d{4})?\s+\S", re.IGNORECASE)
 
 
 def _is_copyright_notice(path: Path, line: str) -> bool:

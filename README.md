@@ -693,7 +693,8 @@ installer; none is released yet, so use the Windows methods under Install.
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE). The bundled installer and container image include `html2text`
+MIT No Attribution ([MIT-0](LICENSE)). You don't need to credit this project — but if you do, a link back is appreciated.
+Releases up to 0.6.0 were MIT. The bundled installer and container image include `html2text`
 (GPL-3.0-or-later); see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and [`docs/LICENSING.md`](docs/LICENSING.md).
 
 Published by Laser Lloyd — https://www.laserlloyd.com

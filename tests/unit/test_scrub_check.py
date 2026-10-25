@@ -80,7 +80,7 @@ def test_allowlisted_attribution_is_permitted():
 
 
 def test_copyright_notice_exception_is_scoped_to_the_licence_line():
-    """MIT requires the copyright notice verbatim, and naming the holder is a
+    """The LICENSE carries a copyright notice, and naming the holder is a
     deliberate public authorship statement. The exception must not widen past
     that one line in that one file."""
     if not scrub.load_local_rules():
@@ -89,6 +89,10 @@ def test_copyright_notice_exception_is_scoped_to_the_licence_line():
 
     # exempt: the copyright line of a LICENSE
     assert scrub.scan_text(notice, Path("LICENSE"),
+                           rules=(scrub.Rule(scrub.LOCAL_CATEGORY,
+                                             scrub._rx(r"\blovelace\b")),)) == []
+    # exempt too: the MIT-0 form of the notice, without "(c)"
+    assert scrub.scan_text("Copyright 2026 Ada Lovelace", Path("LICENSE"),
                            rules=(scrub.Rule(scrub.LOCAL_CATEGORY,
                                              scrub._rx(r"\blovelace\b")),)) == []
     # NOT exempt: the same line in any other file
