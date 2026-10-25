@@ -13,6 +13,7 @@ Service-name convention (spec §8):
 from __future__ import annotations
 
 import logging
+import threading
 
 import keyring
 from keyring.errors import KeyringError
@@ -22,6 +23,31 @@ log = logging.getLogger(__name__)
 
 _SERVICE_ROOT = "mailforge"
 _fallback_configured = False
+
+# A locked Secret Service (e.g. at boot before the login keyring is unlocked)
+# makes keyring.get_password block forever on an unlock prompt. Bound the wait
+# so callers (IMAP listener threads) fail, back off and retry instead of
+# wedging in state "connecting" for good.
+KEYRING_READ_TIMEOUT_S = 30.0
+
+
+def _get_password_bounded(service: str, account: str) -> str | None:
+    box: dict[str, object] = {}
+
+    def _work() -> None:
+        try:
+            box["v"] = keyring.get_password(service, account)
+        except BaseException as e:  # noqa: BLE001 — re-raised in the caller
+            box["e"] = e
+
+    t = threading.Thread(target=_work, name="keyring-read", daemon=True)
+    t.start()
+    t.join(KEYRING_READ_TIMEOUT_S)
+    if t.is_alive():
+        raise KeyringError(f"keyring read timed out after {KEYRING_READ_TIMEOUT_S:.0f}s (locked?)")
+    if "e" in box:
+        raise box["e"]  # type: ignore[misc]
+    return box.get("v")  # type: ignore[return-value]
 
 
 def _ensure_backend() -> None:
@@ -57,7 +83,7 @@ def set_secret(kind: str, account: str, secret: str | SecretStr) -> None:
 def get_secret(kind: str, account: str) -> SecretStr | None:
     _ensure_backend()
     try:
-        v = keyring.get_password(_service(kind, account), account)
+        v = _get_password_bounded(_service(kind, account), account)
     except KeyringError as e:  # pragma: no cover - environment dependent
         log.error("Keyring read failed for %s/%s: %s", kind, account, e)
         return None
