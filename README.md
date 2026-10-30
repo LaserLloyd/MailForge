@@ -646,6 +646,11 @@ fully functional on your local LLM server. When one is present:
   screened-out messages are **metadata only**; eligible bodies come wrapped in
   explicit untrusted-content markers with a content-policy field. There is no
   delete, archive, move, forward, credential, filesystem or shell tool.
+- **Agent compose** — `compose` (`to`, `subject`, `body`, optional `from` =
+  one of the site's mailboxes) saves a *new* email as a draft in Compose →
+  Drafts and never sends it. Content guardrails apply (an explicitly blocked
+  recipient domain still refuses); `openclaw.agent_compose_per_day` (default
+  20, `0` = off) caps drafts per rolling 24 h. A human reviews and presses Send.
 - **Human-instructed send** — OFF by default (`openclaw.agent_send_enabled`).
   When enabled, `prepare-send` re-runs the guardrails, binds the recipient to
   the thread/allowlist (first-contact addresses are refused — use Compose) and

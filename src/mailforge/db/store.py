@@ -1912,6 +1912,15 @@ class Store:
         self.conn.commit()
         return cur.rowcount == 1
 
+    def count_audit_tool_calls(self, tool: str, since_iso: str) -> int:
+        """Agent ``tool_call`` audit rows for ``tool`` at or after ``since_iso``."""
+        row = self.conn.execute(
+            "SELECT COUNT(*) FROM audit_log WHERE event='tool_call' AND ts>=? "
+            "AND json_extract(detail_json,'$.tool')=?",
+            (since_iso, str(tool)),
+        ).fetchone()
+        return int(row[0])
+
     def record_manual_sent(
         self,
         from_addr: str,

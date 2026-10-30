@@ -1,6 +1,7 @@
 """Machine-readable, site-bound OpenClaw bridge.
 
-Read, propose and note operations are always available. ``prepare-send`` /
+Read, propose and note operations are always available. ``compose`` saves a
+new email as a local draft only (capped per day; a human sends it). ``prepare-send`` /
 ``send`` exist but are hard-gated by ``openclaw.agent_send_enabled`` (false by
 default): the human-confirmation token is returned to the calling agent, so
 that confirmation is only as strong as the agent's own honesty — keep agent
@@ -12,8 +13,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .agent.graph import AgentGraph
@@ -27,9 +29,17 @@ OPS = frozenset(
     {
         "status", "list", "get", "propose", "revise", "weekly-summary",
         "daily-brief", "reference-search", "notes", "note-add",
-        "prepare-send", "send",
+        "compose", "prepare-send", "send",
     }
 )
+
+# One bare address: no display name, no list, no header-injection characters.
+_ADDR_RE = re.compile(
+    r"^[^@\s,;<>\"'()\[\]\\]{1,64}@"
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$"
+)
+COMPOSE_SUBJECT_MAX = 200
+COMPOSE_BODY_MAX = 20000
 
 # Explicit untrusted-data framing for full bodies handed to external agents.
 # The calling agent must treat everything between the markers as DATA.
@@ -315,6 +325,86 @@ def _guard_draft_body(
         settings.security,
         None,
     )
+
+
+def _compose_draft(data: dict[str, Any], site: str, store: Any, settings: Any) -> dict[str, Any]:
+    """Save an agent-written NEW email as a local draft for a human to send.
+
+    Never transmits. The row is the same manual draft Compose → Save draft
+    writes, so it opens in the UI's Drafts list; ``prepare-send`` still refuses
+    a first-contact recipient, so only a human pressing Send can deliver it.
+    """
+    from .audit.log import AuditLog
+    from .security import run_output_guardrails
+
+    to = str(data.get("to") or "").strip()
+    if len(to) > 254 or not _ADDR_RE.match(to):
+        raise BridgeInputError("to must be exactly one plain email address")
+    subject = str(data.get("subject") or "").strip()
+    if not subject or len(subject) > COMPOSE_SUBJECT_MAX or any(c in subject for c in "\r\n"):
+        raise BridgeInputError(
+            f"subject is required: one line, at most {COMPOSE_SUBJECT_MAX} characters"
+        )
+    body = str(data.get("body") or "").strip()
+    if not body or len(body) > COMPOSE_BODY_MAX:
+        raise BridgeInputError(f"body is required, at most {COMPOSE_BODY_MAX} characters")
+    mailboxes = [a.username for a in settings.imap_accounts if a.site_id == site]
+    if not mailboxes:
+        raise BridgeInputError("no mailbox is configured for this site")
+    wanted = str(data.get("from") or "").strip().lower()
+    from_addr = next((m for m in mailboxes if m.lower() == wanted), None) if wanted else mailboxes[0]
+    if from_addr is None:
+        raise BridgeInputError("from must be one of this site's mailboxes: " + ", ".join(mailboxes))
+    author = str(data.get("author") or "bridge")[:80]
+
+    cap = int(settings.openclaw.agent_compose_per_day)
+    since = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    if cap <= 0:
+        raise BridgeInputError("agent compose is off (openclaw.agent_compose_per_day = 0)")
+    if store.count_audit_tool_calls("compose_draft", since) >= cap:
+        raise BridgeInputError(
+            f"daily agent compose cap reached ({cap} drafts in 24 h); "
+            "ask the human to write this one in the MailForge Compose page"
+        )
+
+    # The recipient rules (a)/(b) bind *sends* to known people; this is a draft
+    # the human reviews and sends, so its own recipient counts as known. An
+    # explicitly blocked domain still refuses, and every content guard applies.
+    security = settings.security.model_copy(update={
+        "recipient_allowlist_domains":
+            set(settings.security.recipient_allowlist_domains) | {to.rsplit("@", 1)[1].lower()},
+    })
+    report = run_output_guardrails(
+        {"recipient": to, "subject": subject, "body": body, "thread_id": ""},
+        {"recipient": to, "thread_participants": {to.lower()}, "site_id": site},
+        store,
+        security,
+        None,
+    )
+    if not report.passed:
+        AuditLog(store).record(
+            actor="guardrail", event="block", subject_table="drafts",
+            detail={"tool": "compose_draft", "author": author, "reasons": report.reasons[:3]},
+        )
+        raise BridgeInputError("guardrails blocked this draft: " + "; ".join(report.reasons[:3]))
+
+    draft_id = store.create_manual_draft(from_addr, to, subject, body, site_id=site)
+    AuditLog(store).record(
+        actor="agent", event="tool_call", subject_table="drafts", subject_id=draft_id,
+        detail={"tool": "compose_draft", "recipient": to, "author": author},
+    )
+    return {
+        "draft_id": draft_id,
+        "state": "DRAFT",
+        "from": from_addr,
+        "to": to,
+        "subject": subject,
+        "review_path": f"/compose?draft_id={draft_id}",
+        "next_step": (
+            "Saved as a draft in MailForge. Nothing was sent: a human opens it in "
+            "MailForge (Compose → Drafts), reviews it and presses Send."
+        ),
+    }
 
 
 def _prepare_send(data: dict[str, Any], site: str, store: Any, settings: Any) -> dict[str, Any]:
@@ -611,6 +701,8 @@ def run_bridge(action: str, site_id: str) -> int:
                 ]
             elif action == "daily-brief":
                 result = _daily_brief(store, site)
+            elif action == "compose":
+                result = _compose_draft(data, site, store, settings)
             elif action == "prepare-send":
                 result = _prepare_send(data, site, store, settings)
             elif action == "send":

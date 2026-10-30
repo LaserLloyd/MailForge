@@ -332,6 +332,9 @@ class OpenClawSettings(BaseModel):
     agent_send_enabled: bool = False
     agent_send_per_hour: int = 10
     agent_send_token_ttl_s: int = 900
+    # New emails an agent may save as drafts per rolling 24 h (bridge ``compose``).
+    # Drafts only — a human sends them from Compose. 0 turns agent compose off.
+    agent_compose_per_day: int = Field(default=20, ge=0)
 
 
 class Settings(BaseSettings):
