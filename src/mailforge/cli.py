@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import getpass
 import logging
+import os
 import sys
 
 import typer
@@ -24,9 +25,69 @@ app = typer.Typer(
 )
 service_app = typer.Typer(no_args_is_help=True, help="Install/manage the background service.")
 app.add_typer(service_app, name="service")
+unlock_app = typer.Typer(
+    no_args_is_help=True,
+    help="Encrypted credential store: status, and reset when its password is lost.",
+)
+app.add_typer(unlock_app, name="unlock")
+token_app = typer.Typer(
+    no_args_is_help=True,
+    help="Web UI access: show the launcher URL, or rotate the keys (signs every browser out).",
+)
+app.add_typer(token_app, name="token")
+users_app = typer.Typer(
+    no_args_is_help=True,
+    help=(
+        "Mailbox logins, with the verbs every forge uses: list | add | passwd | delete. "
+        "MailForge has no separate web-UI user; UI access is the launcher key, see 'token'."
+    ),
+)
+app.add_typer(users_app, name="users")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("mailforge")
+
+
+def _announce() -> None:
+    """Say, on stderr, which config/data directories this command is acting on."""
+    from .recovery import acting_on_line
+
+    typer.secho(acting_on_line(), err=True, fg="bright_black")
+
+
+def _restart_hint(purpose: str) -> str:
+    """The restart instruction that fits where the command runs."""
+    from .recovery import service_kind
+
+    kind = service_kind()
+    if kind == "docker":
+        return f"Run 'docker compose restart app' (on the Docker host) {purpose}."
+    if kind == "systemd":
+        return f"Restart the service ('systemctl --user restart mailforge') {purpose}."
+    return f"Stop and start 'mailforge serve' {purpose}."
+
+
+def _read_password(password_stdin: bool, password_env: str | None, prompt: str) -> str:
+    """The secret from stdin (first line) or a named environment variable, never argv.
+
+    With neither flag the secret is prompted for (hidden). Exit code 2 on misuse.
+    """
+    if password_stdin and password_env:
+        typer.secho("Use --password-stdin OR --password-env, not both.", fg="red", err=True)
+        raise typer.Exit(code=2)
+    if password_env:
+        value = os.environ.get(password_env, "")
+        if not value:
+            typer.secho(f"Environment variable {password_env} is empty or not set.", fg="red", err=True)
+            raise typer.Exit(code=2)
+        return value
+    if password_stdin:
+        value = sys.stdin.read().split("\n")[0].rstrip("\r")
+        if not value:
+            typer.secho("No password received on stdin.", fg="red", err=True)
+            raise typer.Exit(code=2)
+        return value
+    return getpass.getpass(prompt)
 
 
 def _infer_site(username: str, site_ids: list[str]) -> str:
@@ -121,6 +182,7 @@ def setup_wizard() -> None:
 
 @app.command("account-add")
 def account_add(
+    name_arg: str = typer.Argument(None, help="Account label (same as --name)."),
     name: str = typer.Option(None, "--name", help="Unique account label, e.g. 'support'."),
     username: str = typer.Option(None, "--username", help="Mailbox address."),
     site: str = typer.Option(None, "--site", help="Site id the mailbox belongs to."),
@@ -139,6 +201,12 @@ def account_add(
             "optional line 2 = SMTP. Keeps the secret out of argv and shell history."
         ),
     ),
+    password_env: str = typer.Option(
+        None,
+        "--password-env",
+        metavar="VAR",
+        help="Read the password from this environment variable (used for IMAP and SMTP).",
+    ),
     test_login: bool = typer.Option(
         False, "--test", help="Verify the credential logs in over IMAP before saving."
     ),
@@ -155,6 +223,13 @@ def account_add(
     from .accounts import AccountError, add_account, test_imap_login
     from .config import load_settings
 
+    _announce()
+    if password_stdin and password_env:
+        typer.secho("Use --password-stdin OR --password-env, not both.", fg="red", err=True)
+        raise typer.Exit(code=2)
+    name = name or name_arg
+    # A named variable is as scriptable as stdin: never prompt for the rest.
+    scripted = password_stdin or bool(password_env)
     settings = load_settings()
     site_ids = list(settings.sites.keys())
 
@@ -164,30 +239,33 @@ def account_add(
         # A default is a default in both modes — only a value with no default is
         # genuinely required, and only that should fail a scripted add.
         if default is not None:
-            if no_input or password_stdin:
+            if no_input or scripted:
                 return default
             return str(typer.prompt(prompt, default=default)).strip()
-        if no_input or password_stdin:
+        if no_input or scripted:
             typer.secho(f"Missing required value: {prompt}.", fg="red")
             raise typer.Exit(code=2)
         return str(typer.prompt(prompt)).strip()
 
-    if not no_input and not password_stdin:
+    if not no_input and not scripted:
         typer.secho("\n=== Add MailForge mailbox ===\n", fg="cyan", bold=True)
 
     label = _need(name, "Unique account label")
     address = _need(username, "Email / username")
     site_id = _need(site, f"Site [{'/'.join(site_ids)}]", _infer_site(address, site_ids))
     host = _need(imap_host, "IMAP host", "imap.example.com")
-    port = imap_port or (993 if no_input or password_stdin else typer.prompt("IMAP port", default=993, type=int))
+    port = imap_port or (993 if no_input or scripted else typer.prompt("IMAP port", default=993, type=int))
     method = _need(auth, "IMAP auth method [password/xoauth2]", "password").lower()
 
-    if password_stdin:
+    if password_env:
+        imap_secret = _read_password(False, password_env, "")
+        smtp_secret = imap_secret
+    elif password_stdin:
         lines = sys.stdin.read().split("\n")
         imap_secret = lines[0] if lines else ""
         smtp_secret = lines[1] if len(lines) > 1 and lines[1] else imap_secret
     elif no_input:
-        typer.secho("--no-input requires --password-stdin.", fg="red")
+        typer.secho("--no-input requires --password-stdin or --password-env.", fg="red")
         raise typer.Exit(code=2)
     else:
         imap_secret = getpass.getpass("IMAP password or OAuth2 token (hidden): ")
@@ -217,7 +295,7 @@ def account_add(
         raise typer.Exit(code=2) from None
 
     typer.secho(f"Added {address} as '{label}' (site: {site_id}).", fg="green")
-    typer.secho("Restart mailforge.service for the listener to take effect.", fg="yellow")
+    typer.secho(_restart_hint("for the listener to take effect"), fg="yellow")
 
 
 @app.command("account-list")
@@ -226,10 +304,24 @@ def account_list() -> None:
     from . import secrets as secrets_mod
     from .config import load_settings
 
+    _announce()
     settings = load_settings()
     if not settings.imap_accounts:
         typer.secho("No mailboxes configured. Add one with: mailforge account-add", fg="yellow")
         return
+    from . import recovery
+
+    # A store that will not open is not a missing credential: say so, and fail.
+    lock_state = recovery.probe_unlock()
+    if lock_state.startswith("LOCKED"):
+        for acct in settings.imap_accounts:
+            typer.secho(
+                f"{acct.name:<16} {acct.username:<32} site={acct.site_id:<12} "
+                f"{acct.host}:{acct.port}  "
+                "[LOCKED: wrong keyring password — see 'mailforge unlock status']",
+                fg="red",
+            )
+        raise typer.Exit(code=1)
     for acct in settings.imap_accounts:
         has_imap = secrets_mod.get_imap_secret(acct.name) is not None
         has_smtp = secrets_mod.get_smtp_secret(acct.username) is not None
@@ -256,6 +348,7 @@ def account_remove(
     from .accounts import AccountError, remove_account
     from .config import load_settings
 
+    _announce()
     settings = load_settings()
     if not yes and not typer.confirm(
         f"Remove mailbox '{name}'? Stored messages are kept; the listener stops.",
@@ -269,7 +362,187 @@ def account_remove(
         typer.secho(f"{e} Nothing changed.", fg="red")
         raise typer.Exit(code=2) from None
     typer.secho(f"Removed {account.username} ('{account.name}'). History retained.", fg="green")
-    typer.secho("Restart mailforge.service to stop the listener.", fg="yellow")
+    typer.secho(_restart_hint("to stop the listener"), fg="yellow")
+
+
+@app.command("account-passwd")
+def account_passwd(
+    name: str = typer.Argument(..., help="Account label of an existing mailbox."),
+    password_stdin: bool = typer.Option(
+        False,
+        "--password-stdin",
+        help="Read from stdin: line 1 = IMAP password/token, optional line 2 = SMTP password.",
+    ),
+    password_env: str = typer.Option(
+        None, "--password-env", metavar="VAR", help="Read the IMAP password from this environment variable."
+    ),
+    smtp_password_env: str = typer.Option(
+        None, "--smtp-password-env", metavar="VAR", help="Read a distinct SMTP password from this variable."
+    ),
+    also_smtp: bool = typer.Option(
+        False, "--also-smtp", help="The SMTP password is the same: replace it too."
+    ),
+) -> None:
+    """Store a new password/token for an existing mailbox (config and mail kept).
+
+    Use it after changing the mailbox password, or after 'unlock reset' emptied
+    the credential store. The IMAP secret is always replaced. An SMTP secret that
+    already exists is KEPT unless you pass a second stdin line, --smtp-password-env
+    or --also-smtp; a missing one is filled with the IMAP secret.
+    """
+    from .accounts import AccountError, set_account_password
+    from .config import load_settings
+
+    _announce()
+    smtp_secret: str | None = None
+    if password_stdin and password_env:
+        typer.secho("Use --password-stdin OR --password-env, not both.", fg="red", err=True)
+        raise typer.Exit(code=2)
+    if password_stdin:
+        lines = sys.stdin.read().split("\n")
+        secret = lines[0].rstrip("\r")
+        smtp_secret = lines[1].rstrip("\r") if len(lines) > 1 and lines[1].strip() else None
+        if not secret:
+            typer.secho("No password received on stdin.", fg="red", err=True)
+            raise typer.Exit(code=2)
+    else:
+        secret = _read_password(False, password_env, "New IMAP password or token (hidden): ")
+    if smtp_password_env:
+        smtp_secret = _read_password(False, smtp_password_env, "")
+    settings = load_settings()
+    try:
+        account, smtp_action = set_account_password(
+            settings, name, secret, smtp_secret, also_smtp=also_smtp
+        )
+    except AccountError as e:
+        typer.secho(f"{e} Nothing changed.", fg="red", err=True)
+        raise typer.Exit(code=2) from None
+    typer.secho(f"Stored a new IMAP credential for '{account.name}' ({account.username}).", fg="green")
+    if smtp_action == "kept":
+        typer.secho(
+            "SMTP password kept as it was (pass --also-smtp if it is the same password, or a "
+            "second stdin line / --smtp-password-env for a different one).",
+            fg="yellow",
+        )
+    else:
+        typer.secho(f"SMTP password {'replaced' if smtp_action == 'set' else 'filled in'}.", fg="green")
+    typer.secho(_restart_hint("for a running listener to pick it up"), fg="yellow")
+
+
+# `users` = the mailbox logins, under the verbs every forge uses.
+users_app.command("list")(account_list)
+users_app.command("add")(account_add)
+users_app.command("passwd")(account_passwd)
+users_app.command("delete")(account_remove)
+
+
+@unlock_app.command("status")
+def unlock_status() -> None:
+    """Show which credential store is in use, where it lives, and whether it opens."""
+    from . import recovery
+    from . import secrets as secrets_mod
+    from .config import load_settings
+
+    _announce()
+    info = recovery.store_info()
+    typer.echo(f"Backend:        {info.backend}")
+    if info.file_backed:
+        state = f"present, {info.size} bytes" if info.exists else "absent"
+        typer.echo(f"Store file:     {info.path} ({state})")
+    else:
+        typer.echo(f"Store:          {info.note}")
+    unlock = recovery.probe_unlock()
+    typer.echo(f"Unlock check:   {unlock}")
+    settings = load_settings()
+    total = len(settings.imap_accounts)
+    if info.file_backed and unlock != "unlocked":
+        # Reading entries would prompt for the password; status never prompts.
+        typer.echo(f"Mailboxes:      {total} configured (credential check skipped: store not open)")
+    else:
+        missing = sum(
+            1
+            for a in settings.imap_accounts
+            if secrets_mod.get_imap_secret(a.name) is None
+            or secrets_mod.get_smtp_secret(a.username) is None
+        )
+        typer.echo(f"Mailboxes:      {total} configured, {missing} without a stored credential")
+    typer.echo("Sentinel files: " + ", ".join(str(p) for p in recovery.sentinel_paths()))
+
+
+@unlock_app.command("reset")
+def unlock_reset(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
+    no_backup: bool = typer.Option(
+        False,
+        "--no-backup",
+        help="Delete MailForge's own store file instead of renaming it to *.bak (ignored for a shared file).",
+    ),
+) -> None:
+    """Forgot the credential-store password? Wipe the stored mailbox passwords.
+
+    Config (config.toml), the mail database and the audit log are KEPT. Afterwards
+    re-enter each mailbox password: 'mailforge account-passwd <name>'.
+    """
+    from . import recovery
+    from .config import load_settings
+
+    _announce()
+    info = recovery.store_info()
+    what = (
+        f"the encrypted store file {info.path}"
+        if info.file_backed
+        else "the stored passwords of the configured mailboxes in the OS keyring"
+    )
+    shared = (
+        " It is the shared Python keyring file: other programs' entries in it go too "
+        "(a .bak is kept)."
+        if info.file_backed and info.path is not None and not recovery.store_is_dedicated(info.path)
+        else ""
+    )
+    if not yes and not typer.confirm(
+        f"Wipe {what}?{shared} Mail database and config are kept; you re-enter the passwords after.",
+        default=False,
+    ):
+        typer.secho("Nothing changed.", fg="yellow")
+        raise typer.Exit(code=1)
+    report = recovery.reset_credential_store(load_settings(), backup=not no_backup)
+    typer.secho(f"Done: {report.summary()}.", fg="green")
+    typer.echo("Next: mailforge account-passwd <name>   (once per mailbox; see 'mailforge account-list')")
+    typer.secho(_restart_hint("so the listeners pick the new passwords up"), fg="yellow")
+
+
+@token_app.command("show")
+def token_show() -> None:
+    """Print the web-UI launcher URL (it logs a browser in; treat it like a password)."""
+    from . import recovery
+
+    _announce()
+    typer.echo(recovery.current_launch_url())
+    typer.secho(
+        "Binds 127.0.0.1 only; the server retires the key after each login. In Docker the "
+        "one-shot login URL is in the container log.",
+        err=True,
+        fg="bright_black",
+    )
+
+
+@token_app.command("rotate")
+def token_rotate(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
+) -> None:
+    """Mint a new launcher key and cookie secret: every browser is signed out.
+
+    A running server keeps the old values until it restarts.
+    """
+    from . import recovery
+
+    _announce()
+    if not yes and not typer.confirm("Sign every browser out and retire the launcher key?", default=False):
+        typer.secho("Nothing changed.", fg="yellow")
+        raise typer.Exit(code=1)
+    recovery.rotate_ui_access()
+    typer.secho("Rotated.", fg="green")
+    typer.secho(_restart_hint("to apply it, then run 'mailforge token show'"), fg="yellow")
 
 
 @app.command()

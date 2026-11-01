@@ -187,6 +187,17 @@ def _load_or_create_storage_secret() -> str:
     return secret
 
 
+def rotate_storage_secret() -> str:
+    """Mint a fresh cookie-signing secret: every existing browser session dies.
+
+    Takes effect when the server next starts (it reads the secret once). Used by
+    ``mailforge token rotate`` and the lockout-recovery startup reset.
+    """
+    secret = _pysecrets.token_urlsafe(48)
+    _write_secret_file(runtime_file("ui_storage_secret"), secret)
+    return secret
+
+
 # --------------------------------------------------------------------------- #
 # Auth: launch token -> signed session cookie (spec §0.7)
 # --------------------------------------------------------------------------- #
