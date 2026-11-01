@@ -1,7 +1,7 @@
 # MailForge - Docker Compose
 #
 #   cp deploy/compose/.env.example deploy/compose/.env && chmod 0600 deploy/compose/.env
-#   $EDITOR deploy/compose/.env                      # set MAILFORGE_KEYRING_PASSWORD
+#   $EDITOR deploy/compose/.env                      # set MAILFORGE_KEYRING_PASSWORD_FILE (or, quick test, MAILFORGE_KEYRING_PASSWORD)
 #   docker compose -f deploy/compose/compose.yml up -d
 #   docker compose -f deploy/compose/compose.yml logs app | grep "MailForge UI"   # one-shot login URL
 #

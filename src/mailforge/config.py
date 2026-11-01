@@ -451,18 +451,76 @@ class Settings(BaseSettings):
             data.pop("category_rules", None)
         return tomli_w.dumps(data)
 
+    def save_added_account(
+        self,
+        account: IMAPAccount,
+        relay: SMTPAccount | None = None,
+        path: Path | None = None,
+    ) -> Path:
+        """Persist one new mailbox without writing env-derived settings.
+
+        :meth:`save` dumps the merged settings (environment variables, ``.env``
+        and defaults included), so adding a mailbox used to freeze e.g. an
+        exported LLM host into ``config.toml``. This re-reads the file, appends
+        only ``account`` (and ``relay`` when it seeds the global ``[smtp]``
+        table), and keeps everything else as the file already had it.
+        """
+        import tomllib
+
+        target = path or config_file()
+        try:
+            data = tomllib.loads(target.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            data = {}
+        accounts = data.get("imap_accounts")
+        if not isinstance(accounts, list):
+            accounts = []
+        accounts.append(account.model_dump(mode="json", exclude_none=True))
+        data["imap_accounts"] = accounts
+        if relay is not None and "smtp" not in data:
+            data["smtp"] = relay.model_dump(mode="json", exclude_none=True)
+        return self._write_text(target, tomli_w.dumps(data))
+
+    def save_removed_account(self, name: str, path: Path | None = None) -> Path:
+        """Drop one mailbox from ``config.toml`` and leave every other key as it was.
+
+        Like :meth:`save_added_account`: re-reads the file instead of dumping the
+        merged (env-derived) settings.
+        """
+        import tomllib
+
+        target = path or config_file()
+        try:
+            data = tomllib.loads(target.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            data = {}
+        accounts = data.get("imap_accounts")
+        if isinstance(accounts, list):
+            keep = [
+                a for a in accounts
+                if not (isinstance(a, dict) and str(a.get("name", "")).lower() == name.lower())
+            ]
+            if keep:
+                data["imap_accounts"] = keep
+            else:
+                data.pop("imap_accounts", None)
+        return self._write_text(target, tomli_w.dumps(data))
+
     def save(self, path: Path | None = None) -> Path:
+        return self._write_text(path or config_file(), self.to_toml())
+
+    @staticmethod
+    def _write_text(target: Path, text: str) -> Path:
         import os
         import stat
 
-        target = path or config_file()
         target.parent.mkdir(parents=True, exist_ok=True)
         mode = stat.S_IRUSR | stat.S_IWUSR
         temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
         try:
             fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
             with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                stream.write(self.to_toml())
+                stream.write(text)
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temporary, target)

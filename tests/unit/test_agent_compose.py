@@ -83,7 +83,7 @@ def test_compose_from_must_be_a_mailbox_of_this_site(tmp_path):
 
 @pytest.mark.parametrize("to", [
     "", "not-an-address", "a@b", "two@x.test, three@y.test", "x@y.test\nBcc: z@q.test",
-    "Name <x@y.test>",
+    "Name <x@y.test>", "a\x00b@y.test", "a\x07b@y.test", "a\x7fb@y.test",
 ])
 def test_compose_needs_exactly_one_plain_recipient(tmp_path, to):
     with open_store(tmp_path / "d.db") as store:
@@ -95,6 +95,10 @@ def test_compose_needs_exactly_one_plain_recipient(tmp_path, to):
     ({"subject": ""}, "subject"),
     ({"subject": "line one\nBcc: x@y.test"}, "subject"),
     ({"subject": "x" * 201}, "subject"),
+    ({"subject": "one\x0btwo"}, "subject"),
+    ({"subject": "one\x85two"}, "subject"),
+    ({"subject": "one\u2028two"}, "subject"),
+    ({"subject": "one\x00two"}, "subject"),
     ({"body": "   "}, "body"),
     ({"body": "x" * 20001}, "body"),
 ])
@@ -155,3 +159,36 @@ def test_agent_cannot_send_its_own_first_contact_draft(tmp_path):
         out = _compose_draft(_payload(), "main", store, _settings(send_enabled=True))
         with pytest.raises(BridgeInputError, match="thread participant or allowlisted"):
             _prepare_send({"draft_id": out["draft_id"]}, "main", store, _settings())
+
+
+def test_compose_guardrails_scan_the_subject_too(tmp_path):
+    with open_store(tmp_path / "m.db") as store:
+        leaked = _payload(subject="key AKIAIOSFODNN7EXAMPLE")  # scrub-check: allow
+        with pytest.raises(BridgeInputError, match="guardrails blocked"):
+            _compose_draft(leaked, "main", store, _settings())
+        assert store.list_manual_drafts("main") == []
+        row = store.conn.execute(
+            "SELECT actor, event FROM audit_log ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        assert tuple(row) == ("guardrail", "block")
+
+
+def test_blocked_attempts_count_toward_the_daily_cap(tmp_path):
+    with open_store(tmp_path / "n.db") as store:
+        settings = _settings(per_day=2)
+        leaked = _payload(body="key AKIAIOSFODNN7EXAMPLE")  # scrub-check: allow
+        for _ in range(2):
+            with pytest.raises(BridgeInputError, match="guardrails blocked"):
+                _compose_draft(leaked, "main", store, settings)
+        with pytest.raises(BridgeInputError, match="cap"):
+            _compose_draft(_payload(), "main", store, settings)
+        assert store.list_manual_drafts("main") == []
+
+
+def test_audit_log_ts_index_exists_and_survives_reopen(tmp_path):
+    path = tmp_path / "o.db"
+    for _ in range(2):
+        with open_store(path) as store:
+            names = {r[0] for r in store.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index'")}
+            assert "audit_log_ts" in names

@@ -3,7 +3,7 @@
 All notable changes to this project are documented here. Dates are ISO-8601.
 Published by Laser Lloyd — https://www.laserlloyd.com
 
-## 0.7.0 — 2026-10-19
+## 0.7.0 — 2026-11-01
 
 ### Changed
 - **Licence: MIT No Attribution (MIT-0).** You can use, copy, change and ship MailForge with no
@@ -22,6 +22,13 @@ Published by Laser Lloyd — https://www.laserlloyd.com
   and `dispatch-compat` adapters were dropped. Update procedure: `docs/STYLE-GUIDE.md` section 2.
 
 ### Added
+- **Agent compose: `mailforge bridge compose` (`to`, `subject`, `body`, optional `from`).** An agent can write a
+  NEW email as the same manual draft Compose → Save draft writes (`/compose?draft_id=N`); it never sends —
+  `prepare-send` still refuses first-contact recipients, so a human presses Send. Content guardrails scan the
+  subject and the body; recipient addresses reject control characters and subjects must be one printable line.
+  Explicitly blocked domains still refuse; `openclaw.agent_compose_per_day` (default 20, `0` = off) caps drafts
+  per rolling 24 h, counted from the audit log, and guardrail-blocked attempts count toward the cap. Every
+  compose and every block is audited. An `audit_log(ts)` index keeps the cap count off a full table scan.
 - **Accounts and lockout recovery** (README section of the same name; Docker: `docs/deploy/docker.md`).
   - `mailforge users list | add | passwd | delete`: the mailbox logins under the verbs every forge uses
     (MailForge has no separate web-UI user). `account-passwd <name>` replaces one mailbox's stored IMAP password
@@ -43,6 +50,34 @@ Published by Laser Lloyd — https://www.laserlloyd.com
   vendored bundle cannot drift or be hand-edited unnoticed.
 
 ### Fixed
+- **A locked login keyring no longer wedges the IMAP listeners.** At boot a locked Secret Service made
+  `keyring.get_password` block forever in an unlock prompt, leaving a listener in state `connecting` with no retry.
+  Reads, writes and deletes now run with a timeout (`MAILFORGE_KEYRING_TIMEOUT_S`, default 30 s); one in-flight reader
+  per credential, so retries do not pile up threads; one warning per credential until the store answers again
+  ("reachable again"); a write or delete that times out raises `credential store did not answer within N s`.
+- A wrong `MAILFORGE_KEYRING_PASSWORD` reports `wrong password for the credential store` instead of a raw
+  `MAC check failed` traceback (#2).
+- Pages requested without a session answer HTTP 403 instead of 200 with an "Access denied" body, so monitors can
+  tell denied from served (#4).
+- `account-add` / `users add` no longer write environment-derived settings (for example the LLM host) into
+  `config.toml`; only the new mailbox is appended. `account-remove` rewrites only the mailbox list the same way (#5).
+- The HTTP 401/403 API-key hint from the LLM probe is logged once per process instead of on every `is_up()` call (#6).
+- `llm-check` reads served models listed by `path` as well as `id` and `model_key`, matching the model resolver, so a
+  server that lists by `path` no longer shows "NO MODELS" (#7).
+- A malformed or out-of-range `MAILFORGE_UI_PORT` logs a warning instead of silently falling back (#15).
+- A served model id ending in `/` no longer matches every configured id in the model-mismatch hint (#17).
+- The UI URL printed for an IPv6 `MAILFORGE_UI_HOST` brackets the address (`http://[::1]:PORT/`) (#18).
+- Docs recommend `MAILFORGE_KEYRING_PASSWORD_FILE` (a Docker secret, with a `compose.secret.yml` override recipe)
+  over the plain variable, which is visible in `docker inspect` and `docker compose config` (#3).
+- Accounts and lockout recovery hardening: `token rotate` reports each key's outcome and exits non-zero when a key
+  file could not be rewritten (it used to print "Rotated." regardless); the help now says browsers are signed out at
+  the next restart. `RESET_LOGIN` is read without following symlinks, only when owned by you, a UTF-8 BOM is
+  accepted, and several sentinel files in one start are all consumed but acted on once. `unlock reset --no-backup`
+  treats a store as dedicated only under `MAILFORGE_HOME` or, in a container, `/data`, so a shared native keyring
+  file is never hard-deleted. `account-add --password-stdin` strips CRLF. `account-remove` finishes with a clear
+  message when the credential purge fails, and credential-save errors name only the exception class.
+  `account-list` never prompts for a keyring password (rows read "credentials not checked" when the store is not
+  open).
 - **Bridge `status` and `reference-search` say why the LLM link is down.** A process started
   before the API key existed (e.g. an agent gateway running the plugin) got `model.up: false`
   with empty `notes`, and `reference-search` returned an empty result that read as "the

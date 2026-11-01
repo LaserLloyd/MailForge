@@ -59,3 +59,7 @@ pytest-results.xml
 
 # the compose template is the one .env.* file that ships
 !.env.example
+
+# a local Docker-secret file and compose override described in docs/deploy/docker.md ("Credentials")
+deploy/compose/keyring-password.txt
+deploy/compose/compose.secret.yml

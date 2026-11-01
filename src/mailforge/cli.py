@@ -32,7 +32,7 @@ unlock_app = typer.Typer(
 app.add_typer(unlock_app, name="unlock")
 token_app = typer.Typer(
     no_args_is_help=True,
-    help="Web UI access: show the launcher URL, or rotate the keys (signs every browser out).",
+    help="Web UI access: show the launcher URL, or rotate the keys (signs every browser out at the next restart).",
 )
 app.add_typer(token_app, name="token")
 users_app = typer.Typer(
@@ -88,6 +88,14 @@ def _read_password(password_stdin: bool, password_env: str | None, prompt: str) 
             raise typer.Exit(code=2)
         return value
     return getpass.getpass(prompt)
+
+
+def _read_stdin_secrets() -> tuple[str, str | None]:
+    """IMAP secret (line 1) and optional SMTP secret (line 2) from stdin, CR-trimmed."""
+    lines = sys.stdin.read().split("\n")
+    imap = lines[0].rstrip("\r")
+    smtp = lines[1].rstrip("\r") if len(lines) > 1 and lines[1].strip() else None
+    return imap, smtp
 
 
 def _infer_site(username: str, site_ids: list[str]) -> str:
@@ -261,9 +269,8 @@ def account_add(
         imap_secret = _read_password(False, password_env, "")
         smtp_secret = imap_secret
     elif password_stdin:
-        lines = sys.stdin.read().split("\n")
-        imap_secret = lines[0] if lines else ""
-        smtp_secret = lines[1] if len(lines) > 1 and lines[1] else imap_secret
+        imap_secret, smtp_line = _read_stdin_secrets()
+        smtp_secret = smtp_line or imap_secret
     elif no_input:
         typer.secho("--no-input requires --password-stdin or --password-env.", fg="red")
         raise typer.Exit(code=2)
@@ -313,6 +320,7 @@ def account_list() -> None:
 
     # A store that will not open is not a missing credential: say so, and fail.
     lock_state = recovery.probe_unlock()
+    probed = lock_state == "unlocked" or lock_state.startswith(("not applicable", "no store yet"))
     if lock_state.startswith("LOCKED"):
         for acct in settings.imap_accounts:
             typer.secho(
@@ -323,6 +331,15 @@ def account_list() -> None:
             )
         raise typer.Exit(code=1)
     for acct in settings.imap_accounts:
+        if not probed:
+            # A typed-password store would prompt on read: a list never prompts.
+            typer.secho(
+                f"{acct.name:<16} {acct.username:<32} site={acct.site_id:<12} "
+                f"{acct.host}:{acct.port}  credentials not checked "
+                "(keyring password is typed; see 'mailforge unlock status')",
+                fg="yellow",
+            )
+            continue
         has_imap = secrets_mod.get_imap_secret(acct.name) is not None
         has_smtp = secrets_mod.get_smtp_secret(acct.username) is not None
         # Report only presence — never the value (invariant §0.5).
@@ -356,12 +373,20 @@ def account_remove(
     ):
         typer.secho("Nothing changed.", fg="yellow")
         raise typer.Exit(code=1)
+    purge_failures: list[str] = []
     try:
-        account = remove_account(settings, name, purge_secrets=not keep_secrets)
+        account = remove_account(
+            settings, name, purge_secrets=not keep_secrets, purge_failures=purge_failures
+        )
     except AccountError as e:
         typer.secho(f"{e} Nothing changed.", fg="red")
         raise typer.Exit(code=2) from None
     typer.secho(f"Removed {account.username} ('{account.name}'). History retained.", fg="green")
+    if purge_failures:
+        typer.secho(
+            "mailbox removed; credentials could not be purged: run `mailforge unlock status`",
+            fg="yellow",
+        )
     typer.secho(_restart_hint("to stop the listener"), fg="yellow")
 
 
@@ -399,9 +424,7 @@ def account_passwd(
         typer.secho("Use --password-stdin OR --password-env, not both.", fg="red", err=True)
         raise typer.Exit(code=2)
     if password_stdin:
-        lines = sys.stdin.read().split("\n")
-        secret = lines[0].rstrip("\r")
-        smtp_secret = lines[1].rstrip("\r") if len(lines) > 1 and lines[1].strip() else None
+        secret, smtp_secret = _read_stdin_secrets()
         if not secret:
             typer.secho("No password received on stdin.", fg="red", err=True)
             raise typer.Exit(code=2)
@@ -530,9 +553,9 @@ def token_show() -> None:
 def token_rotate(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
 ) -> None:
-    """Mint a new launcher key and cookie secret: every browser is signed out.
+    """Mint a new launcher key and cookie secret: signs every browser out at the next restart.
 
-    A running server keeps the old values until it restarts.
+    A running server keeps the old values in memory until it restarts.
     """
     from . import recovery
 
@@ -540,8 +563,14 @@ def token_rotate(
     if not yes and not typer.confirm("Sign every browser out and retire the launcher key?", default=False):
         typer.secho("Nothing changed.", fg="yellow")
         raise typer.Exit(code=1)
-    recovery.rotate_ui_access()
-    typer.secho("Rotated.", fg="green")
+    outcome = recovery.rotate_ui_access()
+    for label, err in outcome.items():
+        if err:
+            typer.secho(f"{label}: NOT rotated ({err}); check the data directory is writable.", fg="red", err=True)
+        else:
+            typer.secho(f"{label}: rotated.", fg="green")
+    if any(outcome.values()):
+        raise typer.Exit(code=1)
     typer.secho(_restart_hint("to apply it, then run 'mailforge token show'"), fg="yellow")
 
 
@@ -940,7 +969,7 @@ def llm_check_command(
         body = None
     items = body.get("data") if isinstance(body, dict) else None
     ids = [
-        str(m.get("id") or m.get("model_key") or "")
+        str(m.get("id") or m.get("model_key") or m.get("path") or "")
         for m in (items if isinstance(items, list) else [])
         if isinstance(m, dict)
     ]

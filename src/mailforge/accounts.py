@@ -249,7 +249,7 @@ def add_account(
     try:
         secrets_mod.set_imap_secret(fields["name"], imap_secret)
         secrets_mod.set_smtp_secret(fields["username"], smtp_secret or imap_secret)
-        path = settings.save()
+        path = settings.save_added_account(account, settings.smtp if created_relay else None)
     except Exception as e:
         settings.imap_accounts.remove(account)
         if created_relay:
@@ -279,12 +279,18 @@ def add_account(
 
 
 def remove_account(
-    settings: "Settings", name: str, *, purge_secrets: bool = True
+    settings: "Settings",
+    name: str,
+    *,
+    purge_secrets: bool = True,
+    purge_failures: list[str] | None = None,
 ) -> IMAPAccount:
     """Remove a mailbox from config.toml and (by default) forget its secrets.
 
     Message history is deliberately KEPT: the ``accounts``/``messages`` rows stay
-    so the audit trail and past threads survive re-adding the same mailbox.
+    so the audit trail and past threads survive re-adding the same mailbox. A failed
+    secret purge never undoes the removal: the exception class name is appended to
+    ``purge_failures`` (when given) and logged.
     """
     target = (name or "").strip().lower()
     account = next(
@@ -296,18 +302,23 @@ def remove_account(
     settings.imap_accounts.remove(account)
     try:
         settings.assert_invariants()
-        settings.save()
+        settings.save_removed_account(account.name)
     except Exception as e:
         settings.imap_accounts.append(account)
         raise AccountError(f"Could not remove mailbox: {e}") from None
 
     if purge_secrets:
-        secrets_mod.delete_secret("imap", account.name)
-        # Only if no surviving mailbox still sends as this identity.
-        if not any(
-            a.username.lower() == account.username.lower() for a in settings.imap_accounts
-        ):
-            secrets_mod.delete_secret("smtp", account.username)
+        try:
+            secrets_mod.delete_secret("imap", account.name)
+            # Only if no surviving mailbox still sends as this identity.
+            if not any(
+                a.username.lower() == account.username.lower() for a in settings.imap_accounts
+            ):
+                secrets_mod.delete_secret("smtp", account.username)
+        except Exception as e:  # noqa: BLE001 - the mailbox IS removed; say what is left
+            log.warning("credential purge for %s failed: %s", account.name, e.__class__.__name__)
+            if purge_failures is not None:
+                purge_failures.append(e.__class__.__name__)
     log.info("Removed mailbox %s (%s); message history retained.", account.username, account.name)
     return account
 
@@ -368,6 +379,6 @@ def set_account_password(
     except Exception as e:  # noqa: BLE001 - keyring backends raise many types
         _restore_secret("imap", account.name, prior_imap)
         _restore_secret("smtp", account.username, prior_smtp)
-        raise AccountError(f"Could not save the credential: {e}") from None
+        raise AccountError(f"Could not save the credential: {type(e).__name__}") from None
     log.info("Updated stored credential for mailbox %s (%s).", account.username, account.name)
     return account, action

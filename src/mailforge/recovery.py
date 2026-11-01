@@ -9,7 +9,7 @@ MailForge has no user table. Two things guard it, and either can be lost:
   never be read again - the only way forward is to wipe it and enter the mailbox
   passwords again. The mail database and ``config.toml`` are NOT touched.
 * the **UI access keys** - the launcher key (``/launch?k=``) and the secret that signs
-  browser session cookies. Rotating them signs every browser out and retires every
+  browser session cookies. Rotating them signs every browser out (at the next restart) and retires every
   saved launcher URL; the next ``mailforge serve`` prints a fresh one-shot login URL.
 
 Two ways in, both of which need access to the machine, never the network:
@@ -26,6 +26,7 @@ from __future__ import annotations
 import datetime as _dt
 import logging
 import os
+import stat
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -183,16 +184,22 @@ def store_is_dedicated(path: Path) -> bool:
     The native cryptfile fallback lives in the shared ``python_keyring`` folder, where
     any other Python program using ``keyrings.cryptfile`` keeps its entries too.
     """
-    if in_container():
-        return True
+    roots: list[Path | str] = []
     home = paths.app_home()
-    if home is None:
-        return False
-    try:
-        Path(os.path.realpath(path)).relative_to(os.path.realpath(home))
-    except ValueError:
-        return False
-    return True
+    if home is not None:
+        roots.append(home)
+    if in_container():
+        # /.dockerenv alone also appears in devcontainers/toolboxes that share a native
+        # keyring folder: only the image's volume (/data) or MAILFORGE_HOME is ours.
+        roots.append("/data")
+    real = Path(os.path.realpath(path))
+    for root in roots:
+        try:
+            real.relative_to(os.path.realpath(root))
+        except ValueError:
+            continue
+        return True
+    return False
 
 
 def _prune_backups(path: Path) -> None:
@@ -264,15 +271,27 @@ def current_launch_url(port: int | None = None) -> str:
     return f"http://127.0.0.1:{p}/launch?k={launcher_key()}"
 
 
-def rotate_ui_access() -> None:
+def rotate_ui_access() -> dict[str, str | None]:
     """New launcher key + new cookie-signing secret (files in the data dir).
 
     A running server holds both in memory; the change applies at its next start.
+    Both are always attempted. Returns ``{"launcher key": None | error, "cookie
+    secret": None | error}``: ``None`` means that file was rewritten, anything else
+    is the failure's class name (never a message that could echo a value).
     """
     from .ui.app import rotate_launcher_key, rotate_storage_secret
 
-    rotate_launcher_key()
-    rotate_storage_secret()
+    outcome: dict[str, str | None] = {}
+    for label, fn in (
+        ("launcher key", lambda: rotate_launcher_key(strict=True)),
+        ("cookie secret", rotate_storage_secret),
+    ):
+        try:
+            fn()
+            outcome[label] = None
+        except Exception as e:  # noqa: BLE001 - report each key on its own
+            outcome[label] = e.__class__.__name__
+    return outcome
 
 
 # --------------------------------------------------------------------------- #
@@ -284,6 +303,35 @@ class SentinelResult:
     action: str | None  # None: unrecognised content, nothing was reset
     store: ResetReport | None = None
     ui_rotated: bool = False
+    ui_errors: dict[str, str] = field(default_factory=dict)
+
+
+def _read_sentinel(path: Path) -> str | None:
+    """Read a sentinel without following links; ``None`` leaves the file untouched.
+
+    Only a regular file owned by the current user (POSIX) is honoured: a symlink, a
+    directory or a file another account could have planted is ignored with a warning.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except FileNotFoundError:
+        return None
+    except OSError as e:
+        log.warning("RESET_LOGIN at %s not read (%s); leaving it alone", path, e.__class__.__name__)
+        return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or (hasattr(os, "getuid") and st.st_uid != os.getuid()):
+            log.warning("RESET_LOGIN at %s is not a regular file owned by this user; ignoring it", path)
+            return None
+        with os.fdopen(fd, "rb", closefd=False) as fh:
+            return fh.read(4096).decode("utf-8-sig", errors="replace")
+    except OSError as e:
+        log.error("RESET_LOGIN at %s could not be read (%s); ignoring it", path, e)
+        return None
+    finally:
+        os.close(fd)
 
 
 def consume_reset_sentinel(settings) -> list[SentinelResult]:
@@ -299,12 +347,8 @@ def consume_reset_sentinel(settings) -> list[SentinelResult]:
     """
     results: list[SentinelResult] = []
     for path in sentinel_paths():
-        try:
-            if path.is_symlink() or not path.is_file():
-                continue
-            raw = path.read_text(encoding="utf-8", errors="replace")
-        except OSError as e:
-            log.error("RESET_LOGIN at %s could not be read (%s); ignoring it", path, e)
+        raw = _read_sentinel(path)
+        if raw is None:
             continue
         try:
             path.unlink()
@@ -324,23 +368,36 @@ def consume_reset_sentinel(settings) -> list[SentinelResult]:
                 path,
                 len(raw.encode("utf-8")),
             )
-            results.append(SentinelResult(path, None))
-            continue
-        res = SentinelResult(path, action)
-        try:
-            if action in (ACTION_ALL, ACTION_UNLOCK):
-                res.store = reset_credential_store(settings)
-            if action in (ACTION_ALL, ACTION_UI):
-                rotate_ui_access()
-                res.ui_rotated = True
-        except Exception as e:  # noqa: BLE001 - report, do not stop the service starting
-            log.error("RESET_LOGIN (%s) failed part-way: %s", action, e)
-        log.warning(
-            "RESET_LOGIN consumed (%s): %s; UI access keys %s. Mail database and config.toml "
-            "untouched. Re-enter mailbox passwords with 'mailforge account-passwd <name>'.",
-            action,
-            res.store.summary() if res.store else "credential store untouched",
-            "rotated" if res.ui_rotated else "unchanged",
+        results.append(SentinelResult(path, action))
+
+    # Every file is consumed above; the union of their actions runs ONCE, so two
+    # sentinels in one start never wipe twice.
+    acting = [r for r in results if r.action is not None]
+    if not acting:
+        return results
+    actions = {r.action for r in acting}
+    want_store = bool(actions & {ACTION_ALL, ACTION_UNLOCK})
+    want_ui = bool(actions & {ACTION_ALL, ACTION_UI})
+    res = acting[0]
+    try:
+        if want_store:
+            res.store = reset_credential_store(settings)
+        if want_ui:
+            outcome = rotate_ui_access()
+            res.ui_errors = {k: v for k, v in outcome.items() if v}
+            res.ui_rotated = not res.ui_errors
+    except Exception as e:  # noqa: BLE001 - report, do not stop the service starting
+        log.error("RESET_LOGIN (%s) failed part-way: %s", "+".join(sorted(actions)), e)
+    if res.ui_errors:
+        log.error(
+            "RESET_LOGIN: UI access key rotation failed for: %s",
+            ", ".join(f"{k} ({v})" for k, v in res.ui_errors.items()),
         )
-        results.append(res)
+    log.warning(
+        "RESET_LOGIN consumed (%s): %s; UI access keys %s. Mail database and config.toml "
+        "untouched. Re-enter mailbox passwords with 'mailforge account-passwd <name>'.",
+        "+".join(sorted(actions)),
+        res.store.summary() if res.store else "credential store untouched",
+        "rotated" if res.ui_rotated else ("NOT fully rotated" if res.ui_errors else "unchanged"),
+    )
     return results

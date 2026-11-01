@@ -185,6 +185,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
   event TEXT NOT NULL,                                            -- llm_call|tool_call|approval|send|block|error
   subject_table TEXT, subject_id INTEGER, detail_json TEXT,        -- redacted before write
   prev_hash TEXT, this_hash TEXT);                                -- sha256 chain
+CREATE INDEX IF NOT EXISTS audit_log_ts ON audit_log(ts);
 
 CREATE TABLE IF NOT EXISTS reference_documents (
   id INTEGER PRIMARY KEY,

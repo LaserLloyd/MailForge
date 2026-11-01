@@ -1913,9 +1913,10 @@ class Store:
         return cur.rowcount == 1
 
     def count_audit_tool_calls(self, tool: str, since_iso: str) -> int:
-        """Agent ``tool_call`` audit rows for ``tool`` at or after ``since_iso``."""
+        """Agent attempts for ``tool`` at or after ``since_iso``: ``tool_call`` rows
+        plus guardrail ``block`` rows, so refused attempts count toward caps."""
         row = self.conn.execute(
-            "SELECT COUNT(*) FROM audit_log WHERE event='tool_call' AND ts>=? "
+            "SELECT COUNT(*) FROM audit_log WHERE event IN ('tool_call','block') AND ts>=? "
             "AND json_extract(detail_json,'$.tool')=?",
             (since_iso, str(tool)),
         ).fetchone()

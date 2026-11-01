@@ -20,7 +20,7 @@ def is_studioforge_id(model_id: str) -> bool:
 
 
 def _stem(model_id: str) -> str:
-    return str(model_id or "").rsplit("/", 1)[-1].lower()
+    return str(model_id or "").rsplit("/", 1)[-1].strip().lower()
 
 
 def nearest_served(configured: str, served: list[str], limit: int = 3) -> list[str]:
@@ -28,7 +28,7 @@ def nearest_served(configured: str, served: list[str], limit: int = 3) -> list[s
     want = _stem(configured)
     if not want:
         return []
-    hits = [s for s in served if want in s.lower() or _stem(s) in want]
+    hits = [s for s in served if want in s.lower() or (_stem(s) and _stem(s) in want)]
     return hits[:limit]
 
 

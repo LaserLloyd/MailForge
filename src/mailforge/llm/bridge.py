@@ -32,6 +32,15 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 log = logging.getLogger(__name__)
 
+# The 401/403 hint from probe() is logged once per process (is_up() runs often).
+_auth_warned = False
+
+
+def reset_auth_warning() -> None:
+    """Re-arm the once-per-process auth warning (tests)."""
+    global _auth_warned
+    _auth_warned = False
+
 # Import-guard the OPTIONAL lmstudio SDK (the ``llm`` extra). The package must
 # import and the bridge must function (degraded) when it is not installed.
 try:  # pragma: no cover - exercised by extra presence
@@ -314,11 +323,14 @@ class LMStudioBridge:
             log.debug("LM Studio /v1/models probe failed: %s", _describe_exc(e))
             return None
         if r.status_code in (401, 403):
-            log.warning(
-                "LLM server answered HTTP %s to /v1/models: %s",
-                r.status_code,
-                auth_problem(r.status_code, self.has_api_key),
-            )
+            global _auth_warned
+            if not _auth_warned:
+                _auth_warned = True
+                log.warning(
+                    "LLM server answered HTTP %s to /v1/models: %s (logged once per process)",
+                    r.status_code,
+                    auth_problem(r.status_code, self.has_api_key),
+                )
         return r.status_code
 
     def is_up(self) -> bool:

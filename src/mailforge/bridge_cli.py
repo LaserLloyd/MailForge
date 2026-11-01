@@ -35,7 +35,7 @@ OPS = frozenset(
 
 # One bare address: no display name, no list, no header-injection characters.
 _ADDR_RE = re.compile(
-    r"^[^@\s,;<>\"'()\[\]\\]{1,64}@"
+    r"^[^@\s,;<>\"'()\[\]\\\x00-\x1f\x7f]{1,64}@"
     r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$"
 )
 COMPOSE_SUBJECT_MAX = 200
@@ -341,7 +341,8 @@ def _compose_draft(data: dict[str, Any], site: str, store: Any, settings: Any) -
     if len(to) > 254 or not _ADDR_RE.match(to):
         raise BridgeInputError("to must be exactly one plain email address")
     subject = str(data.get("subject") or "").strip()
-    if not subject or len(subject) > COMPOSE_SUBJECT_MAX or any(c in subject for c in "\r\n"):
+    if not subject or len(subject) > COMPOSE_SUBJECT_MAX or len(subject.splitlines()) != 1 \
+            or any(not (c.isprintable() or c == "\t") for c in subject):
         raise BridgeInputError(
             f"subject is required: one line, at most {COMPOSE_SUBJECT_MAX} characters"
         )
@@ -375,7 +376,7 @@ def _compose_draft(data: dict[str, Any], site: str, store: Any, settings: Any) -
             set(settings.security.recipient_allowlist_domains) | {to.rsplit("@", 1)[1].lower()},
     })
     report = run_output_guardrails(
-        {"recipient": to, "subject": subject, "body": body, "thread_id": ""},
+        {"recipient": to, "subject": subject, "body": subject + "\n" + body, "thread_id": ""},
         {"recipient": to, "thread_participants": {to.lower()}, "site_id": site},
         store,
         security,

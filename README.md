@@ -152,14 +152,14 @@ git clone https://github.com/LaserLloyd/MailForge.git   # scrub-check: allow (pu
 cd MailForge
 Copy-Item deploy\compose\.env.example deploy\compose\.env
 $pw = [guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')     # a random 64-character password
-(Get-Content deploy\compose\.env) -replace '^MAILFORGE_KEYRING_PASSWORD=.*', "MAILFORGE_KEYRING_PASSWORD=$pw" | Set-Content -Encoding ascii deploy\compose\.env
+(Get-Content deploy\compose\.env) -replace '^MAILFORGE_KEYRING_PASSWORD=.*', "MAILFORGE_KEYRING_PASSWORD=$pw" | Set-Content -Encoding ascii deploy\compose\.env   # quick test only; see docs/deploy/docker.md for the _FILE form
 docker compose -f deploy/compose/compose.yml up -d
 docker compose -f deploy/compose/compose.yml ps                                    # STATUS: healthy
 docker compose -f deploy/compose/compose.yml logs app | Select-String "MailForge UI"   # open the printed http://127.0.0.1:8090/?token=... URL
 ```
 
-`MAILFORGE_KEYRING_PASSWORD` unlocks the encrypted file that holds your mailbox passwords. It cannot be recovered: copy the value from
-`deploy\compose\.env` into your password manager now. Then add your mailbox:
+`MAILFORGE_KEYRING_PASSWORD` (the quick-test variable above) unlocks the encrypted file that holds your mailbox passwords. It cannot be recovered: copy the value from
+`deploy\compose\.env` into your password manager now. For anything beyond a quick test, use `MAILFORGE_KEYRING_PASSWORD_FILE` with a Docker secret instead, as in [`docs/deploy/docker.md`](docs/deploy/docker.md) (the plain variable is visible in `docker inspect` and `docker compose config`). Then add your mailbox:
 `docker compose -f deploy/compose/compose.yml run --rm -it app setup-wizard`. A key for the LLM server goes in the same `.env` as `MAILFORGE_LLM_API_KEY=...`.
 
 | Pros | Cons |
@@ -260,14 +260,13 @@ sudo apt-get update && sudo apt-get install -y git docker.io docker-compose-v2
 sudo usermod -aG docker $USER      # log out and in once, or prefix the docker lines below with sudo
 git clone https://github.com/LaserLloyd/MailForge.git && cd MailForge   # scrub-check: allow (public repo URL)
 cp deploy/compose/.env.example deploy/compose/.env && chmod 0600 deploy/compose/.env
-sed -i "s|^MAILFORGE_KEYRING_PASSWORD=.*|MAILFORGE_KEYRING_PASSWORD=$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')|" deploy/compose/.env
+sed -i "s|^MAILFORGE_KEYRING_PASSWORD=.*|MAILFORGE_KEYRING_PASSWORD=$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')|" deploy/compose/.env   # quick test only; see docs/deploy/docker.md for the _FILE form
 docker compose -f deploy/compose/compose.yml up -d
 docker compose -f deploy/compose/compose.yml ps                              # STATUS: healthy
 docker compose -f deploy/compose/compose.yml logs app | grep "MailForge UI"  # open the printed http://127.0.0.1:8090/?token=... URL
 ```
 
-`MAILFORGE_KEYRING_PASSWORD` unlocks the encrypted file that holds your mailbox passwords. It cannot be recovered: copy the value from
-`deploy/compose/.env` into your password manager now (or use `MAILFORGE_KEYRING_PASSWORD_FILE` with a Docker secret). Then add your mailbox:
+`MAILFORGE_KEYRING_PASSWORD_FILE` (recommended: a Docker secret, see [`docs/deploy/docker.md`](docs/deploy/docker.md#credentials)) or `MAILFORGE_KEYRING_PASSWORD` (quick test only) unlocks the encrypted file that holds your mailbox passwords. It cannot be recovered: copy the value into your password manager now. The plain variable is visible in `docker inspect` and `docker compose config`, which is why the file form is recommended. Then add your mailbox:
 `docker compose -f deploy/compose/compose.yml run --rm -it app setup-wizard`. A key for the LLM server goes in the same `.env` as `MAILFORGE_LLM_API_KEY=...`.
 The log shows the container's port (8090); if you changed `HOST_PORT`, use that port in the URL. Lost the login URL? `docker compose -f deploy/compose/compose.yml exec app mailforge open --no-browser` prints a fresh one.
 
@@ -325,7 +324,7 @@ brew install git
 brew install --cask docker     # then open Docker Desktop once and wait for "Engine running"
 git clone https://github.com/LaserLloyd/MailForge.git && cd MailForge   # scrub-check: allow (public repo URL)
 cp deploy/compose/.env.example deploy/compose/.env && chmod 0600 deploy/compose/.env
-sed -i '' "s|^MAILFORGE_KEYRING_PASSWORD=.*|MAILFORGE_KEYRING_PASSWORD=$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')|" deploy/compose/.env
+sed -i '' "s|^MAILFORGE_KEYRING_PASSWORD=.*|MAILFORGE_KEYRING_PASSWORD=$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')|" deploy/compose/.env   # quick test only; see docs/deploy/docker.md for the _FILE form
 docker compose -f deploy/compose/compose.yml up -d
 docker compose -f deploy/compose/compose.yml logs app | grep "MailForge UI"
 ```
@@ -347,7 +346,7 @@ docker compose -f deploy/compose/compose.yml logs app | grep "MailForge UI"
   command. The mail database (with its sqlite-vec index), `config.toml` and the encrypted credential store live only in the `mailforge-data` volume.
   Before a new image version starts, they are copied to `/data/backups/<old>-to-<new>-<timestamp>/` (last 5 kept) and the database migrates itself.
   `docker compose ... down` keeps the volume; **`down -v` deletes your mail database, config and stored credentials**. Back up with the app stopped
-  (keep `MAILFORGE_KEYRING_PASSWORD` separately; it is not in the archive):
+  (keep the keyring password, the `_FILE` secret or `MAILFORGE_KEYRING_PASSWORD`, separately; it is not in the archive):
 
   ```bash
   docker compose -f deploy/compose/compose.yml stop app
@@ -362,7 +361,7 @@ Docker settings in `deploy/compose/.env`:
 
 | Variable | Default | |
 |---|---|---|
-| `MAILFORGE_KEYRING_PASSWORD` / `_FILE` | empty | unlocks the credential store |
+| `MAILFORGE_KEYRING_PASSWORD_FILE` (recommended) / `MAILFORGE_KEYRING_PASSWORD` (quick test only) | empty | unlocks the credential store; the plain value is visible in `docker inspect` |
 | `MAILFORGE_LLM_API_KEY` | not set | bearer key for the LLM server; add the line to `.env` |
 | `LLM_BASE_URL` | `http://host.docker.internal:1234/v1` | your local LLM server as the container sees it (host:port is used) |
 | `BIND_ADDR` / `HOST_PORT` | `127.0.0.1` / `8090` | host side of the port mapping |
@@ -434,8 +433,8 @@ only access to the machine (never the network):
 
 | What | Where it lives | If you lose it |
 |---|---|---|
-| **Mailbox passwords** (the credential store) | the OS keyring (Windows Credential Manager, macOS Keychain, GNOME/KDE Secret Service); on a headless Linux box and in Docker an encrypted file opened with a password you chose (`MAILFORGE_KEYRING_PASSWORD` in Docker) | `unlock reset` wipes the store; you re-enter each mailbox password. Config and mail are **kept**. |
-| **Web-UI access** (a one-shot login URL, a launcher key, and the secret that signs browser cookies) | `ui_launcher_key` and `ui_storage_secret` (both 0600) in the data folder | `token rotate` makes new ones and signs every browser out. |
+| **Mailbox passwords** (the credential store) | the OS keyring (Windows Credential Manager, macOS Keychain, GNOME/KDE Secret Service); on a headless Linux box and in Docker an encrypted file opened with a password you chose (`MAILFORGE_KEYRING_PASSWORD_FILE` in Docker, or `MAILFORGE_KEYRING_PASSWORD` for a quick test) | `unlock reset` wipes the store; you re-enter each mailbox password. Config and mail are **kept**. |
+| **Web-UI access** (a one-shot login URL, a launcher key, and the secret that signs browser cookies) | `ui_launcher_key` and `ui_storage_secret` (both 0600) in the data folder | `token rotate` makes new ones; every browser is signed out at the next restart (the running server keeps the old secrets until then). |
 
 Where the folders are (every command prints the ones it is acting on, so you can check):
 
@@ -480,7 +479,7 @@ service) afterwards so the listeners pick the change up.
 ### Forgot the credential-store password
 
 ```bash
-mailforge unlock status        # backend, store file, "unlocked" or "LOCKED: ...", mailboxes without a credential
+mailforge unlock status        # backend, store file, "unlocked" or "LOCKED: ...", mailboxes without an IMAP or SMTP credential
 mailforge unlock reset         # asks first; --yes skips the question
 mailforge users passwd <name> --password-stdin     # once per mailbox
 ```

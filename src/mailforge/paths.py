@@ -9,6 +9,7 @@ those on Linux and use the OS-native equivalents elsewhere.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -79,9 +80,20 @@ def prompt_override_dir() -> Path:
 #: that way (the published port is not loopback inside it, and the browser's
 #: Host header carries the *published* port), so these three variables relax
 #: exactly those three things and nothing else; unset, behaviour is unchanged.
+log = logging.getLogger(__name__)
+_bad_port_warned: str | None = None
+
 UI_HOST_ENV = "MAILFORGE_UI_HOST"
 UI_PORT_ENV = "MAILFORGE_UI_PORT"
 UI_ALLOWED_HOSTS_ENV = "MAILFORGE_UI_ALLOWED_HOSTS"
+
+
+def url_host(host: str) -> str:
+    """``host`` as it must appear in a URL: IPv6 literals get ``[brackets]``."""
+    h = host.strip()
+    if ":" in h and not (h.startswith("[") and h.endswith("]")):
+        return f"[{h}]"
+    return h
 
 
 def ui_host() -> str:
@@ -97,8 +109,24 @@ def ui_port_override() -> int | None:
     try:
         port = int(raw)
     except ValueError:
+        _warn_bad_port(raw)
         return None
-    return port if 0 < port < 65536 else None
+    if 0 < port < 65536:
+        return port
+    _warn_bad_port(raw)
+    return None
+
+
+def _warn_bad_port(raw: str) -> None:
+    global _bad_port_warned
+    if _bad_port_warned == raw:
+        return
+    _bad_port_warned = raw
+    log.warning(
+        "%s=%r is not a valid port (1-65535); ignoring it and using the persisted random port",
+        UI_PORT_ENV,
+        raw[:32],
+    )
 
 
 def ui_extra_allowed_hosts() -> set[str]:

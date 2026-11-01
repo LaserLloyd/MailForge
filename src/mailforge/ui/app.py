@@ -25,13 +25,14 @@ import socket
 from typing import Any
 
 from nicegui import app as nicegui_app
-from nicegui import ui
+from nicegui import context, ui
 
 from ..paths import (
     runtime_file,
     ui_extra_allowed_hosts,
     ui_host,
     ui_port_override,
+    url_host,
 )
 from . import theme
 from .pages import activity as activity_page
@@ -154,8 +155,11 @@ def launcher_key() -> str:
     return key
 
 
-def rotate_launcher_key() -> str:
+def rotate_launcher_key(*, strict: bool = False) -> str:
     """Mint a fresh launcher key (the old one is retired).
+
+    ``strict=True`` (the recovery commands) raises ``OSError`` when the key file could
+    not be rewritten; the per-click rotation after ``/launch`` only logs.
 
     The key travels in a URL query string (browser history, any proxy log),
     so it is rotated after every successful ``/launch`` — the desktop entry
@@ -165,6 +169,8 @@ def rotate_launcher_key() -> str:
     try:
         _write_secret_file(runtime_file("ui_launcher_key"), key)
     except OSError as e:
+        if strict:
+            raise
         log.warning("could not rotate launcher key: %s", e)
     return key
 
@@ -238,6 +244,8 @@ def _gate(token: str | None) -> bool:
 
 
 def _denied() -> None:
+    # 403, not the default 200, so a monitor can tell "denied" from "served".
+    context.client.status_code = 403
     theme.apply()
     with ui.column().classes("absolute-center items-center").style("gap: 10px"):
         ui.icon("lock", size="42px").style("color: var(--danger-text)")
@@ -583,7 +591,7 @@ def refresh_inbox() -> None:
 # --------------------------------------------------------------------------- #
 def _display_host(host: str) -> str:
     """0.0.0.0 / :: are bind addresses, not something a browser can open."""
-    return "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    return url_host("127.0.0.1" if host in ("0.0.0.0", "::") else host)
 
 
 def build_app(
