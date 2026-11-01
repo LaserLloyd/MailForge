@@ -3,6 +3,17 @@
 All notable changes to this project are documented here. Dates are ISO-8601.
 Published by Laser Lloyd — https://www.laserlloyd.com
 
+## 0.7.1 — 2026-11-01
+
+### Changed
+- **The GPL `html2text` dependency is gone.** HTML-to-text now uses `markdownify` (MIT, already in the
+  lock file, with `beautifulsoup4`) behind the same lxml + bleach sanitising stages; links, lists,
+  emphasis and headings keep the same Markdown shapes, images and in-page `#` links are still dropped.
+  The installer and Docker image no longer bundle any GPL-licensed library. Run `uv sync` after
+  updating; nothing else to do. Closes #8.
+- Docs: Docker secret files (`MAILFORGE_KEYRING_PASSWORD_FILE`) must use LF line endings; a CRLF
+  file derives a different password.
+
 ## 0.7.0 — 2026-11-01
 
 ### Changed
@@ -10,8 +21,7 @@ Published by Laser Lloyd — https://www.laserlloyd.com
   conditions; no copyright notice has to be kept. You don't need to credit this project — but if
   you do, a link back is appreciated. `LICENSE`, `pyproject.toml`, the Docker image label, the
   README and `docs/LICENSING.md` say so; the scrub check accepts the MIT-0 notice form
-  (`Copyright <year> <holder>`, no "(c)"). Releases up to 0.6.0 were MIT. The GPL `html2text`
-  notes in `docs/LICENSING.md` still apply to the bundled installer and image.
+  (`Copyright <year> <holder>`, no "(c)"). Releases up to 0.6.0 were MIT. (0.7.1 removed the GPL `html2text` dependency.)
 - **UI theme: ForgeUI 1.2.0.** `ui/static/ui-theme/` was a pre-release copy (`ui-theme
   2026-09-24 638060cc7dc6`); it is now the pristine ForgeUI 1.2.0 bundle (`ThemeForge 1.2.0
   82d997e2846d`), vendored by `python -m forgeui vendor` from a new repository-root manifest,

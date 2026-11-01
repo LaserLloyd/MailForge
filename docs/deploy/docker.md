@@ -62,6 +62,7 @@ it is git-ignored and excluded from the build context, so it cannot end up in an
 | Variable | Default | Meaning |
 |---|---|---|
 | `MAILFORGE_KEYRING_PASSWORD_FILE` | empty | **Recommended.** Unlocks the encrypted credential store, read from a file (a Docker/compose secret at `/run/secrets/...`). Wins over the plain variable. See "Credentials". |
+| `MAILFORGE_KEYRING_PASSWORD_FILE` note | | Secret files must end lines with LF, not CRLF: the entrypoint keeps a trailing `\r`, so a CRLF file derives a different password. |
 | `MAILFORGE_KEYRING_PASSWORD` | empty | Quick test only: the password itself in `.env`. It is visible in `docker inspect` and `docker compose config`, so do not use it for real mail. |
 | `LLM_BASE_URL` | `http://host.docker.internal:1234/v1` | Your local LLM server **as the container sees it**. Reduced to `host:port` (`https://host:port` for an `https://` URL, so TLS and the API key are kept) and exported as `MAILFORGE_LLM__LM_STUDIO_HOST` (MailForge talks to LM Studio / StudioForge over their OpenAI-compatible HTTP API; the LM Studio SDK is only used for optional just-in-time model loading). The environment beats `config.toml`, and compose always sets `LLM_BASE_URL` (an empty value falls back to the default), so in the container `[llm] lm_studio_host` in the file is overridden: change the server here, or set `MAILFORGE_LLM__LM_STUDIO_HOST` in `.env` (it wins over `LLM_BASE_URL`). |
 | `BIND_ADDR` / `HOST_PORT` / `UI_EXTRA_HOSTS` | `127.0.0.1` / `8090` / empty | Host side of the port mapping, as above. |

@@ -1704,15 +1704,6 @@ wheels = [
 ]
 
 [[package]]
-name = "html2text"
-version = "2025.4.15"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/f8/27/e158d86ba1e82967cc2f790b0cb02030d4a8bef58e0c79a8590e9678107f/html2text-2025.4.15.tar.gz", hash = "sha256:948a645f8f0bc3abe7fd587019a2197a12436cd73d0d4908af95bfc8da337588", size = 64316, upload-time = "2025-04-15T04:02:30.045Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/1d/84/1a0f9555fd5f2b1c924ff932d99b40a0f8a6b12f6dd625e2a47f415b00ea/html2text-2025.4.15-py3-none-any.whl", hash = "sha256:00569167ffdab3d7767a4cdf589b7f57e777a5ed28d12907d8c58769ec734acc", size = 34656, upload-time = "2025-04-15T04:02:28.44Z" },
-]
-
-[[package]]
 name = "httpcore"
 version = "1.0.9"
 source = { registry = "https://pypi.org/simple" }
@@ -2622,18 +2613,18 @@ wheels = [
 
 [[package]]
 name = "mailforge"
-version = "0.7.0"
+version = "0.7.1"
 source = { editable = "." }
 dependencies = [
     { name = "bleach" },
     { name = "ftfy" },
-    { name = "html2text" },
     { name = "httpx" },
     { name = "imap-tools" },
     { name = "keyring" },
     { name = "keyrings-cryptfile" },
     { name = "lxml-html-clean" },
     { name = "markdown2" },
+    { name = "markdownify" },
     { name = "nicegui" },
     { name = "platformdirs" },
     { name = "pydantic" },
@@ -2683,7 +2674,6 @@ requires-dist = [
     { name = "detect-secrets", marker = "extra == 'security-ml'", specifier = ">=1.5" },
     { name = "ftfy", specifier = ">=6.2" },
     { name = "garak", marker = "extra == 'redteam'", specifier = ">=0.9" },
-    { name = "html2text", specifier = ">=2024.2.26" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "imap-tools", specifier = ">=1.15" },
     { name = "invariant-ai", marker = "extra == 'policy'", specifier = ">=0.1" },
@@ -2693,6 +2683,7 @@ requires-dist = [
     { name = "lmstudio", marker = "extra == 'llm'", specifier = ">=1.5.0" },
     { name = "lxml-html-clean", specifier = ">=0.1" },
     { name = "markdown2", specifier = ">=2.5" },
+    { name = "markdownify", specifier = ">=1.2" },
     { name = "markitdown", marker = "extra == 'rag'", specifier = ">=0.0.1" },
     { name = "nicegui", specifier = ">=3.18,<4" },
     { name = "platformdirs", specifier = ">=4.2" },

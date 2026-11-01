@@ -137,7 +137,7 @@ def decode_base64_blocks(text: str, _depth: int = 0) -> str:
 # --------------------------------------------------------------------------- #
 # §4.5  Link symbolisation.
 # --------------------------------------------------------------------------- #
-# Markdown links emitted by html2text: [text](url)
+# Markdown links emitted by markdownify: [text](url)
 _MD_LINK = re.compile(r"\[(?P<text>[^\]]*)\]\((?P<url>[^)\s]+)(?:\s+\"[^\"]*\")?\)")
 # Bare URLs (http/https/mailto) not already inside a markdown link.
 _BARE_URL = re.compile(r"(?<![(\w])(?P<url>(?:https?://|mailto:)[^\s<>\]\)]+)")

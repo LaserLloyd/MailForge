@@ -11,23 +11,10 @@ from the lock file when an installer or SBOM is built (for example
 `uv export --no-dev` plus a licence report); this file is the human-written
 part.
 
-## Copyleft component: html2text (GPL-3.0-or-later)
+## Copyleft components
 
-| | |
-|---|---|
-| Package | `html2text` 2025.4.15 (`pyproject.toml`: `html2text>=2024.2.26`; locked in `uv.lock`) |
-| Licence | **GNU General Public License v3.0 or later** (`GPL-3.0-or-later`) |
-| Upstream | <https://github.com/Alir3z4/html2text/> (licence text: `COPYING` in the package) |
-| Used by | `src/mailforge/mail/sanitize.py` (`import html2text`, `_make_html2text()`, final stage of the HTML-to-text pipeline) |
-| Dependency kind | Core runtime dependency (always installed, always imported) |
-| Shipped in | The PyInstaller folder bundle and the Inno Setup installer (`installer/`, `packaging/`) |
-
-**Decision (owner, 2026-10): html2text stays for now.** What that means for
-distribution is written down in [`docs/LICENSING.md`](docs/LICENSING.md), together
-with the MIT-licensed replacements that were considered and the files that would
-change. Until that decision is revisited, any binary distribution of MailForge
-that bundles html2text must follow the obligations listed there (GPL text and
-notice shipped with the binary, corresponding source offered).
+None at runtime. `html2text` (GPL-3.0-or-later) was replaced by `markdownify` (MIT) in 0.7.1;
+see [`docs/LICENSING.md`](docs/LICENSING.md).
 
 ## Other notable licences
 

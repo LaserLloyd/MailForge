@@ -6,7 +6,7 @@ trackers, embedded objects) ever survives into anything an LLM might read:
 
     lxml_html_clean.Cleaner  (kill script/style/img/svg/iframe/object/link/meta/base)
         → bleach.clean(strip=True, strip_comments=True)
-        → html2text  (HTML → markdown-ish plain text)
+        → markdownify  (HTML → markdown-ish plain text)
 
 The MIME parser should prefer ``text/plain`` when present (see
 :func:`prefer_plain`); HTML conversion is the fallback path.
@@ -15,8 +15,8 @@ The MIME parser should prefer ``text/plain`` when present (see
 from __future__ import annotations
 
 import bleach
-import html2text
 from lxml_html_clean import Cleaner
+from markdownify import MarkdownConverter
 
 # Tags whose entire subtree we drop (spec §4.1). ``kill_tags`` removes the
 # element *and its content*, unlike ``remove_tags`` which would unwrap it.
@@ -51,14 +51,28 @@ _BLEACH_ALLOWED_TAGS = [
 _BLEACH_ALLOWED_ATTRS = {"a": ["href", "title"]}
 
 
-def _make_html2text() -> html2text.HTML2Text:
-    h = html2text.HTML2Text()
-    h.body_width = 0          # don't hard-wrap; downstream normalize handles layout
-    h.ignore_images = True    # images already killed; double-guard
-    h.ignore_emphasis = False
-    h.unicode_snob = True     # keep unicode rather than ASCII-escaping
-    h.skip_internal_links = True
-    return h
+class _Converter(MarkdownConverter):
+    """markdownify with the options this pipeline needs (MIT; was html2text)."""
+
+    def convert_img(self, el, text, parent_tags):  # images already killed; double-guard
+        return ""
+
+    def convert_a(self, el, text, parent_tags):
+        href = el.get("href") or ""
+        if href.startswith("#"):  # skip internal links, keep the text
+            return text
+        return super().convert_a(el, text, parent_tags)
+
+
+def _to_markdown(html: str) -> str:
+    return _Converter(
+        heading_style="atx",
+        bullets="*",
+        escape_asterisks=False,
+        escape_underscores=False,
+        escape_misc=False,
+        autolinks=False,
+    ).convert(html)
 
 
 def sanitize_html(html: str) -> str:
@@ -81,7 +95,7 @@ def sanitize_html(html: str) -> str:
         strip=True,
         strip_comments=True,
     )
-    text = _make_html2text().handle(cleaned)
+    text = _to_markdown(cleaned)
     return text.strip()
 
 

@@ -122,7 +122,7 @@ winget install --id astral-sh.uv -e --source winget
 # close and reopen PowerShell, then:
 uv tool install --python 3.12 "mailforge[llm,rag] @ git+https://github.com/LaserLloyd/MailForge"   # scrub-check: allow (public repo URL)
 uv tool update-shell        # puts uv's tool folder on PATH; close and reopen PowerShell if it says so
-mailforge version           # prints: mailforge 0.7.0
+mailforge version           # prints: mailforge 0.7.1
 ```
 
 Then look around with fictional data (no mailbox, nothing sent), and set up your real account:
@@ -203,7 +203,7 @@ sudo apt-get update && sudo apt-get install -y git curl ca-certificates
 curl -LsSf https://astral.sh/uv/install.sh | sh
 source "$HOME/.local/bin/env"       # puts uv (and mailforge) on PATH for this shell
 uv tool install --python 3.12 "mailforge[llm,rag] @ git+https://github.com/LaserLloyd/MailForge"   # scrub-check: allow (public repo URL)
-mailforge version                   # prints: mailforge 0.7.0
+mailforge version                   # prints: mailforge 0.7.1
 ```
 
 Then look around with fictional data (no mailbox, nothing sent), and set up your real account:
@@ -307,7 +307,7 @@ The code is plain Python, so a native install should work as on Linux; there is 
 brew install git uv
 uv tool install --python 3.12 "mailforge[llm,rag] @ git+https://github.com/LaserLloyd/MailForge"   # scrub-check: allow (public repo URL)
 uv tool update-shell        # then open a new Terminal window
-mailforge version           # prints: mailforge 0.7.0
+mailforge version           # prints: mailforge 0.7.1
 mailforge demo              # look around with fictional data
 ```
 
@@ -837,7 +837,6 @@ installer; none is released yet, so use the Windows methods under Install.
 ## License
 
 MIT No Attribution ([MIT-0](LICENSE)). You don't need to credit this project — but if you do, a link back is appreciated.
-Releases up to 0.6.0 were MIT. The bundled installer and container image include `html2text`
-(GPL-3.0-or-later); see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and [`docs/LICENSING.md`](docs/LICENSING.md).
+Releases up to 0.6.0 were MIT. No GPL runtime library is bundled since 0.7.1 (`html2text` was replaced by MIT `markdownify`); see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and [`docs/LICENSING.md`](docs/LICENSING.md).
 
 Published by Laser Lloyd — https://www.laserlloyd.com
