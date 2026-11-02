@@ -37,6 +37,12 @@ class FakeSMTP:
     def send_message(self, msg):
         self.calls.append("send")
 
+    def quit(self):
+        self.calls.append("quit")
+
+    def close(self):
+        self.calls.append("close")
+
 
 class FakeSMTPSSL(FakeSMTP):
     pass
@@ -81,3 +87,15 @@ def test_plaintext_auth_to_a_remote_host_is_refused():
 def test_plaintext_to_a_loopback_relay_is_allowed():
     _send(SMTPAccount(host="127.0.0.1", port=1025, username="u", starttls=False))
     assert "login" in FakeSMTP.instances[0].calls
+
+
+def test_a_bad_reply_to_quit_does_not_turn_a_delivered_mail_into_a_failure(monkeypatch):
+    def bad_quit(self):
+        self.calls.append("quit")
+        raise smtplib.SMTPResponseException(421, b"closing")
+
+    monkeypatch.setattr(FakeSMTP, "quit", bad_quit)
+    result = _send(SMTPAccount(host="smtp.example.test", port=587, username="u", starttls=True))
+    assert result.message_id
+    (conn,) = FakeSMTP.instances
+    assert "send" in conn.calls and "close" in conn.calls

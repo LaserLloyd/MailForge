@@ -144,7 +144,8 @@ def send_email(
         connection = smtplib.SMTP_SSL(smtp_cfg.host, smtp_cfg.port, timeout=30, context=context)
     else:
         connection = smtplib.SMTP(smtp_cfg.host, smtp_cfg.port, timeout=30)
-    with connection as server:
+    server = connection
+    try:
         server.ehlo()
         if smtp_cfg.starttls and not implicit_tls:
             # Raises SMTPNotSupportedError if the server does not offer it:
@@ -157,4 +158,14 @@ def send_email(
             # Fall back to XOAUTH2 (token is an OAuth2 access token).
             server.docmd("AUTH", "XOAUTH2 " + _xoauth2_string(smtp_cfg.username, token))
         server.send_message(msg)
+    finally:
+        # The mail is delivered once send_message returns; an odd reply to QUIT
+        # must never turn it into "Not sent" (a retry would duplicate it).
+        try:
+            server.quit()
+        except Exception:  # noqa: BLE001
+            try:
+                server.close()
+            except Exception:  # noqa: BLE001
+                pass
     return SendResult(message_id=str(msg["Message-ID"] or ""), raw=msg.as_bytes())
