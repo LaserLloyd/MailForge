@@ -377,3 +377,16 @@ def test_stranded_agent_notes_old_is_recovered_at_start(tmp_path):
         names = {r[0] for r in store.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert "agent_notes_old" not in names
         assert store.conn.execute("SELECT COUNT(*) FROM agent_notes").fetchone()[0] == 1
+
+
+# ---- S7: rule (b)'s reply exemption does not cover flagged senders -----------
+def test_flagged_sender_does_not_get_the_domain_rule_exemption(tmp_path):
+    from tests.unit.test_guardrail_false_positives import _check, _settings as gs, _thread
+
+    s = gs()
+    with open_store(tmp_path / "p.db") as store:
+        _thread(store, "support@vendor.test")
+        assert not any("(b)" in r for r in _check(store, s, "support@vendor.test").reasons)
+        store.conn.execute("UPDATE messages SET screening_status='POTENTIAL_ISSUE'")
+        store.conn.commit()
+        assert any("(b)" in r for r in _check(store, s, "support@vendor.test").reasons)
