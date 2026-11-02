@@ -5,6 +5,15 @@ Published by Laser Lloyd — https://www.laserlloyd.com
 
 ## Unreleased (dev)
 
+- Read/unread now syncs with the mail server. Marking mail read or unread in
+  MailForge (opening it, bulk Read/Unread, the agent `mark-read` action) sets
+  or clears `\Seen` at the provider through the listener's session, in the
+  background, retried every cycle until it lands; a failure shows once on the
+  sync chip. Mail read in another app shows read here (checked every 5 min and
+  at ingest); an unpushed local change always wins. Sending a reply marks the
+  mail it answers, and the thread before it, as read. New columns
+  `messages.seen_sync_pending` / `seen_sync_error` (idempotent migration).
+
 ### Added
 - **PIN or password sign-in for the web UI**, so a phone can open it without a launcher link.
   `mailforge ui-pin set | clear | status` (the secret is typed twice at a hidden prompt or piped on

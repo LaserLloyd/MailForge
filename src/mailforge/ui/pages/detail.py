@@ -346,6 +346,14 @@ def mark_sent(store: object, draft_id: int, body: str, recipient: str) -> None:
     )
     _record_approval_time()
     _audit(store, "user", "send", draft_id, {"recipient": recipient})
+    # The reply is out, so the mail it answers (and the thread before it) is
+    # handled: mark it read locally and at the server (pushed by the listener).
+    try:
+        source = _value(store.get_draft(draft_id), "message_id")  # type: ignore[attr-defined]
+        if source is not None:
+            store.mark_reply_source_seen(int(source))  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 — bookkeeping after a delivered send must not raise
+        log.exception("could not mark the replied-to message read")
 
 
 def restore_after_failed_send(
