@@ -99,6 +99,19 @@ def build_revision_messages(
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
+def source_block_reason(store: object, message_id: int) -> str | None:
+    """Why no AI draft may be made for this message, read fresh from the store
+    (the page may be older than a Trash click made in another tab)."""
+    row = store.get_message(int(message_id))  # type: ignore[attr-defined]
+    if row is None:
+        return "This message no longer exists."
+    if _value(row, "purged_at"):
+        return "This message was deleted, so there is nothing to reply to."
+    if _value(row, "trashed"):
+        return "This message is in Trash. Restore it first if you want an AI draft."
+    return None
+
+
 def _latest_draft(store: object, message_id: int) -> Any:
     method = getattr(store, "latest_draft_for_message", None)
     if callable(method):
@@ -331,6 +344,10 @@ def render_drawer(
                     return
             except AttributeError:
                 pass
+            gone = source_block_reason(store, int(_value(message, "id")))
+            if gone:
+                ui.notify(gone, type="warning", timeout=8000)
+                return
             if bridge is None or not bool(bridge.is_up()):  # type: ignore[attr-defined]
                 ui.notify("AI model is offline. Start LM Studio and try again.", type="negative")
                 return

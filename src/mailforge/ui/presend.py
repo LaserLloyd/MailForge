@@ -534,6 +534,28 @@ async def run_send(
     return result
 
 
+def stay_on_page(result: "SendResult") -> bool:
+    """True when the sender must keep reading this page after a send, because a
+    sticky warning is showing and leaving would wipe it."""
+    return bool(result.copy_warning or result.persist_error)
+
+
+_OPEN_DIALOGS: set[str] = set()
+
+
+def begin_dialog(page_id: str) -> bool:
+    """Claim the one pre-send dialog a page may have. ``False`` = already open
+    (a double click), so the caller must not open a second one."""
+    if page_id in _OPEN_DIALOGS:
+        return False
+    _OPEN_DIALOGS.add(page_id)
+    return True
+
+
+def end_dialog(page_id: str) -> None:
+    _OPEN_DIALOGS.discard(page_id)
+
+
 _TASKS: set[asyncio.Future] = set()
 
 
@@ -602,6 +624,29 @@ async def confirm(
     ``transmit(overridden)`` is the only code whose failure means "not sent".
     """
     client = ui.context.client
+    page_id = str(getattr(client, "id", id(client)))
+    if not begin_dialog(page_id):
+        return None  # a double click: the first dialog is still open
+    try:
+        return await _confirm_dialog(
+            client, title=title, facts=facts, collect=collect, transmit=transmit,
+            persist=persist, on_failed=on_failed, store=store,
+        )
+    finally:
+        end_dialog(page_id)
+
+
+async def _confirm_dialog(
+    client: Any,
+    *,
+    title: str,
+    facts: list[tuple[str, str]],
+    collect: Callable[[], list[Check]],
+    transmit: Callable[[list[Check]], Awaitable[Any]],
+    persist: Callable[[Any], None] | None,
+    on_failed: Callable[[Exception], None] | None,
+    store: Any,
+) -> SendResult | None:
     loop = asyncio.get_running_loop()
     done: asyncio.Future = loop.create_future()
     st: dict[str, Any] = {"phase": "checking", "checks": [], "notice": ""}
