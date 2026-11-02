@@ -643,7 +643,7 @@ class IMAPListener:
                 site_id=self.account.site_id,
                 learned_spam_domains=self.store.learned_spam_domains(self.account.site_id),
                 brand_domains=self.security.impersonated_brands,
-                reply_to_our_mail=self.store.thread_started_by_us(thread_id),
+                reply_to_our_mail=self.store.thread_started_by_us(thread_id, msg.from_ or ""),
                 subject=subject,
                 text=norm.text or "",
                 link_count=len(norm.links),

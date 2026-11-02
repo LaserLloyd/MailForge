@@ -420,15 +420,16 @@ def evaluate(
 
 
 def _first_contact_checks(store: Any, addrs: list[str], people: set[str]) -> list[Check]:
-    """A soft warning for an address never written to before: not allowlisted and
-    not someone in this thread. The owner clears it with the ordinary tick; no
+    """A soft warning for an address never written to before: no SENT record to
+    it in our own sent history (the allowlist is NOT used: the drafter fills it
+    automatically) and not someone who wrote in this thread. The owner clears it with the ordinary tick; no
     typing, and it is never a hard gate."""
     new: list[str] = []
     for a in addrs:
         if a.lower() in people:
             continue
         try:
-            known = bool(store.is_allowlisted(a))
+            known = bool(store.has_sent_to(a))
         except Exception:  # noqa: BLE001
             known = False
         if not known:

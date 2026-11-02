@@ -256,7 +256,11 @@ def test_never_contacted_recipient_is_an_overridable_warning(store, monkeypatch)
 
 def test_allowlisted_or_thread_recipient_has_no_first_contact_warning(store, monkeypatch):
     _ok_report(monkeypatch)
-    store.record_allowlist("old@friend.test", "sent")
+    store.conn.execute(
+        "INSERT INTO sent_messages(site_id,origin,from_addr,to_addrs,subject,body,outcome,"
+        "created_at) VALUES('main','ui_compose','a@x.test','old@friend.test','s','b','SENT',"
+        "'2026-11-01T00:00:00+00:00')")
+    store.conn.commit()
     assert "first_contact" not in _by_id(
         _eval(store, recipients="old@friend.test", participants=set()).checks)
     assert "first_contact" not in _by_id(

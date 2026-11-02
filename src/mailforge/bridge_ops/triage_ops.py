@@ -241,7 +241,10 @@ def _withdraw_draft(data: dict[str, Any], site: str, store: Any, settings: Any) 
         raise _err(f"draft state {draft['state']} cannot be withdrawn")
     author = _author(data)
     flags["withdrawn_by"] = author
-    store.update_draft_state(draft_id, "REJECTED", guardrail_flags=flags)
+    if not store.update_draft_state(
+        draft_id, "REJECTED", expect_states=bc._EDITABLE_STATES, guardrail_flags=flags
+    ):
+        raise _err("the draft changed state (it may have been sent); nothing was withdrawn")
     store.revoke_send_authorizations([draft_id])
     AuditLog(store).record(
         actor="agent", event="tool_call", subject_table="drafts", subject_id=draft_id,
