@@ -1536,7 +1536,10 @@ class Store:
 
     @staticmethod
     def _poke_seen_sync() -> None:
-        """Wake the IMAP listeners so the new read state reaches the server now."""
+        """Wake the IMAP listeners of THIS process so the new read state is pushed soon.
+
+        A change made by the bridge CLI (another process) reaches the server on
+        the listeners' next cycle, up to about 30 s later."""
         try:
             from ..mail.sync_state import registry
 

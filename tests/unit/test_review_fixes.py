@@ -420,3 +420,18 @@ def test_audit_allowed_rate_limits_refusals_per_address():
     assert pin_auth.audit_allowed("signin_locked", "5.6.7.8") is True
     assert pin_auth.audit_allowed("signin_ok", "1.2.3.4") is True
     pin_auth.reset_throttle()
+
+
+# ---- nits ---------------------------------------------------------------
+def test_sent_folder_status_read_failure_still_warns():
+    class Broken:
+        def get_sent_message(self, _i):
+            raise RuntimeError("db locked")
+
+    assert "couldn't confirm" in presend.append_warning(Broken(), 5)
+
+
+def test_service_worker_has_no_noop_fetch_listener():
+    from mailforge.ui.pwa import SERVICE_WORKER
+
+    assert "'fetch'" not in SERVICE_WORKER and '"fetch"' not in SERVICE_WORKER

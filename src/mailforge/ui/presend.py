@@ -514,7 +514,7 @@ def append_warning(store: Any, record_id: int | None) -> str:
         row = store.get_sent_message(int(record_id))
     except Exception:  # noqa: BLE001
         log.exception("could not read the Sent-folder status")
-        return ""
+        return "Sent. MailForge couldn't confirm whether the copy reached your Sent folder."
     if row is None:
         return ""
     status = str(_value(row, "imap_append", "") or "").upper()
