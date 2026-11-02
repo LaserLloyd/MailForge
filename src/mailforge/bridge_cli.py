@@ -30,6 +30,7 @@ OPS = frozenset(
         "status", "list", "get", "propose", "revise", "weekly-summary",
         "daily-brief", "reference-search", "notes", "note-add",
         "compose", "prepare-send", "send",
+        "drafts", "draft", "reply", "edit-draft",
     }
 )
 
@@ -362,7 +363,7 @@ def _compose_draft(data: dict[str, Any], site: str, store: Any, settings: Any) -
     since = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
     if cap <= 0:
         raise BridgeInputError("agent compose is off (openclaw.agent_compose_per_day = 0)")
-    if store.count_audit_tool_calls("compose_draft", since) >= cap:
+    if _agent_draft_count(store, since) >= cap:
         raise BridgeInputError(
             f"daily agent compose cap reached ({cap} drafts in 24 h); "
             "ask the human to write this one in the MailForge Compose page"
@@ -405,6 +406,259 @@ def _compose_draft(data: dict[str, Any], site: str, store: Any, settings: Any) -
             "Saved as a draft in MailForge. Nothing was sent: a human opens it in "
             "MailForge (Compose → Drafts), reviews it and presses Send."
         ),
+    }
+
+
+# Agent-written drafts (compose + reply) share one daily cap.
+_AGENT_DRAFT_TOOLS = ("compose_draft", "reply_draft")
+_EDITABLE_STATES = {"DRAFT", "PENDING", "BLOCKED", "DEFERRED_NO_LLM"}
+_DRAFT_STATES = {"DRAFT", "PENDING", "BLOCKED", "DEFERRED_NO_LLM", "APPROVED", "REJECTED", "SENT"}
+
+
+def _agent_draft_count(store: Any, since: str) -> int:
+    return sum(store.count_audit_tool_calls(t, since) for t in _AGENT_DRAFT_TOOLS)
+
+
+def _agent_draft_cap_check(store: Any, settings: Any) -> None:
+    cap = int(settings.openclaw.agent_compose_per_day)
+    if cap <= 0:
+        raise BridgeInputError("agent drafting is off (openclaw.agent_compose_per_day = 0)")
+    since = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    if _agent_draft_count(store, since) >= cap:
+        raise BridgeInputError(
+            f"daily agent draft cap reached ({cap} drafts in 24 h); "
+            "ask the human to write this one in MailForge"
+        )
+
+
+def _check_subject(subject: str) -> None:
+    if not subject or len(subject) > COMPOSE_SUBJECT_MAX or len(subject.splitlines()) != 1 \
+            or any(not (c.isprintable() or c == "\t") for c in subject):
+        raise BridgeInputError(
+            f"subject is required: one line, at most {COMPOSE_SUBJECT_MAX} characters"
+        )
+
+
+def _check_body(body: str) -> None:
+    if not body or len(body) > COMPOSE_BODY_MAX:
+        raise BridgeInputError(f"body is required, at most {COMPOSE_BODY_MAX} characters")
+
+
+def _source_block_reason(store: Any, message_id: Any) -> str | None:
+    """Why an agent may not work on (or read drafts of) this inbound message."""
+    if message_id is None:
+        return None
+    if store.is_quarantined(int(message_id)):
+        return ("source message is quarantined (suspected prompt injection); "
+                "a human must release it in the local UI first")
+    source = store.get_message(int(message_id))
+    if source is not None and not ai_may_read(_row_screening_status(source)):
+        return ("source message is withheld by inbound screening; a human must "
+                "mark it content-related in the local UI first")
+    return None
+
+
+def _review_path(draft: Any) -> str:
+    if draft["message_id"] is not None:
+        return f"/mail/{int(draft['message_id'])}"
+    return f"/compose?draft_id={int(draft['id'])}"
+
+
+def _draft_row(draft: Any, store: Any, *, full: bool) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "draft_id": int(draft["id"]),
+        "kind": "reply" if draft["message_id"] is not None else "new",
+        "message_id": int(draft["message_id"]) if draft["message_id"] is not None else None,
+        "state": draft["state"],
+        "from": draft["sender_addr"] or "",
+        "to": draft["recipient"] or "",
+        "subject": draft["subject"] or "",
+        "updated_at": draft["updated_at"],
+        "review_path": _review_path(draft),
+    }
+    # A BLOCKED body may hold the very secrets the guardrail flagged, and a
+    # draft of a quarantined/withheld message may echo its content: never return either.
+    if str(draft["state"]).upper() == "BLOCKED":
+        out["body_withheld"] = "Blocked by guardrails; a human reviews it in the local UI."
+        return out
+    reason = _source_block_reason(store, draft["message_id"])
+    if reason:
+        out["body_withheld"] = "Body withheld: " + reason
+        return out
+    body = str(draft["body"] or "")
+    if full:
+        out["body"] = body
+    else:
+        out["snippet"] = " ".join(body.split())[:200]
+    return out
+
+
+def _drafts_list(data: dict[str, Any], site: str, store: Any, settings: Any) -> dict[str, Any]:
+    """Drafts of this site, newest first: AI/agent replies and new emails."""
+    state = str(data.get("state") or "").strip().upper()
+    if state and state not in _DRAFT_STATES:
+        raise BridgeInputError("state must be one of " + ", ".join(sorted(_DRAFT_STATES)))
+    limit = _bounded_int(data, "limit", 25, 1, 100)
+    sql = "SELECT * FROM drafts WHERE site_id=?"
+    params: list[Any] = [site]
+    if state:
+        sql += " AND state=?"
+        params.append(state)
+    sql += " ORDER BY updated_at DESC, id DESC LIMIT ?"
+    params.append(limit)
+    rows = store.conn.execute(sql, params).fetchall()
+    return {"drafts": [_draft_row(r, store, full=False) for r in rows]}
+
+
+def _draft_get(data: dict[str, Any], site: str, store: Any, settings: Any) -> dict[str, Any]:
+    draft = store.get_draft_for_site(_required_int(data, "draft_id"), site)
+    if draft is None:
+        raise BridgeInputError("draft_id not found for site")
+    return _draft_row(draft, store, full=True)
+
+
+def _reply_draft(data: dict[str, Any], site: str, store: Any, settings: Any) -> dict[str, Any]:
+    """Save an agent-WRITTEN reply to an inbound message as a PENDING draft.
+
+    No model call: the agent supplies the text. Never transmits; a human
+    approves and sends it from the message page in the local UI.
+    """
+    from .audit.log import AuditLog
+
+    message_id = _required_int(data, "message_id")
+    message = store.get_message_for_site(message_id, site)
+    if message is None:
+        raise BridgeInputError("message_id not found for site")
+    reason = _source_block_reason(store, message_id)
+    if reason:
+        raise BridgeInputError(reason)
+    body = str(data.get("body") or "").strip()
+    _check_body(body)
+    original = str(message["subject"] or "").strip()
+    subject = str(data.get("subject") or "").strip()
+    if not subject:
+        subject = original if original[:3].lower() == "re:" else f"Re: {original}".strip()
+    _check_subject(subject)
+    recipient = str(message["from_addr"] or "").strip()
+    if len(recipient) > 254 or not _ADDR_RE.match(recipient):
+        raise BridgeInputError("the message's sender is not a plain address; reply in the UI")
+    author = str(data.get("author") or "bridge")[:80]
+
+    existing = store.latest_draft_for_message(message_id)
+    if existing is not None and existing["state"] != "DEFERRED_NO_LLM":
+        raise BridgeInputError(
+            f"draft {int(existing['id'])} already exists for this message "
+            f"(state {existing['state']}); change it with edit-draft"
+        )
+    _agent_draft_cap_check(store, settings)
+
+    probe = {"recipient": recipient, "subject": subject,
+             "thread_id": message["thread_id"], "message_id": message_id}
+    report = _guard_draft_body(store, settings, probe, subject + "\n" + body, site)
+    if not report.passed:
+        AuditLog(store).record(
+            actor="guardrail", event="block", subject_table="messages", subject_id=message_id,
+            detail={"tool": "reply_draft", "author": author, "reasons": report.reasons[:3]},
+        )
+        raise BridgeInputError("guardrails blocked this draft: " + "; ".join(report.reasons[:3]))
+
+    flags = {**report.flags, "agent_written": True, "author": author}
+    if existing is not None:  # replace a deferred placeholder in place
+        draft_id = int(existing["id"])
+        store.update_draft_state(draft_id, "PENDING", recipient=recipient, subject=subject,
+                                 body=body, guardrail_flags=flags)
+    else:
+        draft_id = store.create_draft(message_id, str(message["thread_id"] or ""), recipient,
+                                      subject, body, "PENDING", flags)
+    AuditLog(store).record(
+        actor="agent", event="tool_call", subject_table="drafts", subject_id=draft_id,
+        detail={"tool": "reply_draft", "message_id": message_id, "recipient": recipient,
+                "author": author},
+    )
+    draft = store.get_draft(draft_id)
+    return {
+        "draft_id": draft_id,
+        "state": "PENDING",
+        "from": draft["sender_addr"] or "",
+        "to": recipient,
+        "subject": subject,
+        "review_path": f"/mail/{message_id}",
+        "next_step": (
+            "Saved as a reply draft in MailForge. Nothing was sent: a human opens the "
+            "message in MailForge, reviews the reply and approves/sends it."
+        ),
+    }
+
+
+def _edit_draft(data: dict[str, Any], site: str, store: Any, settings: Any) -> dict[str, Any]:
+    """Replace a draft's text (and optionally subject) with agent-written text.
+
+    Refused, with nothing changed, if the guardrails fail. The previous body is
+    kept in the revision history. Editing voids any outstanding send token
+    (tokens are bound to a digest of the exact content).
+    """
+    from .audit.log import AuditLog
+    from .security import run_output_guardrails
+
+    draft_id = _required_int(data, "draft_id")
+    draft = store.get_draft_for_site(draft_id, site)
+    if draft is None:
+        raise BridgeInputError("draft_id not found for site")
+    if str(draft["state"]).upper() not in _EDITABLE_STATES:
+        raise BridgeInputError(f"draft state {draft['state']} cannot be edited")
+    reason = _source_block_reason(store, draft["message_id"])
+    if reason:
+        raise BridgeInputError(reason)
+    body = str(data.get("body") or "").strip()
+    _check_body(body)
+    subject = str(data.get("subject") or "").strip() or str(draft["subject"] or "")
+    _check_subject(subject)
+    author = str(data.get("author") or "bridge")[:80]
+
+    is_reply = draft["message_id"] is not None
+    if is_reply:
+        probe = {"recipient": draft["recipient"], "subject": subject,
+                 "thread_id": draft["thread_id"]}
+        report = _guard_draft_body(store, settings, probe, subject + "\n" + body, site)
+    else:
+        to = str(draft["recipient"] or "").strip()
+        domain = to.rsplit("@", 1)[1].lower() if "@" in to else ""
+        security = settings.security.model_copy(update={
+            "recipient_allowlist_domains":
+                set(settings.security.recipient_allowlist_domains) | ({domain} if domain else set()),
+        })
+        report = run_output_guardrails(
+            {"recipient": to, "subject": subject, "body": subject + "\n" + body, "thread_id": ""},
+            {"recipient": to, "thread_participants": {to.lower()}, "site_id": site},
+            store, security, None,
+        )
+    if not report.passed:
+        AuditLog(store).record(
+            actor="guardrail", event="block", subject_table="drafts", subject_id=draft_id,
+            detail={"tool": "edit_draft", "author": author, "reasons": report.reasons[:3]},
+        )
+        raise BridgeInputError("guardrails blocked this edit: " + "; ".join(report.reasons[:3]))
+
+    old_body = str(draft["body"] or "")
+    store.create_ai_revision(draft_id, feedback=f"agent edit by {author}", body=old_body,
+                             model_used=author, role="user")
+    new_state = "PENDING" if is_reply else "DRAFT"
+    flags = {**report.flags, "agent_written": True, "author": author}
+    store.update_draft_state(draft_id, new_state, body=body, subject=subject,
+                             guardrail_flags=flags)
+    store.create_ai_revision(draft_id, feedback="", body=body, model_used=author,
+                             role="assistant")
+    AuditLog(store).record(
+        actor="agent", event="tool_call", subject_table="drafts", subject_id=draft_id,
+        detail={"tool": "edit_draft", "author": author},
+    )
+    return {
+        "draft_id": draft_id,
+        "state": new_state,
+        "subject": subject,
+        "body": body,
+        "review_path": _review_path(draft),
+        "next_step": "Draft updated. Nothing was sent; a human reviews and sends it in MailForge.",
     }
 
 
@@ -702,6 +956,14 @@ def run_bridge(action: str, site_id: str) -> int:
                 ]
             elif action == "daily-brief":
                 result = _daily_brief(store, site)
+            elif action == "drafts":
+                result = _drafts_list(data, site, store, settings)
+            elif action == "draft":
+                result = _draft_get(data, site, store, settings)
+            elif action == "reply":
+                result = _reply_draft(data, site, store, settings)
+            elif action == "edit-draft":
+                result = _edit_draft(data, site, store, settings)
             elif action == "compose":
                 result = _compose_draft(data, site, store, settings)
             elif action == "prepare-send":

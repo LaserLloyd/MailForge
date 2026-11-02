@@ -23,7 +23,9 @@ log = logging.getLogger(__name__)
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")
 _SSN_RE = re.compile(r"\b(?!000|666|9\d\d)\d{3}[-\s]?(?!00)\d{2}[-\s]?(?!0000)\d{4}\b")
 _PHONE_RE = re.compile(
-    r"(?<!\d)(?:\+?1[-.\s]?)?(?:\(\d{3}\)|\d{3})[-.\s]?\d{3}[-.\s]?\d{4}(?!\d)"
+    # Not inside a longer hyphen/dot-grouped number (order and reference ids
+    # such as 249-5011686-7907863 are not phones).
+    r"(?<![\d-])(?:\+?1[-.\s]?)?(?:\(\d{3}\)|\d{3})[-.\s]?\d{3}[-.\s]?\d{4}(?![-.]?\d)"
 )
 _IBAN_RE = re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b")
 _CC_RE = re.compile(r"\b(?:\d[ -]?){13,19}\b")

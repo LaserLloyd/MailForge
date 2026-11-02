@@ -98,6 +98,18 @@ class PolicyEngine:
     def _block_domains(self) -> set[str]:
         return {d.lower() for d in getattr(self.settings, "recipient_block_domains", set()) or set()}
 
+    def _thread_senders(self, draft: object) -> set[str]:
+        tid = getattr(draft, "thread_id", None)
+        if tid is None and isinstance(draft, dict):
+            tid = draft.get("thread_id")
+        if not tid or str(tid).startswith("manual:"):
+            return set()
+        try:
+            rows = self.store.thread_messages(str(tid))  # type: ignore[attr-defined]
+        except Exception:
+            return set()
+        return {_addr(r["from_addr"]) for r in rows if r["from_addr"]}
+
     # ---- main entry ----
     def evaluate(self, draft: object, context: dict | None = None) -> PolicyResult:
         """Evaluate a draft against the four LocalPolicy rules."""
@@ -137,7 +149,11 @@ class PolicyEngine:
         if dom and dom in block_domains:
             res.passed = False
             res.violations.append(f"(b) recipient domain '{dom}' is explicitly blocked")
-        elif dom and allowed_domains and dom not in allowed_domains and not store_allows:
+        elif (dom and allowed_domains and dom not in allowed_domains and not store_allows
+              and recipient not in self._thread_senders(draft)):
+            # Someone who wrote to us in this thread may be answered even when the
+            # auto-built domain allowlist doesn't know them yet; a cc-only
+            # participant may not (they never chose to write to us).
             res.passed = False
             res.violations.append(f"(b) recipient domain '{dom}' is outside the link/recipient allowlist")
 

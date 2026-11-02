@@ -12,6 +12,16 @@ Published by Laser Lloyd — https://www.laserlloyd.com
   reconnected until MailForge was restarted. A read stuck for more than 2 minutes is now abandoned
   and tried again (the wait doubles each time, up to 30 minutes, so a keyring that stays locked can't
   pile up threads). Nothing to configure.
+- **Replying to someone who wrote to you is no longer blocked** just because their domain isn't in the
+  automatically built allowlist yet (rule b). A cc-only address still needs the allowlist, and
+  explicitly blocked domains still block.
+- **Order and reference numbers such as `249-5011686-7907863` are no longer flagged as phone numbers.**
+
+### Added
+- **Agents can work with drafts** through the OpenClaw bridge: `drafts` (list), `draft` (read one),
+  `reply` (save the agent's own reply text under a message, PENDING for human approval; shares the
+  compose daily cap) and `edit-draft` (replace a draft's text; refused unchanged if the guardrails
+  fail; the old text stays in the revision history). None of them can send.
 
 ## 0.7.1 — 2026-11-01
 
