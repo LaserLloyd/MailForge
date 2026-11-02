@@ -274,6 +274,8 @@ html, body, .q-page-container, .nicegui-content { max-width: 100vw; }
   line-height: 1.35;
 }
 .bb-subject--full { white-space: normal; overflow-wrap: anywhere; }
+.bb-copy-addr { cursor: pointer; }
+.bb-copy-addr:hover { text-decoration: underline dotted; }
 .bb-clip-1 {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
@@ -580,6 +582,75 @@ def screening_badge(status: Any) -> ui.html | None:
     }
     item = labels.get(value)
     return badge(*item) if item else None
+
+
+# --- Click-to-copy email addresses --------------------------------------------
+# The address travels in a data attribute (NiceGUI serialises props as JSON), never
+# inside the JS, so untrusted mail text cannot reach script. The handler is one
+# constant string; it stops the click reaching the row underneath.
+COPY_ADDRESS_JS = """(e) => {
+  e.stopPropagation();
+  const a = e.currentTarget.getAttribute('data-copy-addr') || '';
+  const done = (ok) => { try { Quasar.Notify.create({message: ok ? 'Copied' : 'Copy failed',
+    type: ok ? 'positive' : 'negative', timeout: 1400, position: 'bottom'}); } catch (_) {} };
+  const legacy = () => { const t = document.createElement('textarea'); t.value = a;
+    t.setAttribute('readonly', ''); t.style.cssText = 'position:fixed;opacity:0';
+    document.body.appendChild(t); t.select(); let ok = false;
+    try { ok = document.execCommand('copy'); } catch (_) {} t.remove(); return ok; };
+  if (navigator.clipboard && window.isSecureContext !== false) {
+    navigator.clipboard.writeText(a).then(() => done(true), () => done(legacy()));
+  } else { done(legacy()); }
+}"""
+
+
+def bare_address(value: Any) -> str:
+    """The plain ``user@host`` in ``value`` (``Name <a@b>`` or ``a@b``), else ''."""
+    from email.utils import parseaddr
+
+    addr = parseaddr(str(value or ""))[1].strip()
+    return addr if addr.count("@") == 1 and " " not in addr else ""
+
+
+def copyable_address(
+    value: Any, text: str | None = None, *, style: str = "", classes: str = ""
+) -> ui.label:
+    """A label that copies the bare address to the clipboard when clicked."""
+    addr = bare_address(value)
+    shown = text if text is not None else (addr or str(value or ""))
+    label = ui.label(shown)
+    if classes:
+        label.classes(classes)
+    if style:
+        label.style(style)
+    if addr:
+        label.classes("bb-copy-addr")
+        label._props["data-copy-addr"] = addr
+        label._props["title"] = "Click to copy"
+        label._props["role"] = "button"
+        label._props["tabindex"] = "0"
+        label.on("click", js_handler=COPY_ADDRESS_JS)
+        label.on("keydown.enter", js_handler=COPY_ADDRESS_JS)
+    return label
+
+
+def copyable_addresses(raw: Any, *, style: str = "", prefix: str = "") -> ui.row:
+    """Every address in a comma-separated header, each one click-to-copy."""
+    from email.utils import getaddresses
+
+    row = ui.row().classes("items-center").style("gap: 4px; min-width: 0")
+    with row:
+        if prefix:
+            ui.label(prefix).style(style)
+        pairs = getaddresses([str(raw or "")])
+        shown = False
+        for i, (_name, addr) in enumerate(pairs):
+            if not addr:
+                continue
+            shown = True
+            copyable_address(addr, addr + ("," if i < len(pairs) - 1 else ""), style=style)
+        if not shown and raw:
+            ui.label(str(raw)).style(style)
+    return row
 
 
 def clean_subject(subject: Any) -> str:

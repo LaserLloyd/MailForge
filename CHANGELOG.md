@@ -5,6 +5,22 @@ Published by Laser Lloyd — https://www.laserlloyd.com
 
 ## Unreleased (dev)
 
+- **Click an email address to copy it.** Addresses in the inbox list, the reading pane and detail
+  page (From, To, Cc), Outbox, Drafts, the sent history and Settings' mailbox list copy the bare
+  address on click, with a "Copied" toast, a pointer cursor and a "Click to copy" tooltip. The
+  click does not open the row underneath.
+- **Signatures per mailbox.** Each mailbox in Settings can have its own signature (config
+  `signature` on the `[[imap_accounts]]` entry, with a live preview); the shared signature is the
+  fallback. Compose adds the From mailbox's signature as a `-- ` block when the body is empty and
+  swaps it when From changes (only a block MailForge inserted, never your text). Replies, AI
+  drafts and agent `compose`/`reply` drafts use the replying mailbox's signature and never add it
+  twice; agents can pass `add_signature: false`. Guardrails run on the final text.
+- **Show links.** A "Show links (N)" button on the reading pane and detail page opens a warning
+  listing each real destination (host first; flags text/target mismatches, http, bare-IP and
+  look-alike hosts; stronger red warning for suspicious or quarantined mail). After confirming,
+  `[link_N]` become clickable (http, https, mailto only; new tab, no referrer) for that view only,
+  with a copy button per link. Audited as `links_revealed` (count, no URLs). Agents still see tokens only.
+
 - Read/unread now syncs with the mail server. Marking mail read or unread in
   MailForge (opening it, bulk Read/Unread, the agent `mark-read` action) sets
   or clears `\Seen` at the provider through the listener's session, in the

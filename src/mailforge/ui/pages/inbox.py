@@ -128,7 +128,7 @@ def _render_row(row: dict[str, Any], show_state: bool) -> None:
                         style="color: var(--text-secondary); font-size: 13.5px",
                     )
                 with ui.row().classes("items-center no-wrap").style("gap: 6px"):
-                    ui.label(f"→ {row['recipient']}").style(
+                    theme.copyable_address(row["recipient"], f"→ {row['recipient']}").style(
                         "font-size: 12px; "
                         + ("color: var(--danger-text); font-weight: 700"
                            if row["external"] else "color: var(--text-tertiary)")

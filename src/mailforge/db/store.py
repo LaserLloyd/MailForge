@@ -1898,6 +1898,14 @@ class Store:
         ).fetchall()
         return {r["symbol"]: r["target"] for r in rows}
 
+    def list_links(self, message_id: int) -> list[tuple[str, str, str]]:
+        """``(symbol, target, display_text)`` in order. UI reveal only; never the bridge."""
+        rows = self.conn.execute(
+            "SELECT symbol,target,display_text FROM message_links WHERE message_id=? ORDER BY id",
+            (message_id,),
+        ).fetchall()
+        return [(r["symbol"], r["target"], r["display_text"] or "") for r in rows]
+
     # ----- classifications -----
     def upsert_classification(self, message_id: int, **f: Any) -> None:
         self.conn.execute(

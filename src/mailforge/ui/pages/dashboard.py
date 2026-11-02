@@ -443,9 +443,11 @@ def refresh(store: object, settings: object) -> None:
                             theme.subject_label(
                                 _value(row, "subject", ""), style="font-weight: 700"
                             )
-                            ui.label(
-                                f"→ {_value(row, 'recipient', '') or ''}"
-                            ).classes("bb-clip-1").style(
+                            theme.copyable_address(
+                                _value(row, "recipient", ""),
+                                f"→ {_value(row, 'recipient', '') or ''}",
+                                classes="bb-clip-1",
+                            ).style(
                                 "font-size: 11.5px; color: var(--text-tertiary)"
                             )
                         theme.state_badge(str(_value(row, "state", "")))

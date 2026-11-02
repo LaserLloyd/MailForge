@@ -40,6 +40,8 @@ from ...mail.markdown import markdown_to_safe_html
 from ...security import run_output_guardrails
 from ...security.inbound_screening import ai_may_read
 from .. import theme
+from ...signatures import append_signature, signature_for, swap_signature
+from .. import links as links_ui
 from .. import markdown as markdown_ui
 from ..interrupt import ApprovalRecord
 from .. import presend
@@ -477,6 +479,17 @@ def render(
         source_site = "unassigned"
         log.warning("draft source identity unavailable: %s", e)
 
+    # The replying mailbox's signature (shared one as fallback); a blank editable
+    # reply starts with it, and a body that is only the signature counts as empty.
+    reply_sig = (
+        signature_for(settings, source_identity) if source_identity != "unresolved" else ""
+    )
+    if not state["body"].strip() and state["draft_state"] in EDITABLE:
+        state["body"] = append_signature("", reply_sig)
+
+    def _has_text(text: str) -> bool:
+        return bool(swap_signature(str(text or ""), reply_sig, "").strip())
+
     with ui.row().classes("w-full no-wrap").style("gap: 10px"):
         ui.icon("mail", size="26px").style("color: var(--text-secondary); margin-top: 6px")
         with ui.column().classes("col").style("gap: 4px; min-width: 0"):
@@ -490,7 +503,16 @@ def render(
                         "Embedded links are disabled. For account or security actions, "
                         "open the provider's known site directly."
                     ).style("font-size: 11px; color: var(--text-tertiary)")
-                    markdown_ui.plain_text(orig["sanitized_text"] or "")
+                    links_ui.body_with_links(
+                        store,
+                        int(orig["id"]),
+                        orig["sanitized_text"] or "",
+                        screening_status=orig["screening_status"],
+                        quarantined=orig["quarantined"],
+                        render_plain=lambda: markdown_ui.plain_text(
+                            orig["sanitized_text"] or ""
+                        ),
+                    )
             else:
                 with ui.element("div").classes("bb-bubble bb-bubble--bot w-full"):
                     ui.label("Original message unavailable.").style(
@@ -534,10 +556,11 @@ def render(
         with ui.row().classes("items-center").style("gap: 8px; margin-bottom: 8px"):
             ui.icon("outbox", size="20px").style("color: var(--text-secondary)")
             ui.label("Send as:").style("color: var(--text-secondary)")
-            ui.label(source_identity).style(
-                "font-weight: 700; color: var(--danger-text)"
+            theme.copyable_address(
+                source_identity,
+                style="font-weight: 700; color: var(--danger-text)"
                 if source_identity == "unresolved"
-                else "font-weight: 700"
+                else "font-weight: 700",
             )
             theme.badge(
                 source_site or "unassigned",
@@ -548,8 +571,11 @@ def render(
         with ui.row().classes("items-center").style("gap: 8px"):
             ui.icon("person", size="20px").style("color: var(--text-secondary)")
             ui.label("Reply goes to:").style("color: var(--text-secondary)")
-            ui.label(recipient).style(
-                "color: var(--danger-text); font-weight: 700" if is_external else "font-weight: 600"
+            theme.copyable_address(
+                recipient,
+                style="color: var(--danger-text); font-weight: 700"
+                if is_external
+                else "font-weight: 600",
             )
             if is_external:
                 theme.badge("NEW EXTERNAL", "error")
@@ -600,6 +626,7 @@ def render(
         )
 
     def _apply_ai_body(body: str, _draft_id: int) -> None:
+        body = append_signature(body, reply_sig)
         state["body"] = body
         if state["draft_state"] != "PENDING":
             state["draft_state"] = "DRAFT"
@@ -639,7 +666,7 @@ def render(
         return True
 
     def _sync_buttons() -> None:
-        body_ok = bool(str(state["body"] or "").strip())
+        body_ok = _has_text(state["body"])
         source_ok = source_identity != "unresolved"
         approve_btn.set_enabled(_sendable() and body_ok and source_ok)
         save_btn.set_enabled(_editable())
@@ -647,7 +674,7 @@ def render(
 
     def _guard_current() -> Any | None:
         body = str(state["body"] or "").strip()
-        if not body:
+        if not _has_text(body):
             ui.notify("Draft body is empty. Draft or write a response first.", type="negative")
             return None
         participants: set[str] = set()

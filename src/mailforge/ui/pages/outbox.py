@@ -292,10 +292,17 @@ def _render_row(kind: str, row: Any) -> None:
         with ui.row().classes("w-full items-start no-wrap bb-split").style("gap: 10px"):
             with ui.column().classes("col").style("gap: 3px; min-width: 0"):
                 theme.subject_label(_value(row, "subject", ""), style="font-weight: 700")
-                ui.label(
-                    f"To: {_recipients(kind, row) or '(none)'} · "
-                    f"From: {_from_addr(kind, row) or '(unknown)'}"
-                ).classes("bb-clip-1").style("font-size: 11.5px; color: var(--text-tertiary)")
+                with ui.row().classes("items-center no-wrap").style("gap: 4px; min-width: 0"):
+                    small = "font-size: 11.5px; color: var(--text-tertiary)"
+                    ui.label("To:").style(small)
+                    if _recipients(kind, row):
+                        theme.copyable_addresses(_recipients(kind, row), style=small)
+                    else:
+                        ui.label("(none)").style(small)
+                    ui.label("· From:").style(small)
+                    theme.copyable_address(
+                        _from_addr(kind, row) or "", _from_addr(kind, row) or "(unknown)", style=small
+                    )
                 ui.label(
                     f"{_origin_label(kind, row)} · {_local(_value(row, 'created_at'))}"
                 ).style("font-size: 11px; color: var(--text-tertiary)")

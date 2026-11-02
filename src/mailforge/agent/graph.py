@@ -27,6 +27,7 @@ from ..db.store import Store
 from ..mail.normalize import spotlight_wrap
 from ..security import run_output_guardrails, score_injection
 from ..security.inbound_screening import ai_may_read, spoofed_brand
+from ..signatures import append_signature, signature_for
 from . import tools, worker
 from .planner import SymbolicRefs, freeze_plan
 
@@ -123,6 +124,16 @@ class AgentGraph:
             return int(flags.get("classify_attempts", 1 if flags.get("reason") == "classify_failed" else 0))
         except (TypeError, ValueError, AttributeError):
             return 0
+
+    def _mailbox_signature(self, message_id: int) -> str:
+        """Signature of the mailbox that received the message (else the shared one)."""
+        username = ""
+        try:
+            account = self.store.get_account_for_message(message_id)
+            username = str(account["username"] or "") if account is not None else ""
+        except Exception as e:  # noqa: BLE001
+            log.debug("mailbox signature lookup failed: %s", e)
+        return signature_for(self.settings, username)
 
     def _bind_recipient(self, msg, thread_id: str) -> str | None:
         """A draft recipient MUST come from thread participants / contacts /
@@ -338,16 +349,19 @@ class AgentGraph:
 
         # --- draft (quarantined worker → body; recipient bound) ---
         try:
+            mailbox_sig = self._mailbox_signature(message_id)
             proposed = await worker.draft_reply(
                 self.bridge,
                 spotlighted,
                 context_chunks,
                 recipient,
-                self.settings.style,
+                self.settings.style.model_copy(update={"signature": mailbox_sig}),
                 site_id=site_id,
                 site_rule=self.settings.site_guidance(site_id),
             )
             body = (proposed.body or "").strip()
+            if body:
+                body = append_signature(body, mailbox_sig)
             subject = proposed.subject or f"Re: {msg['subject'] or ''}"
         except Exception as e:
             log.warning("Draft generation failed for message %s: %s — deferring.", message_id, e)

@@ -22,6 +22,7 @@ from .config import load_settings
 from .db.store import ACTIVE_DRAFT_SQL, open_store, validate_site_id
 from .llm.bridge import LMStudioBridge
 from .security.inbound_screening import ai_may_read
+from .signatures import append_signature, signature_for
 
 # One bare address: no display name, no list, no header-injection characters.
 _ADDR_RE = re.compile(
@@ -340,6 +341,16 @@ def _guard_draft_body(
     )
 
 
+def _with_signature(body: str, signature: str, data: dict[str, Any]) -> str:
+    """Append the mailbox signature unless the caller sent ``add_signature: false``.
+
+    Runs before the guardrails, which therefore judge the final text.
+    """
+    if data.get("add_signature") is False:
+        return body
+    return append_signature(body, signature)
+
+
 def _compose_draft(data: dict[str, Any], site: str, store: Any, settings: Any) -> dict[str, Any]:
     """Save an agent-written NEW email as a local draft for a human to send.
 
@@ -369,6 +380,7 @@ def _compose_draft(data: dict[str, Any], site: str, store: Any, settings: Any) -
     if from_addr is None:
         raise BridgeInputError("from must be one of this site's mailboxes: " + ", ".join(mailboxes))
     author = str(data.get("author") or "bridge")[:80]
+    body = _with_signature(body, signature_for(settings, from_addr), data)
 
     cap = int(settings.openclaw.agent_compose_per_day)
     since = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
@@ -610,6 +622,12 @@ def _reply_draft(data: dict[str, Any], site: str, store: Any, settings: Any) -> 
     if len(recipient) > 254 or not _ADDR_RE.match(recipient):
         raise BridgeInputError("the message's sender is not a plain address; reply in the UI")
     author = str(data.get("author") or "bridge")[:80]
+    try:
+        account = store.get_account_for_message(message_id)
+        mailbox = str(account["username"] or "") if account is not None else ""
+    except Exception:  # noqa: BLE001
+        mailbox = ""
+    body = _with_signature(body, signature_for(settings, mailbox), data)
 
     existing = store.latest_draft_for_message(message_id)
     if existing is not None and existing["state"] not in {"DEFERRED_NO_LLM", "REJECTED"}:
