@@ -390,3 +390,33 @@ def test_flagged_sender_does_not_get_the_domain_rule_exemption(tmp_path):
         store.conn.execute("UPDATE messages SET screening_status='POTENTIAL_ISSUE'")
         store.conn.commit()
         assert any("(b)" in r for r in _check(store, s, "support@vendor.test").reasons)
+
+
+# ---- S5: sign-in audit flood and install-wide lockout -----------------------
+def test_a_known_device_still_signs_in_while_a_peer_trips_the_global_ceiling(tmp_path, monkeypatch):
+    from mailforge.ui import pin_auth
+
+    monkeypatch.setenv("MAILFORGE_HOME", str(tmp_path))
+    pin_auth.reset_throttle()
+    try:
+        pin_auth.set_secret("482913")
+        assert pin_auth.attempt("482913", "owner-phone", "198.51.100.9")[0] is True
+        for i in range(60):
+            pin_auth.attempt("000000", f"d{i}", f"203.0.114.{i}")
+        assert pin_auth.attempt("482913", "stranger", "198.51.100.1")[0] is False
+        assert pin_auth.attempt("482913", "owner-phone", "198.51.100.9")[0] is True
+        assert pin_auth.attempt("482913", "forged-id", "198.51.100.2")[0] is False
+    finally:
+        pin_auth.reset_throttle()
+
+
+def test_audit_allowed_rate_limits_refusals_per_address():
+    from mailforge.ui import pin_auth
+
+    pin_auth.reset_throttle()
+    assert [pin_auth.audit_allowed("signin_locked", "1.2.3.4") for _ in range(4)] == [
+        True, False, False, False]
+    assert sum(pin_auth.audit_allowed("signin_failed", "1.2.3.4") for _ in range(20)) == 5
+    assert pin_auth.audit_allowed("signin_locked", "5.6.7.8") is True
+    assert pin_auth.audit_allowed("signin_ok", "1.2.3.4") is True
+    pin_auth.reset_throttle()

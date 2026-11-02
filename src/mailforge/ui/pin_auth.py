@@ -155,9 +155,42 @@ _fail_until = 0.0
 _fail_window_start = 0.0
 
 
+# Devices that have signed in successfully (random ids no peer can guess). The
+# install-wide ceiling does not refuse them, so one noisy peer cannot lock the
+# owner's own phone out; their per-device and per-address buckets still apply.
+_good_devices: dict[str, float] = {}
+_MAX_GOOD_DEVICES = 256
+
+# Audit rows for refused tries are rate-limited per client address, so a loop of
+# bad POSTs cannot grow the hash-chained log without bound.
+AUDIT_LIMITS = {"signin_locked": (1, 60.0), "signin_failed": (5, 60.0)}
+_audit_seen: dict[tuple[str, str], list[float]] = {}
+
+
+def audit_allowed(event: str, ip: str) -> bool:
+    """True when this refusal may be written to the audit log now."""
+    limit = AUDIT_LIMITS.get(event)
+    if limit is None:
+        return True
+    n, window = limit
+    now = time.monotonic()
+    with _lock:
+        stamps = [t for t in _audit_seen.get((event, ip), []) if now - t < window]
+        ok = len(stamps) < n
+        if ok:
+            stamps.append(now)
+        _audit_seen[(event, ip)] = stamps
+        if len(_audit_seen) > 2048:
+            for k in [k for k, v in _audit_seen.items() if not v or now - v[-1] >= 60][:1024]:
+                _audit_seen.pop(k, None)
+        return ok
+
+
 def reset_throttle() -> None:
     global _fail_count, _fail_until, _fail_window_start
     with _lock:
+        _good_devices.clear()
+        _audit_seen.clear()
         _buckets.clear()
         _fail_count, _fail_until, _fail_window_start = 0, 0.0, 0.0
 
@@ -174,7 +207,10 @@ def wait_seconds(device: str, ip: str) -> float:
     """Seconds before another try is allowed (0 = go ahead)."""
     now = time.monotonic()
     with _lock:
-        wait = (_fail_until - now) if (_fail_count >= GLOBAL_CEILING and now < _fail_until) else 0.0
+        known = bool(device) and device in _good_devices
+        wait = (_fail_until - now) if (
+            _fail_count >= GLOBAL_CEILING and now < _fail_until and not known
+        ) else 0.0
         for key in _keys(device, ip):
             b = _buckets.get(key)
             if b and b[0] >= _threshold(key) and now < b[1]:
@@ -204,6 +240,10 @@ def register_failure(device: str, ip: str) -> None:
 
 def register_success(device: str, ip: str) -> None:
     with _lock:  # the global counter is deliberately NOT reset by a good sign-in
+        if device:
+            if len(_good_devices) >= _MAX_GOOD_DEVICES:
+                _good_devices.pop(next(iter(_good_devices)), None)
+            _good_devices[device] = time.monotonic()
         for key in _keys(device, ip):
             _buckets.pop(key, None)
 

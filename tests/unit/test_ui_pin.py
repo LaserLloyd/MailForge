@@ -365,3 +365,14 @@ def test_audit_records_outcomes_without_secrets(client):
     assert events == ["signin_failed", "signin_ok", "signout"]
     blob = " ".join(str(r[1]) for r in rows)
     assert "482913" not in blob and "000000" not in blob
+
+
+def test_a_flood_of_refused_posts_writes_a_bounded_audit_trail(client):
+    c, store = client
+    pin_auth.set_secret("482913")
+    for _ in range(40):
+        c.post("/signin", data={"secret": "000000"})
+    n = store.conn.execute(
+        "SELECT COUNT(*) FROM audit_log WHERE event IN ('signin_failed','signin_locked')"
+    ).fetchone()[0]
+    assert n <= 6
