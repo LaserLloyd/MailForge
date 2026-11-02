@@ -11,6 +11,7 @@ from nicegui import context, ui
 
 from ...security import run_output_guardrails
 from ...security.inbound_screening import ai_may_read
+from .. import presend
 from ..markdown import safe_markdown
 
 log = logging.getLogger(__name__)
@@ -342,6 +343,7 @@ def render_drawer(
                 log.warning("could not persist user revision turn: %s", e)
             status.set_text("Finding matching references and drafting…")
             generate_btn.disable()
+            client = ui.context.client  # the page may be gone by the time the model answers
             try:
                 subject = str(_value(message, "subject", "") or "")
                 refs = await _matching_references(
@@ -363,22 +365,28 @@ def render_drawer(
                 )
                 body = _clean_body(await bridge.chat(messages, temperature=0.25))  # type: ignore[attr-defined]
                 if not body:
-                    ui.notify("The model returned no usable draft.", type="warning")
+                    presend.safe_notify(client, "The model returned no usable draft.", type="warning")
                     return
                 store.create_ai_revision(  # type: ignore[attr-defined]
                     did, "", body, model_used, role="assistant"
                 )
-                feedback.value = ""
-                status.set_text(
-                    f"Drafted with {len(refs)} matching reference chunk(s). "
-                    "Apply remains guardrail-gated."
-                )
-                _render_history()
+
+                def _show_result() -> None:
+                    feedback.value = ""
+                    status.set_text(
+                        f"Drafted with {len(refs)} matching reference chunk(s). "
+                        "Apply remains guardrail-gated."
+                    )
+                    _render_history()
+
+                presend.safe_ui(client, _show_result)
             except Exception as e:  # noqa: BLE001
                 log.exception("AI revision failed")
-                ui.notify(f"AI revision failed: {e}", type="negative", timeout=8000)
+                presend.safe_notify(
+                    client, f"AI revision failed: {e}", type="negative", timeout=8000
+                )
             finally:
-                generate_btn.enable()
+                presend.safe_ui(client, generate_btn.enable)
 
         with ui.row().classes("w-full q-pa-sm justify-end"):
             generate_btn = ui.button(

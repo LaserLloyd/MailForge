@@ -12,7 +12,7 @@ from typing import Any
 from nicegui import ui
 
 from ...paths import data_dir
-from .. import theme
+from .. import presend, theme
 
 log = logging.getLogger(__name__)
 
@@ -116,6 +116,7 @@ def render(store: object, settings: object, bridge: object | None) -> None:
         ui.notify(
             "Refreshing canonical site text and bot knowledge…", type="info"
         )
+        client = ui.context.client  # the page may be gone when the refresh finishes
         try:
             report = await refresh_managed_knowledge(store, bridge)
             indexed = sum(
@@ -124,14 +125,17 @@ def render(store: object, settings: object, bridge: object | None) -> None:
                 for doc in site_report.get("documents", {}).values()
                 if str(doc["status"]).startswith("indexed")
             )
-            ui.notify(
+            presend.safe_notify(
+                client,
                 f"Bot handbooks refreshed ({indexed} document(s) newly indexed).",
                 type="positive",
             )
-            _documents.refresh()
+            presend.safe_ui(client, _documents.refresh)
         except Exception as e:  # noqa: BLE001
             log.exception("managed handbook refresh failed")
-            ui.notify(f"Handbook refresh failed: {e}", type="negative", timeout=10000)
+            presend.safe_notify(
+                client, f"Handbook refresh failed: {e}", type="negative", timeout=10000
+            )
 
     with ui.card().classes("bb-card w-full").style("padding: 14px"):
         with ui.row().classes("w-full items-center bb-toolbar"):
@@ -196,8 +200,9 @@ def render(store: object, settings: object, bridge: object | None) -> None:
 
         async def _reindex(document_id: int) -> None:
             ui.notify("Reindexing reference document…", type="info")
+            client = ui.context.client
             await _index_document(store, bridge, document_id)
-            _documents.refresh()
+            presend.safe_ui(client, _documents.refresh)
 
         def _delete(document_id: int, filename: str) -> None:
             with ui.dialog() as dialog, ui.card().style("gap: 10px; max-width: 440px"):
@@ -280,6 +285,7 @@ def render(store: object, settings: object, bridge: object | None) -> None:
         target_dir = data_dir() / "references" / site_id
         target_dir.mkdir(parents=True, exist_ok=True)
         target = target_dir / f"{uuid.uuid4().hex}-{name}"
+        client = ui.context.client  # the page may be gone while the file is indexed
         try:
             await e.file.save(target)
             os.chmod(target, 0o600)
@@ -294,16 +300,18 @@ def render(store: object, settings: object, bridge: object | None) -> None:
             )
             _documents.refresh()
             await _index_document(store, bridge, document_id)
-            _documents.refresh()
+            presend.safe_ui(client, _documents.refresh)
             row = store.get_reference_document(document_id)  # type: ignore[attr-defined]
             if str(_value(row, "status", "")) == "READY":
-                ui.notify(f"{name} uploaded and indexed.", type="positive")
+                presend.safe_notify(client, f"{name} uploaded and indexed.", type="positive")
             else:
-                ui.notify(f"{name} uploaded; indexing needs attention.", type="warning")
+                presend.safe_notify(
+                    client, f"{name} uploaded; indexing needs attention.", type="warning"
+                )
         except Exception as ex:  # noqa: BLE001
             target.unlink(missing_ok=True)
             log.exception("reference upload failed")
-            ui.notify(f"Upload failed: {ex}", type="negative", timeout=8000)
+            presend.safe_notify(client, f"Upload failed: {ex}", type="negative", timeout=8000)
 
     with ui.card().classes("bb-card w-full").style("padding: 14px; gap: 8px"):
         ui.label("Upload a reference document").style("font-weight: 800")

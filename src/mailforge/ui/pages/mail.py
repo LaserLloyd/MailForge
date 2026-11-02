@@ -13,7 +13,7 @@ from nicegui import ui
 
 from ...security.inbound_screening import ai_may_read
 from .. import markdown as markdown_ui
-from .. import theme
+from .. import presend, theme
 from . import assistant
 
 log = logging.getLogger(__name__)
@@ -1260,10 +1260,11 @@ def render(
             spinner=True,
             timeout=None,
         )
+        client = ui.context.client  # the page may close while the server is contacted
         try:
             report = await asyncio.to_thread(purge_now_isolated, store, settings, message_ids)
         except Exception as e:  # noqa: BLE001
-            ui.notify(f"Delete failed: {e}", type="negative")
+            presend.safe_notify(client, f"Delete failed: {e}", type="negative")
             return
         finally:
             try:
@@ -1281,7 +1282,7 @@ def render(
                 _current_url(),
                 kind="positive" if report.ok else "warning",
             )
-        except RuntimeError:  # the page closed while the server was contacted
+        except Exception:  # the page closed while the server was contacted
             log.debug("purge finished after its page was closed: %s", report.summary())
 
     with (

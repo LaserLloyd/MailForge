@@ -24,7 +24,7 @@ from urllib.parse import urlencode
 
 from nicegui import ui
 
-from .. import theme
+from .. import presend, theme
 # Generic list helpers shared with the Inbox — one implementation of shift-click
 # range selection and time/snippet formatting, not two that drift apart.
 from .mail import RangeSelection, _shift_held, _short_time, _snippet, _value
@@ -423,10 +423,11 @@ def render(store: object, settings: object, account: str = "") -> None:
             spinner=True,
             timeout=None,
         )
+        client = ui.context.client  # the page may close while the server is contacted
         try:
             report = await asyncio.to_thread(purge_now_isolated, store, settings, ids)
         except Exception as e:  # noqa: BLE001
-            ui.notify(f"Delete failed: {e}", type="negative")
+            presend.safe_notify(client, f"Delete failed: {e}", type="negative")
             return
         finally:
             try:
@@ -444,7 +445,7 @@ def render(store: object, settings: object, account: str = "") -> None:
                     timeout=10000,
                 )
             _reload()
-        except RuntimeError:  # the page closed while the server was contacted
+        except Exception:  # the page closed while the server was contacted
             log.debug("purge finished after its page was closed: %s", report.summary())
 
     def _ask_purge(ids: list[int]) -> None:
