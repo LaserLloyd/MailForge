@@ -116,3 +116,66 @@ def test_set_and_delete_time_out_with_keyring_error(monkeypatch):
     with pytest.raises(KeyringError, match="did not answer within"):
         secrets.delete_secret("imap", "a")
     release.set()
+
+
+def test_never_returning_read_is_abandoned_and_retried(monkeypatch):
+    """2026-11-02: reads started at boot while the login keyring was locked
+    never returned, even after unlock. Every later read joined the dead call,
+    so two IMAP accounts stayed offline until a restart. A stale in-flight
+    read must be abandoned and a fresh read tried."""
+    _reset(monkeypatch)
+    monkeypatch.setattr(secrets, "KEYRING_STALE_MIN_S", 0.4)
+    secrets._abandoned.clear()
+    never = threading.Event()  # never set: the first read hangs for good
+    calls = []
+
+    def fake_get(service, user):
+        calls.append(1)
+        if len(calls) == 1:
+            never.wait(30)
+            return None
+        return "pw"
+
+    monkeypatch.setattr(keyring, "get_password", fake_get)
+    try:
+        assert secrets.get_imap_secret("acct") is None
+        assert secrets.get_imap_secret("acct") is None  # still inside the stale window
+        assert len(calls) == 1
+        time.sleep(0.5)
+        got = secrets.get_imap_secret("acct")
+        assert got is not None and got.get_secret_value() == "pw"
+        assert len(calls) == 2
+        # a successful read resets the backoff
+        assert ("get", "mailforge.imap.acct", "acct") not in secrets._abandoned
+    finally:
+        never.set()
+
+
+def test_abandon_backoff_bounds_thread_growth(monkeypatch):
+    _reset(monkeypatch)
+    monkeypatch.setattr(secrets, "KEYRING_STALE_MIN_S", 0.3)
+    secrets._abandoned.clear()
+    never = threading.Event()
+    calls = []
+
+    def fake_get(service, user):
+        calls.append(1)
+        never.wait(30)
+        return None
+
+    monkeypatch.setattr(keyring, "get_password", fake_get)
+    key = ("get", "mailforge.imap.acct", "acct")
+    try:
+        assert secrets._stale_after(key) == 0.3
+        secrets.get_imap_secret("acct")
+        time.sleep(0.35)
+        secrets.get_imap_secret("acct")  # abandons #1, starts #2
+        assert len(calls) == 2
+        assert secrets._stale_after(key) == 0.6  # doubled
+        time.sleep(0.35)
+        secrets.get_imap_secret("acct")  # #2 is only 0.35 s old < 0.6: joined
+        assert len(calls) == 2
+        secrets._abandoned[key] = 50
+        assert secrets._stale_after(key) == secrets.KEYRING_STALE_MAX_S
+    finally:
+        never.set()

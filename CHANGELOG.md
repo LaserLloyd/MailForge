@@ -3,6 +3,16 @@
 All notable changes to this project are documented here. Dates are ISO-8601.
 Published by Laser Lloyd — https://www.laserlloyd.com
 
+## Unreleased (dev)
+
+### Fixed
+- **Mail accounts no longer stay offline after a boot with a locked keyring.** A credential read that
+  started while the login keyring was locked could hang forever, even after the keyring was unlocked,
+  and every later read for that account waited on the stuck one, so its IMAP listener never
+  reconnected until MailForge was restarted. A read stuck for more than 2 minutes is now abandoned
+  and tried again (the wait doubles each time, up to 30 minutes, so a keyring that stays locked can't
+  pile up threads). Nothing to configure.
+
 ## 0.7.1 — 2026-11-01
 
 ### Changed

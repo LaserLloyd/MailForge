@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 
 import keyring
 from keyring.errors import KeyringError
@@ -57,12 +58,13 @@ class KeyringTimeout(KeyringError):
 
 
 class _Call:
-    __slots__ = ("done", "value", "exc")
+    __slots__ = ("done", "value", "exc", "started")
 
     def __init__(self) -> None:
         self.done = threading.Event()
         self.value: object = None
         self.exc: BaseException | None = None
+        self.started = time.monotonic()
 
 
 # One in-flight call per (op, service, account): a locked keyring leaves the
@@ -70,6 +72,21 @@ class _Call:
 _inflight: dict[tuple[str, str, str], _Call] = {}
 _inflight_lock = threading.Lock()
 _warned: set[tuple[str, str]] = set()
+
+# A call blocked on a locked keyring may NEVER return, even after the keyring
+# is unlocked (seen 2026-11-02: boot-time reads stayed stuck all night, so two
+# IMAP accounts never reconnected). An in-flight call older than the stale
+# limit is abandoned and a fresh one started. The limit doubles per
+# abandonment (capped) so a keyring that stays locked leaks at most a handful
+# of blocked daemon threads per key; any completed call resets it.
+KEYRING_STALE_MIN_S = 120.0
+KEYRING_STALE_MAX_S = 1800.0
+_abandoned: dict[tuple[str, str, str], int] = {}
+
+
+def _stale_after(key: tuple[str, str, str]) -> float:
+    n = _abandoned.get(key, 0)
+    return min(KEYRING_STALE_MIN_S * (2 ** min(n, 20)), KEYRING_STALE_MAX_S)
 
 
 def _run_bounded(op: str, service: str, account: str, fn, *, join: bool):
@@ -82,6 +99,17 @@ def _run_bounded(op: str, service: str, account: str, fn, *, join: bool):
     key = (op, service, account)
     with _inflight_lock:
         call = _inflight.get(key)
+        if call is not None and not call.done.is_set():
+            age = time.monotonic() - call.started
+            if age > _stale_after(key):
+                _abandoned[key] = _abandoned.get(key, 0) + 1
+                log.warning(
+                    "Credential store call %s for %s/%s stuck for %.0f s; "
+                    "abandoning it and trying again",
+                    op, service, account, age,
+                )
+                del _inflight[key]
+                call = None
         if call is None:
             call = _Call()
             _inflight[key] = call
@@ -95,6 +123,7 @@ def _run_bounded(op: str, service: str, account: str, fn, *, join: bool):
                     with _inflight_lock:
                         if _inflight.get(key) is c:
                             del _inflight[key]
+                        _abandoned.pop(key, None)  # the store answered: reset backoff
                     c.done.set()
 
             threading.Thread(target=_work, name="keyring-" + op, daemon=True).start()
