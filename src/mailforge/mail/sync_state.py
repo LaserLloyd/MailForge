@@ -36,6 +36,9 @@ class AccountSync:
     #: UI waits for it to move past the value captured before a refresh.
     check_seq: int = 0
     refresh_pending: bool = False
+    #: Set while read/unread changes cannot be pushed to the server (retried
+    #: every cycle); shown once on the header chip, cleared on success.
+    seen_sync_error: str | None = None
 
     @property
     def healthy(self) -> bool:

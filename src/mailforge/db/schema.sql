@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS messages (
   subject TEXT, received_at TEXT, raw_html BLOB, sanitized_text TEXT,
   has_attachments INTEGER, link_count INTEGER,
   seen INTEGER DEFAULT 0, archived INTEGER DEFAULT 0,
+  -- 1 => local read state not yet pushed to the IMAP server (\Seen).
+  seen_sync_pending INTEGER NOT NULL DEFAULT 0,
+  seen_sync_error TEXT,
   -- Local, reversible trash. Whether the provider copy is also removed is
   -- decided by security.server_delete_mode; the two columns below record what
   -- actually happened at the server so the UI never claims more than it did.

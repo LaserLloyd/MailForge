@@ -615,6 +615,12 @@ def _sync_widget(store: object | None = None) -> None:
                     f"{a.account}: {'checking' if a.state == 'checking' else 'live'}, "
                     f"checked {human_age(a.age())}{new}"
                 )
+        for a in accounts:
+            if getattr(a, "seen_sync_error", None):
+                lines.append(
+                    f"{a.account}: read/unread changes not yet saved at the mail server "
+                    f"({a.seen_sync_error}); retrying"
+                )
         tip = "\n".join(lines) + "\n\nMail is pulled continuously (IMAP IDLE + a check every 30 s). " \
             "Refresh forces a check now."
         if s["checking"]:
@@ -627,6 +633,9 @@ def _sync_widget(store: object | None = None) -> None:
             return "bb-dot--warn", f"Sync problem: {names}", tip
         if s["state"] == "starting":
             return "bb-dot", "Connecting to mail…", tip
+        stuck = [a.account for a in accounts if getattr(a, "seen_sync_error", None)]
+        if stuck:
+            return "bb-dot--warn", f"Read state not synced: {', '.join(stuck)}", tip
         return "bb-dot--up", f"Mail checked {human_age(s['age'])}", tip
 
     kind, text, tip = _describe()
@@ -651,6 +660,16 @@ def _sync_widget(store: object | None = None) -> None:
 
     def _paint() -> None:
         kind, text, tip = _describe()
+        stuck_now = any(getattr(a, "seen_sync_error", None) for a in registry.snapshot())
+        if stuck_now and not state.get("sync_warned"):
+            state["sync_warned"] = True  # once per page, until it recovers
+            ui.notify(
+                "Read/unread changes couldn't be saved at the mail server yet; "
+                "MailForge keeps them and retries.",
+                type="warning", timeout=8000,
+            )
+        elif not stuck_now:
+            state["sync_warned"] = False
         gained = sum(a.new_total for a in registry.snapshot()) - state["baseline"]
         state["has_new"] = max(0, gained)
         if state["has_new"] and kind == "bb-dot--up":

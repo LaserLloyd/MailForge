@@ -244,6 +244,10 @@ class Store:
                 # Allowlisted header facts (auth verdicts, list/bulk markers)
                 # as JSON; see mail/header_facts.py. Never free text.
                 "header_meta": "TEXT",
+                # Read-state sync: 1 => the local ``seen`` value has not been
+                # pushed to the IMAP server yet (see mail/seen_sync.py).
+                "seen_sync_pending": "INTEGER NOT NULL DEFAULT 0",
+                "seen_sync_error": "TEXT",
             },
             "drafts": {
                 "sender_addr": "TEXT",
@@ -266,6 +270,10 @@ class Store:
             for name, ddl in wanted.items():
                 if name not in present:
                     self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS messages_seen_pending "
+            "ON messages(account_id, folder) WHERE seen_sync_pending=1"
+        )
         self.conn.execute("CREATE INDEX IF NOT EXISTS chunks_site ON chunks(site_id, source_kind)")
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS chunks_reference_document ON chunks(reference_document_id)"
@@ -1476,11 +1484,85 @@ class Store:
             return 0
         placeholders = ",".join("?" for _ in ids)
         cur = self.conn.execute(
-            f"UPDATE messages SET seen=? WHERE id IN ({placeholders})",
+            "UPDATE messages SET seen=?, seen_sync_pending=1, seen_sync_error=NULL "
+            f"WHERE id IN ({placeholders})",
             (1 if seen else 0, *ids),
         )
         self.conn.commit()
+        self._poke_seen_sync()
         return int(cur.rowcount)
+
+    @staticmethod
+    def _poke_seen_sync() -> None:
+        """Wake the IMAP listeners so the new read state reaches the server now."""
+        try:
+            from ..mail.sync_state import registry
+
+            registry.request_refresh()
+        except Exception:  # noqa: BLE001 — the next listener cycle pushes anyway
+            pass
+
+    def mark_reply_source_seen(self, message_id: int) -> int:
+        """A reply went out: the source message and the thread's earlier mail
+        from the same mailbox are handled, so mark them read (pending push)."""
+        src = self.conn.execute(
+            "SELECT account_id, thread_id, received_at FROM messages WHERE id=?",
+            (int(message_id),),
+        ).fetchone()
+        if src is None:
+            return 0
+        rows = self.conn.execute(
+            "SELECT id FROM messages WHERE id=? OR (account_id=? AND thread_id=? "
+            "AND received_at<=?)",
+            (int(message_id), src["account_id"], src["thread_id"], src["received_at"] or ""),
+        ).fetchall()
+        return self.mark_messages_seen([int(r["id"]) for r in rows], True)
+
+    # ----- read-state sync with the IMAP server (mail/seen_sync.py) -----
+    def pending_seen_rows(self, account_id: int, folder: str, limit: int = 500) -> list[sqlite3.Row]:
+        """Locally changed read state still to push: (id, uid, seen)."""
+        return self.conn.execute(
+            "SELECT id, uid, seen FROM messages WHERE account_id=? AND folder=? "
+            "AND seen_sync_pending=1 AND uid IS NOT NULL AND server_deleted_at IS NULL "
+            "ORDER BY id LIMIT ?",
+            (int(account_id), folder, int(limit)),
+        ).fetchall()
+
+    def record_seen_pushed(self, pushed: Iterable[tuple[int, int]]) -> None:
+        """Clear pending for ``(message id, seen value pushed)`` pairs. A row
+        whose ``seen`` changed again since is left pending for the next push."""
+        for mid, value in pushed:
+            self.conn.execute(
+                "UPDATE messages SET seen_sync_pending=0, seen_sync_error=NULL "
+                "WHERE id=? AND seen=? AND seen_sync_pending=1",
+                (int(mid), 1 if value else 0),
+            )
+        self.conn.commit()
+
+    def record_seen_push_error(self, message_ids: Iterable[int], error: str) -> None:
+        for mid in message_ids:
+            self.conn.execute(
+                "UPDATE messages SET seen_sync_error=? WHERE id=? AND seen_sync_pending=1",
+                (error[:200], int(mid)),
+            )
+        self.conn.commit()
+
+    def adopt_server_seen(self, account_id: int, folder: str, seen_uids: Iterable[int]) -> int:
+        """Mail read elsewhere shows read here. Only ever sets ``seen=1`` and
+        never touches a row with an unpushed local change (local wins)."""
+        uids = [int(u) for u in seen_uids]
+        changed = 0
+        for i in range(0, len(uids), 500):
+            chunk = uids[i : i + 500]
+            ph = ",".join("?" for _ in chunk)
+            cur = self.conn.execute(
+                "UPDATE messages SET seen=1 WHERE account_id=? AND folder=? AND seen=0 "
+                f"AND seen_sync_pending=0 AND uid IN ({ph})",
+                (int(account_id), folder, *chunk),
+            )
+            changed += int(cur.rowcount)
+        self.conn.commit()
+        return changed
 
     def mark_message_seen(self, message_id: int) -> None:
         self.mark_messages_seen([message_id])

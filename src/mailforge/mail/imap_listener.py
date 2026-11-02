@@ -40,7 +40,7 @@ from ..config import IMAPAccount, SecuritySettings
 from ..db.store import Store
 from ..paths import data_dir
 from ..secrets import get_imap_secret
-from . import header_facts, normalize, sanitize
+from . import header_facts, normalize, sanitize, seen_sync
 from .sync_state import SyncRegistry
 from .sync_state import registry as default_registry
 
@@ -63,6 +63,7 @@ FETCH_CHUNK = 200            # max UIDs per SEARCH/FETCH during catch-up — one
 MAX_INGEST_ATTEMPTS = 3      # a UID that fails this many times in a row is
 #                              skipped (logged at ERROR) so it cannot pin the
 #                              cursor forever.
+SEEN_ADOPT_EVERY_S = 300     # how often the server's \\Seen flags are re-read.
 BACKFILL_COUNT = 50          # most-recent existing messages pulled once on first
 #                              connect so the Mail page isn't empty. Idempotent
 #                              (UNIQUE account,folder,uid); these messages enter
@@ -285,6 +286,7 @@ class IMAPListener:
         self._backfilled = False
         # Set when the server reset UIDVALIDITY (see _check_uidvalidity).
         self._uidvalidity_alert: str | None = None
+        self._last_seen_adopt = 0.0
         # (folder, uid) -> consecutive ingest failures (see _ingest_missing).
         self._ingest_failures: dict[tuple[str, str], int] = {}
         self._account_id = store.upsert_account(
@@ -382,6 +384,7 @@ class IMAPListener:
                 # in backoff: reconcile right away.
                 self._checked_ingest(mailbox, folder)
             self._check_uidvalidity(mailbox, folder)
+            self._sync_seen(mailbox, folder, force_adopt=True)
 
             session_start = time.monotonic()
 
@@ -395,6 +398,8 @@ class IMAPListener:
                 if self._stop.is_set():
                     return
 
+                self._sync_seen(mailbox, folder)
+
                 # Always reconcile, even after a timeout: some servers drop or
                 # coalesce IDLE notifications, while UID membership is durable.
                 self._checked_ingest(mailbox, folder)
@@ -404,6 +409,26 @@ class IMAPListener:
                         mailbox.client.noop()
                     except Exception:  # noqa: BLE001 — dead socket → reconnect
                         return
+
+    def _sync_seen(self, mailbox: MailBox, folder: str, force_adopt: bool = False) -> None:
+        """Push local read/unread changes, then adopt the server's \\Seen.
+
+        Best effort: a failure leaves the rows pending (retried next cycle) and
+        is shown once on the sync chip; it never breaks ingest. Skipped while
+        UIDVALIDITY is in doubt, since stored UIDs may then name other mail.
+        """
+        if self._uidvalidity_alert:
+            return
+        try:
+            _pushed, err = seen_sync.push_pending(mailbox, self.store, self._account_id, folder)
+            now = time.monotonic()
+            if force_adopt or now - self._last_seen_adopt >= SEEN_ADOPT_EVERY_S:
+                self._last_seen_adopt = now
+                seen_sync.adopt_seen(mailbox, self.store, self._account_id, folder)
+            self.sync.update(self.account.name, seen_sync_error=err)
+        except Exception as e:  # noqa: BLE001 — never let flag sync break the loop
+            log.warning("Read-state sync failed for '%s': %s", self.account.name, e)
+            self.sync.update(self.account.name, seen_sync_error=f"{type(e).__name__}: {e}"[:200])
 
     def _check_uidvalidity(self, mailbox: MailBox, folder: str) -> None:
         """Record the folder's UIDVALIDITY; shout if the server reset it.
@@ -659,6 +684,12 @@ class IMAPListener:
             screening_source=screening.source,
             header_meta=header_facts.dumps(facts),
         )
+        if message_pk is not None and "\\Seen" in (getattr(msg, "flags", None) or ()):
+            # Already read on the server (another client): show it read here.
+            try:
+                self.store.adopt_server_seen(self._account_id, folder, [int(msg.uid)])
+            except Exception:  # noqa: BLE001 — cosmetic; the periodic refresh retries
+                log.debug("Seen adoption failed for msg %d", message_pk, exc_info=True)
         if message_pk is None:
             # Duplicate (account,folder,uid) — already ingested. If the first
             # attempt died after the insert (links/attachments), the row never
