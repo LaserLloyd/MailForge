@@ -2027,6 +2027,17 @@ class Store:
         self.conn.commit()
         return cur.rowcount == 1
 
+    def thread_started_by_us(self, thread_id: str | None) -> bool:
+        """True when ``thread_id`` is the Message-ID of mail this app sent."""
+        tid = str(thread_id or "").strip()
+        if not tid:
+            return False
+        row = self.conn.execute(
+            "SELECT 1 FROM sent_messages WHERE smtp_message_id=? AND outcome='SENT' LIMIT 1",
+            (tid,),
+        ).fetchone()
+        return row is not None
+
     def count_audit_tool_calls(self, tool: str, since_iso: str) -> int:
         """Agent attempts for ``tool`` at or after ``since_iso``: ``tool_call`` rows
         plus guardrail ``block`` rows, so refused attempts count toward caps."""

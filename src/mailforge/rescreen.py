@@ -86,7 +86,7 @@ def _candidates(store: Any, *, site: str | None, include_trashed: bool) -> list[
     sql = (
         "SELECT m.id, m.from_addr, m.from_name, m.subject, m.sanitized_text, "
         "m.link_count, m.has_attachments, m.screening_status, m.screening_source, "
-        "m.header_meta, m.trashed, a.name AS account_name, a.username, a.site_id, "
+        "m.header_meta, m.trashed, m.thread_id, a.name AS account_name, a.username, a.site_id, "
         "c.category AS cur_category, c.model_used AS cur_model "
         "FROM messages m JOIN accounts a ON a.id=m.account_id "
         "LEFT JOIN classifications c ON c.message_id=m.id "
@@ -146,6 +146,7 @@ def rescreen(
             site_terms=terms,
             brand_terms=brand,
             headers=header_facts.loads(row["header_meta"]),
+            reply_to_our_mail=store.thread_started_by_us(row["thread_id"]),
             category_rules=settings.category_rules,
             site_id=site_id,
             learned_spam_domains=learned_domains_cache[site_id],

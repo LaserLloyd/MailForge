@@ -742,6 +742,7 @@ def assess_inbound(
     site_id: str = "",
     learned_spam_domains: Iterable[str] = (),
     brand_domains: Mapping[str, Iterable[str]] | None = None,
+    reply_to_our_mail: bool = False,
 ) -> ScreeningResult:
     """Screen one message without network, tools, or model access.
 
@@ -803,6 +804,17 @@ def assess_inbound(
             f"{domain or 'an unknown domain'}; verify with {phish.brand} directly."
             f"{link_note}",
         )
+
+    # 4a. A reply in a thread WE started (our own sent Message-ID) is expected
+    #     mail, not cold contact: trust it unless a human labelled the sender
+    #     spam or its authentication explicitly failed.
+    if reply_to_our_mail and not (learned and learned[0] == "SPAM"):
+        auth_failed = any(
+            str(headers.get(k, "")).lower() in {"fail", "softfail", "permerror"}
+            for k in ("spf", "dkim", "dmarc")
+        )
+        if not auth_failed:
+            return ScreeningResult("CONTENT", f"a reply to mail you sent.{link_note}")
 
     score, hits = spam_score(
         from_addr=from_addr, from_name=from_name, subject=subject, headers=headers,

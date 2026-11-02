@@ -20,6 +20,10 @@ Published by Laser Lloyd — https://www.laserlloyd.com
 - **Replying to someone who wrote to you is no longer blocked** just because their domain isn't in the
   automatically built allowlist yet (rule b). A cc-only address still needs the allowlist, and
   explicitly blocked domains still block.
+- **A reply to mail you sent is no longer screened as possible spam.** On content-only sites a vendor's
+  answer to your own email was marked POTENTIAL SPAM (and hidden from agents) because it doesn't talk
+  about the site's topics. Mail in a thread you started is now trusted, unless a human marked the sender
+  as spam or the sender's authentication failed. Run `mailforge rescreen` to re-check existing mail.
 - **Order and reference numbers such as `249-5011686-7907863` are no longer flagged as phone numbers.**
 
 ### Added
