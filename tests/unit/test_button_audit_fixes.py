@@ -40,7 +40,7 @@ def test_there_is_no_retype_gate_any_more():
 # --- 2. a stale page must not overwrite a draft that moved on -----------------
 def test_a_sent_draft_cannot_be_rejected_or_saved_from_a_stale_page(store):
     did = _draft(store, _inbound(store))
-    store.update_draft_state(did, "SENT", sent_at="2026-11-02T00:00:00+00:00")
+    store.update_draft_state(did, "SENT", sent_at="2026-11-02T00:00:00+00:00", expect_states=None)
     assert "sent" in (detail.stale_reason(store, did, detail.REJECTABLE) or "")
     assert "sent" in (detail.stale_reason(store, did, detail.EDITABLE) or "")
 
@@ -53,7 +53,7 @@ def test_an_open_draft_may_be_rejected_and_saved(store):
 
 def test_a_rejected_draft_cannot_be_rejected_twice(store):
     did = _draft(store, _inbound(store))
-    store.update_draft_state(did, "REJECTED")
+    store.update_draft_state(did, "REJECTED", expect_states=None)
     assert detail.stale_reason(store, did, detail.REJECTABLE)
 
 

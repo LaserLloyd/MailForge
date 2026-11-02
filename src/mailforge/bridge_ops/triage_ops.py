@@ -209,6 +209,9 @@ def _flag_message(data: dict[str, Any], site: str, store: Any, settings: Any) ->
     reason = _gate_r(row)
     if reason:
         raise _err(reason)
+    if str(row["screening_source"] or "").upper() == "USER":
+        raise _err("a human already decided this message's screening; "
+                   "an agent cannot override it")
     _check_cap(store, 1)
     # Literal labels and learn_similar=False: an agent flag never trains a rule.
     if label == "POTENTIAL_SPAM":

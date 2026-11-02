@@ -172,7 +172,7 @@ def test_a_failed_transmit_returns_the_draft_to_pending_but_never_a_sent_one(sto
     row = store.get_draft(draft_id)
     assert row["state"] == "PENDING" and "smtp down" in row["guardrail_flags"]
 
-    store.update_draft_state(draft_id, "SENT")
+    store.update_draft_state(draft_id, "SENT", expect_states=None)
     assert detail.restore_after_failed_send(store, draft_id, "Body", {}, info.value) is False
     assert store.get_draft(draft_id)["state"] == "SENT"
 

@@ -1969,12 +1969,15 @@ class Store:
         state: DraftState,
         guardrail_flags: dict | None = None,
     ) -> int:
-        """Create once per inbound message; only deferred rows may be regenerated."""
+        """Create once per inbound message; only deferred rows may be regenerated
+        (and a REJECTED one is superseded by a new row)."""
         existing = self.conn.execute(
             "SELECT * FROM drafts WHERE message_id=? ORDER BY id DESC LIMIT 1",
             (int(message_id),),
         ).fetchone()
-        if existing is None:
+        # A REJECTED latest draft is finished business: the owner may ask for a
+        # fresh one (the rejected row stays as history).
+        if existing is None or existing["state"] == "REJECTED":
             return self.create_draft(
                 message_id,
                 thread_id,
@@ -1988,6 +1991,7 @@ class Store:
             self.update_draft_state(
                 existing["id"],
                 state,
+                expect_states=["DEFERRED_NO_LLM"],
                 recipient=recipient,
                 subject=subject,
                 body=body,
@@ -2000,12 +2004,15 @@ class Store:
         draft_id: int,
         state: DraftState,
         *,
-        expect_states: Iterable[str] | None = None,
+        expect_states: Iterable[str] | None,
+        expect_body: str | None = None,
         **f: Any,
     ) -> bool:
         """Set a draft's state and fields.
 
-        With ``expect_states`` this is a compare-and-swap: the row changes only
+        ``expect_states`` is required so no writer can forget the guard; pass
+        ``None`` explicitly for an unconditional write. With a list this is a
+        compare-and-swap: the row changes only
         if its current state is one of them, and the return value says whether
         it did (False = the row moved on, nothing written). Without it the
         write is unconditional (and still returns True when a row matched).
@@ -2035,6 +2042,9 @@ class Store:
                 return False
             where += f" AND state IN ({','.join('?' * len(exp))})"
             vals.extend(exp)
+        if expect_body is not None:  # a newer edit of the text wins
+            where += " AND COALESCE(body,'')=?"
+            vals.append(expect_body)
         cur = self.conn.execute(f"UPDATE drafts SET {','.join(sets)} WHERE {where}", vals)
         self.conn.commit()
         return cur.rowcount == 1
@@ -2059,8 +2069,29 @@ class Store:
             "SELECT * FROM drafts WHERE state=? ORDER BY created_at DESC", (state,)
         ).fetchall()
 
+    def message_is_live(self, message_id: int) -> bool:
+        """True while the message exists and is not trashed, archived or purged.
+
+        The one predicate every producer of AI work shares, so a mail the owner
+        has put away never gets (or keeps) a drafted reply.
+        """
+        row = self.conn.execute(
+            "SELECT trashed, archived, purged_at FROM messages WHERE id=?",
+            (int(message_id),),
+        ).fetchone()
+        return bool(
+            row is not None
+            and not row["trashed"]
+            and not row["archived"]
+            and row["purged_at"] is None
+        )
+
     def deferred_drafts(self) -> list[sqlite3.Row]:
-        return self.drafts_by_state("DEFERRED_NO_LLM")
+        return self.conn.execute(
+            "SELECT d.* FROM drafts d LEFT JOIN messages m ON m.id=d.message_id "
+            f"WHERE d.state='DEFERRED_NO_LLM' AND {ACTIVE_DRAFT_SQL} "
+            "AND (m.id IS NULL OR m.archived=0) ORDER BY d.created_at DESC"
+        ).fetchall()
 
     def draft_counts(self, site_id: str | None = None) -> dict[str, int]:
         """Counts per draft state (for the inbox stat chips / tab badges)."""

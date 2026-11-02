@@ -184,7 +184,7 @@ async def _async_action(action: str, site: str, data: dict[str, Any], store: Any
                 "the local UI and mark it content-related before AI work"
             )
         existing = store.latest_draft_for_message(message_id)
-        if existing is not None and existing["state"] != "DEFERRED_NO_LLM":
+        if existing is not None and existing["state"] not in {"DEFERRED_NO_LLM", "REJECTED"}:
             return {"draft_id": int(existing["id"]), "state": existing["state"], "existing": True}
         draft_id = await AgentGraph(store, settings, bridge).process_message(message_id)
         draft = store.get_draft(draft_id) if draft_id is not None else None
@@ -612,7 +612,7 @@ def _reply_draft(data: dict[str, Any], site: str, store: Any, settings: Any) -> 
     author = str(data.get("author") or "bridge")[:80]
 
     existing = store.latest_draft_for_message(message_id)
-    if existing is not None and existing["state"] != "DEFERRED_NO_LLM":
+    if existing is not None and existing["state"] not in {"DEFERRED_NO_LLM", "REJECTED"}:
         raise BridgeInputError(
             f"draft {int(existing['id'])} already exists for this message "
             f"(state {existing['state']}); change it with edit-draft"
@@ -630,10 +630,14 @@ def _reply_draft(data: dict[str, Any], site: str, store: Any, settings: Any) -> 
         raise BridgeInputError("guardrails blocked this draft: " + "; ".join(report.reasons[:3]))
 
     flags = {**report.flags, "agent_written": True, "author": author}
-    if existing is not None:  # replace a deferred placeholder in place
+    if existing is not None and existing["state"] == "DEFERRED_NO_LLM":
+        # replace a deferred placeholder in place (a REJECTED draft is superseded)
         draft_id = int(existing["id"])
-        store.update_draft_state(draft_id, "PENDING", recipient=recipient, subject=subject,
-                                 body=body, guardrail_flags=flags)
+        if not store.update_draft_state(
+            draft_id, "PENDING", expect_states=["DEFERRED_NO_LLM"], recipient=recipient,
+            subject=subject, body=body, guardrail_flags=flags,
+        ):
+            raise BridgeInputError("the draft changed in the meantime; read it and retry")
     else:
         draft_id = store.create_draft(message_id, str(message["thread_id"] or ""), recipient,
                                       subject, body, "PENDING", flags)

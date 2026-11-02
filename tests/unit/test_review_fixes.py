@@ -76,7 +76,7 @@ def test_agent_edit_cannot_reopen_a_draft_sent_during_the_guardrails(tmp_path, m
         real = bc._guard_draft_body
 
         def slow(*a, **k):  # the owner presses Send while the guardrails run
-            store.update_draft_state(did, "SENT", body="what went out")
+            store.update_draft_state(did, "SENT", body="what went out", expect_states=None)
             return real(*a, **k)
 
         monkeypatch.setattr(bc, "_guard_draft_body", slow)
@@ -92,7 +92,7 @@ def test_withdraw_cannot_turn_a_sent_draft_into_rejected(tmp_path):
         did = store.create_draft(mid, "t1", "customer@example.test", "Re", "b", "PENDING",
                                  {"agent_written": True})
         stale = store.get_draft(did)
-        store.update_draft_state(did, "SENT")
+        store.update_draft_state(did, "SENT", expect_states=None)
         real = store.get_draft_for_site
         store.get_draft_for_site = lambda *a, **k: stale  # row read before the send landed
         try:
@@ -194,7 +194,7 @@ def test_approve_refuses_when_the_draft_moved_on_after_the_check(tmp_path, monke
         draft = store.get_draft(did)
 
         def flip(*a, **k):  # another process (the bridge) rejects it right now
-            store.update_draft_state(did, "REJECTED")
+            store.update_draft_state(did, "REJECTED", expect_states=None)
             return []
 
         monkeypatch.setattr(presend, "record_override", flip)

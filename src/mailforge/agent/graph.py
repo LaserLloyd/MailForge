@@ -108,7 +108,8 @@ class AgentGraph:
         if existing is None:
             return
         self.store.update_draft_state(
-            existing["id"], "REJECTED", guardrail_flags={"reason": reason}
+            existing["id"], "REJECTED", expect_states=["DEFERRED_NO_LLM"],
+            guardrail_flags={"reason": reason},
         )
 
     def _classify_attempts(self, message_id: int) -> int:
@@ -149,6 +150,9 @@ class AgentGraph:
         (or None if no draft was produced)."""
         msg = self.store.get_message(message_id)
         if msg is None:
+            return None
+        if not self.store.message_is_live(message_id):
+            log.info("Message %s is trashed/archived/purged — no AI work.", message_id)
             return None
         account = self.store.get_account_for_message(message_id)
         if account is None or account["site_id"] not in self.settings.sites:
@@ -307,6 +311,7 @@ class AgentGraph:
                 self.store.update_draft_state(
                     existing["id"],
                     "REJECTED",
+                    expect_states=["DEFERRED_NO_LLM"],
                     guardrail_flags={"reason": "classification_no_reply", "category": category},
                 )
             log.info("Message %s classified %s — no draft (plan=%s).", message_id, category, plan.should_draft)
@@ -392,6 +397,11 @@ class AgentGraph:
             draft_dict, context, self.store, self.settings.security, self.bridge
         )
         flags = {"injection_risk": injection_risk, **report.flags, "reasons": report.reasons}
+
+        # The owner may have trashed the mail during the LLM awaits above.
+        if not self.store.message_is_live(message_id):
+            log.info("Message %s was put away mid-run — discarding its draft.", message_id)
+            return None
 
         if report.passed:
             did = tools.propose_draft(

@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from ..security import run_output_guardrails
 from ..security.inbound_screening import ai_may_read
 from . import worker
+
+
+_REVISABLE = {"PENDING", "BLOCKED", "DEFERRED_NO_LLM"}
 
 
 async def _is_up(bridge) -> bool:
@@ -43,8 +47,12 @@ async def revise_draft(
         raise ValueError(
             "source message is withheld by inbound screening — mark it content-related first"
         )
-    if draft["state"] not in {"DRAFT", "PENDING", "BLOCKED", "DEFERRED_NO_LLM"}:
-        raise ValueError(f"draft state {draft['state']} is immutable")
+    if draft["state"] not in _REVISABLE:
+        raise ValueError(
+            f"draft state {draft['state']} is immutable"
+            if draft["state"] != "DRAFT"
+            else "the owner has already edited this reply, so an agent cannot rewrite it"
+        )
     feedback = str(feedback or "").strip()
     if not feedback:
         raise ValueError("feedback is required")
@@ -82,7 +90,9 @@ async def revise_draft(
     subject = proposed.subject or draft["subject"] or ""
     thread = store.thread_messages(draft["thread_id"])
     participants: set[str] = set()
-    for message in thread:
+    # The source mail's own people count even when the draft sits on another
+    # thread id (the UI's working draft falls back to ``message:<id>``).
+    for message in [*thread, *([source] if source is not None else [])]:
         for column in ("from_addr", "to_addrs", "cc_addrs"):
             participants.update(
                 a.strip().lower()
@@ -103,9 +113,21 @@ async def revise_draft(
     )
     state = "PENDING" if report.passed else "BLOCKED"
     flags = {**report.flags, "reasons": report.reasons, "revision": True}
-    store.update_draft_state(
-        draft_id, state, body=body, subject=subject, guardrail_flags=flags
-    )
+    try:
+        old_flags = json.loads(draft["guardrail_flags"] or "{}")
+    except ValueError:
+        old_flags = {}
+    if isinstance(old_flags, dict):  # ownership survives a revision
+        for key in ("agent_written", "author"):
+            if key in old_flags:
+                flags[key] = old_flags[key]
+    # Compare-and-swap: the owner may have sent, rejected or edited this draft
+    # while the model was thinking. Never resurrect or clobber it.
+    if not store.update_draft_state(
+        draft_id, state, expect_states=_REVISABLE, body=body, subject=subject,
+        guardrail_flags=flags, expect_body=draft["body"] or "",
+    ):
+        raise ValueError("the draft changed while the model was revising it; revision discarded")
     store.create_ai_revision(
         draft_id,
         feedback=feedback,

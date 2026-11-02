@@ -376,7 +376,7 @@ def seed_demo(store: Any) -> dict[str, int]:
             sender_addr="hello@example.com",
             site_id="main",
         )
-        store.update_draft_state(draft_id, "SENT", sent_at=_iso(2.8))
+        store.update_draft_state(draft_id, "SENT", expect_states=None, sent_at=_iso(2.8))
         drafts += 1
         # Outbox: the same reply as a completed transmission, so the Sent view
         # is not empty in the demo.
