@@ -2613,7 +2613,7 @@ wheels = [
 
 [[package]]
 name = "mailforge"
-version = "0.7.1"
+version = "0.8.0.dev1"
 source = { editable = "." }
 dependencies = [
     { name = "bleach" },

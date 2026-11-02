@@ -1,2 +1,2 @@
 """MailForge — local-LLM email triage & auto-draft assistant."""
-__version__ = "0.7.1"
+__version__ = "0.8.0.dev1"
