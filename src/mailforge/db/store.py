@@ -41,6 +41,15 @@ _SPAM_TAG_SQL = (
     "OR UPPER(TRIM(COALESCE(m.screening_status,'')))='SPAM')"
 )
 
+#: A draft is ACTIVE unless its source message is in Trash or purged. Trash
+#: hides a draft without touching it (restore brings it back); purge retires it
+#: (see ``Store.purge_messages``). Uses aliases ``d`` (drafts) and ``m`` (the
+#: LEFT-JOINed source message); a manual draft has no source and is always active.
+ACTIVE_DRAFT_SQL = "(d.message_id IS NULL OR (m.trashed=0 AND m.purged_at IS NULL))"
+
+#: Draft states that are still open work (retired when the source is purged).
+OPEN_DRAFT_STATES = ("DRAFT", "PENDING", "BLOCKED", "DEFERRED_NO_LLM")
+
 log = logging.getLogger(__name__)
 
 # Embedding dimension must match config LLM embedding model + vec0 column.
@@ -141,6 +150,8 @@ class Store:
         self._prepare_legacy_schema()
         self.conn.executescript(_schema_sql())
         self._migrate_schema()
+        self._migrate_agent_notes_request_kind()
+        self._retire_orphan_drafts()
         self._ensure_site_capacity()
         self._seed_response_templates()
         if self.vec_enabled:
@@ -154,6 +165,46 @@ class Store:
         except OSError:
             pass
         self.conn.commit()
+
+    def _retire_orphan_drafts(self) -> None:
+        """One-time (idempotent) repair: open drafts of already-purged sources."""
+        try:
+            self._retire_drafts_of_purged(None)
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+
+    def _migrate_agent_notes_request_kind(self) -> None:
+        """Widen ``agent_notes.kind`` to allow 'request' (SQLite cannot alter a
+        CHECK, so rebuild the table once). Idempotent."""
+        row = self.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='agent_notes'"
+        ).fetchone()
+        if row is None or "'request'" in (row["sql"] or ""):
+            return
+        try:
+            self.conn.execute("ALTER TABLE agent_notes RENAME TO agent_notes_old")
+            self.conn.execute(
+                "CREATE TABLE agent_notes (id INTEGER PRIMARY KEY, site_id TEXT NOT NULL, "
+                "author TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'observation' "
+                "CHECK (kind IN ('observation','action','incident','context','request')), "
+                "title TEXT NOT NULL, body TEXT NOT NULL, related_message_ids TEXT, "
+                "created_at TEXT NOT NULL)"
+            )
+            self.conn.execute(
+                "INSERT INTO agent_notes(id,site_id,author,kind,title,body,related_message_ids,"
+                "created_at) SELECT id,site_id,author,kind,title,body,related_message_ids,"
+                "created_at FROM agent_notes_old"
+            )
+            self.conn.execute("DROP TABLE agent_notes_old")
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS agent_notes_site ON agent_notes(site_id, id DESC)"
+            )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def _prepare_legacy_schema(self) -> None:
         """Add columns needed by indexes declared in the current schema."""
@@ -604,7 +655,7 @@ class Store:
         sql = (
             "SELECT m.id, m.from_addr, m.from_name, m.to_addrs, m.subject, "
             "m.received_at, m.sanitized_text, m.has_attachments, m.seen, "
-            "m.quarantined, m.quarantine_reason, "
+            "m.quarantined, m.quarantine_reason, m.archived, m.trashed, m.purged_at, "
             "m.screening_status, m.screening_reason, m.screening_source, "
             "m.thread_id, a.name AS account_name, a.username AS account_username, "
             "a.site_id AS site_id, c.category, c.priority, c.rationale, "
@@ -1085,7 +1136,7 @@ class Store:
                 self.conn.execute(
                     "UPDATE drafts SET state='REJECTED',updated_at=?,"
                     "guardrail_flags=? "
-                    "WHERE message_id=? AND state IN ('PENDING','BLOCKED','DEFERRED_NO_LLM')",
+                    "WHERE message_id=? AND state IN ('DRAFT','PENDING','BLOCKED','DEFERRED_NO_LLM')",
                     (
                         now,
                         json.dumps({"reason": "human_screening", "status": normalized}),
@@ -1379,8 +1430,8 @@ class Store:
     ) -> int:
         site = validate_site_id(site_id or default_site_id())
         kind = str(kind or "observation").strip().lower()
-        if kind not in {"observation", "action", "incident", "context"}:
-            raise ValueError("kind must be observation|action|incident|context")
+        if kind not in {"observation", "action", "incident", "context", "request"}:
+            raise ValueError("kind must be observation|action|incident|context|request")
         title = str(title or "").strip()[:200]
         body = str(body or "").strip()[:8000]
         if not title or not body:
@@ -1486,7 +1537,9 @@ class Store:
     #: mail is deleted the moment the user says so, here and at the provider.
     PURGE_IMMEDIATELY = ("SPAM", "POTENTIAL_SPAM", "POTENTIAL_ISSUE")
 
-    def trash_queue(self, *, retention_days: int = 60) -> list[sqlite3.Row]:
+    def trash_queue(
+        self, *, retention_days: int = 60, site_id: str | None = None
+    ) -> list[sqlite3.Row]:
         """Everything waiting in local Trash, with its scheduled deletion date.
 
         ``due_at`` is NULL for spam/scam mail (deleted on the next sweep, no
@@ -1498,13 +1551,15 @@ class Store:
         return self.conn.execute(
             "SELECT m.id, m.from_addr, m.subject, m.received_at, m.trashed_at, "
             "m.screening_status, m.server_deleted_at, m.server_delete_error, "
-            "a.name AS account_name, "
+            "a.name AS account_name, a.site_id AS site_id, "
             f"CASE WHEN m.screening_status IN ({placeholders}) THEN NULL "
             "ELSE datetime(COALESCE(m.trashed_at, m.received_at), ?) END AS due_at "
             "FROM messages m LEFT JOIN accounts a ON a.id=m.account_id "
             "WHERE m.trashed=1 AND m.purged_at IS NULL "
-            "ORDER BY datetime(COALESCE(m.trashed_at, m.received_at)) ASC",
-            (*self.PURGE_IMMEDIATELY, f"+{days} days"),
+            + ("AND a.site_id=? " if site_id is not None else "")
+            + "ORDER BY datetime(COALESCE(m.trashed_at, m.received_at)) ASC",
+            (*self.PURGE_IMMEDIATELY, f"+{days} days",
+             *((validate_site_id(site_id),) if site_id is not None else ())),
         ).fetchall()
 
     def trash_due_ids(self, *, retention_days: int = 60) -> list[int]:
@@ -1561,11 +1616,66 @@ class Store:
                 f"WHERE id IN ({placeholders}) AND purged_at IS NULL",
                 (_now(), *ids),
             )
+            # Same transaction: no open draft may outlive its source.
+            self._retire_drafts_of_purged(ids)
             self.conn.commit()
         except Exception:
             self.conn.rollback()
             raise
         return int(cur.rowcount)
+
+    def _retire_drafts_of_purged(self, message_ids: Iterable[int] | None = None) -> int:
+        """REJECT open drafts whose source message is purged and revoke their
+        unconsumed send authorizations. Idempotent; does NOT commit."""
+        sql = (
+            "SELECT d.id, d.guardrail_flags FROM drafts d JOIN messages m ON m.id=d.message_id "
+            "WHERE m.purged_at IS NOT NULL AND d.state IN ("
+            + ",".join("?" for _ in OPEN_DRAFT_STATES) + ")"
+        )
+        params: list[Any] = list(OPEN_DRAFT_STATES)
+        if message_ids is not None:
+            ids = [int(i) for i in message_ids]
+            if not ids:
+                return 0
+            sql += " AND d.message_id IN (" + ",".join("?" for _ in ids) + ")"
+            params += ids
+        rows = self.conn.execute(sql, params).fetchall()
+        now = _now()
+        for row in rows:
+            try:
+                flags = json.loads(row["guardrail_flags"] or "{}")
+                if not isinstance(flags, dict):
+                    flags = {}
+            except ValueError:
+                flags = {}
+            flags["reason"] = "source_purged"
+            self.conn.execute(
+                "UPDATE drafts SET state='REJECTED',updated_at=?,guardrail_flags=? WHERE id=?",
+                (now, json.dumps(flags), int(row["id"])),
+            )
+        self._revoke_authorizations([int(r["id"]) for r in rows], commit=False)
+        return len(rows)
+
+    #: ``expires_at`` of a revoked authorization: long past, so it can never be
+    #: consumed, while ``used_at`` stays NULL (the hourly send cap counts used rows).
+    REVOKED_AT = "1970-01-01T00:00:00+00:00"
+
+    def _revoke_authorizations(self, draft_ids: Iterable[int], *, commit: bool = True) -> int:
+        ids = [int(i) for i in draft_ids]
+        if not ids:
+            return 0
+        cur = self.conn.execute(
+            f"UPDATE send_authorizations SET expires_at=? WHERE used_at IS NULL "
+            f"AND draft_id IN ({','.join('?' for _ in ids)})",
+            (self.REVOKED_AT, *ids),
+        )
+        if commit:
+            self.conn.commit()
+        return int(cur.rowcount)
+
+    def revoke_send_authorizations(self, draft_ids: Iterable[int]) -> int:
+        """Make every unconsumed send authorization for these drafts unusable."""
+        return self._revoke_authorizations(draft_ids)
 
     # ----- provider-side delete bookkeeping -----
     def server_locators(self, message_ids: Iterable[int]) -> list[sqlite3.Row]:
@@ -1805,12 +1915,16 @@ class Store:
 
     def draft_counts(self, site_id: str | None = None) -> dict[str, int]:
         """Counts per draft state (for the inbox stat chips / tab badges)."""
-        sql = "SELECT state, COUNT(*) AS n FROM drafts"
+        sql = (
+            "SELECT d.state AS state, COUNT(*) AS n FROM drafts d "
+            "LEFT JOIN messages m ON m.id=d.message_id "
+            f"WHERE {ACTIVE_DRAFT_SQL}"
+        )
         params: tuple[Any, ...] = ()
         if site_id is not None:
-            sql += " WHERE site_id=?"
+            sql += " AND d.site_id=?"
             params = (validate_site_id(site_id),)
-        sql += " GROUP BY state"
+        sql += " GROUP BY d.state"
         rows = self.conn.execute(sql, params).fetchall()
         return {r["state"]: r["n"] for r in rows}
 
@@ -1825,10 +1939,11 @@ class Store:
             "FROM drafts d "
             "LEFT JOIN messages m ON m.id = d.message_id "
             "LEFT JOIN classifications c ON c.message_id = d.message_id "
+            f"WHERE {ACTIVE_DRAFT_SQL} "
         )
         params: tuple[Any, ...] = ()
         if state:
-            q += "WHERE d.state=? "
+            q += "AND d.state=? "
             params = (state,)
         q += "ORDER BY d.created_at DESC"
         return self.conn.execute(q, params).fetchall()
@@ -1921,6 +2036,21 @@ class Store:
             (since_iso, str(tool)),
         ).fetchone()
         return int(row[0])
+
+    def count_audit_events(
+        self, event: str, since_iso: str, *, action: str | None = None, actor: str | None = None
+    ) -> int:
+        """Audit rows of ``event`` since ``since_iso``, optionally for one
+        ``detail.action`` and/or actor."""
+        sql = "SELECT COUNT(*) FROM audit_log WHERE event=? AND ts>=?"
+        params: list[Any] = [str(event), since_iso]
+        if action is not None:
+            sql += " AND json_extract(detail_json,'$.action')=?"
+            params.append(action)
+        if actor is not None:
+            sql += " AND actor=?"
+            params.append(actor)
+        return int(self.conn.execute(sql, params).fetchone()[0])
 
     def record_manual_sent(
         self,
@@ -2417,7 +2547,7 @@ class Store:
             "FROM drafts d "
             "LEFT JOIN messages m ON m.id=d.message_id "
             "LEFT JOIN classifications c ON c.message_id=d.message_id "
-            "WHERE d.state IN ('PENDING','BLOCKED','DEFERRED_NO_LLM')"
+            f"WHERE {ACTIVE_DRAFT_SQL} AND d.state IN ('PENDING','BLOCKED','DEFERRED_NO_LLM')"
         )
         actionable_params: list[Any] = []
         if site is not None:

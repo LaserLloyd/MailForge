@@ -5,6 +5,11 @@ Published by Laser Lloyd — https://www.laserlloyd.com
 
 ## Unreleased (dev)
 
+### Removed
+- **The bridge no longer has `prepare-send` and `send`.** Agents can read, draft, edit and triage;
+  only a human sends, in the MailForge UI. The `openclaw.agent_send_*` config keys are still read so
+  older configs load, but nothing uses them.
+
 ### Fixed
 - **Mail accounts no longer stay offline after a boot with a locked keyring.** A credential read that
   started while the login keyring was locked could hang forever, even after the keyring was unlocked,

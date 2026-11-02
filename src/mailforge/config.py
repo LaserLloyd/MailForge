@@ -322,13 +322,8 @@ class OpenClawSettings(BaseModel):
     heavy_lift_base_url: str = ""  # e.g. "http://127.0.0.1:1234/v1"; "" => local only
     heavy_lift_model: str = ""
     heavy_lift_key_env: str = "MAILFORGE_HEAVY_KEY"
-    # --- agent-relayed send ("the user told the agent to send it") ----------
-    # OFF by default. When enabled, the bridge gains prepare-send/send: the
-    # agent must first call prepare-send (guardrails run, recipient stays
-    # thread/allowlist-bound, a one-time short-lived token is issued and the
-    # exact draft is returned for the human to confirm in chat), then send with
-    # that token. This is NOT autosend — every send still traces to an explicit
-    # human instruction, is rate-capped, and is fully audited.
+    # --- agent-relayed send: REMOVED. The bridge has no send action any more; these
+    # three keys are only read so older config files still load. They do nothing.
     agent_send_enabled: bool = False
     agent_send_per_hour: int = 10
     agent_send_token_ttl_s: int = 900

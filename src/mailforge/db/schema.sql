@@ -139,7 +139,7 @@ CREATE TABLE IF NOT EXISTS agent_notes (
   site_id TEXT NOT NULL,
   author TEXT NOT NULL,               -- e.g. email-main|user|claude-code
   kind TEXT NOT NULL DEFAULT 'observation'
-    CHECK (kind IN ('observation','action','incident','context')),
+    CHECK (kind IN ('observation','action','incident','context','request')),
   title TEXT NOT NULL,
   body TEXT NOT NULL,
   related_message_ids TEXT,           -- JSON int array, optional

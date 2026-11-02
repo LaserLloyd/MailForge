@@ -12,7 +12,6 @@ import hashlib
 
 import pytest
 
-from mailforge.bridge_cli import BridgeInputError, _do_agent_send, _prepare_send
 from mailforge.config import Settings
 from mailforge.db.store import open_store, register_sites
 from mailforge.ui.pages.outbox import collect_rows, status_of
@@ -50,6 +49,30 @@ def _seed_reply_draft(store) -> int:
     return store.create_draft(
         mid, "t1", "customer@example.test", "Re: Question",
         "Thanks for reaching out — happy to help.", "PENDING", {},
+    )
+
+
+def _prepare_send(data, site, store, settings):
+    """Stage an authorization the way the (removed) bridge op used to."""
+    did = data["draft_id"]
+    draft = store.get_draft(did)
+    tok = f"test-{did}"
+    store.create_send_authorization(
+        did, hashlib.sha256(tok.encode()).hexdigest(), "digest",
+        draft["recipient"], "sales@example.test", str(data.get("author") or "test"),
+    )
+    return {"send_token": tok, "subject": draft["subject"], "body": draft["body"]}
+
+
+def _transmit(store, settings, did):
+    from mailforge.mail.outbox import transmit_and_record
+
+    draft = store.get_draft(did)
+    cfg = settings.smtp_for_account(settings.imap_accounts[0])
+    return transmit_and_record(
+        store, settings, smtp_cfg=cfg, secret=type("S", (), {"get_secret_value": lambda self: "pw"})(),
+        from_addr="sales@example.test", to_addr=draft["recipient"], subject=draft["subject"],
+        body=draft["body"], origin="agent_bridge", site_id="main", draft_id=did,
     )
 
 
@@ -165,11 +188,7 @@ def test_consumed_token_without_a_transmission_is_unknown_not_sent(tmp_path):
         did = _seed_reply_draft(store)
         out = _prepare_send({"draft_id": did}, "main", store, _settings())
         token_hash = hashlib.sha256(out["send_token"].encode()).hexdigest()
-        from mailforge.bridge_cli import content_digest
-
-        store.consume_send_authorization(
-            did, token_hash, content_digest(out["subject"], out["body"])
-        )
+        store.consume_send_authorization(did, token_hash, "digest")
         row = store.list_staged_sends()[0]
         state, label, kind = status_of(row, "staged")
         assert state == "UNKNOWN" and kind == "error"
@@ -219,10 +238,7 @@ def test_agent_send_records_the_transmission(tmp_path, monkeypatch):
     with open_store(tmp_path / "j.db") as store:
         did = _seed_reply_draft(store)
         settings = _settings()
-        out = _prepare_send({"draft_id": did}, "main", store, settings)
-        _do_agent_send(
-            {"draft_id": did, "send_token": out["send_token"]}, "main", store, settings
-        )
+        _transmit(store, settings, did)
         rows = store.list_sent_messages()
         assert len(rows) == 1
         row = rows[0]
@@ -252,12 +268,8 @@ def test_agent_send_failure_is_recorded_as_failed(tmp_path, monkeypatch):
     with open_store(tmp_path / "k.db") as store:
         did = _seed_reply_draft(store)
         settings = _settings()
-        out = _prepare_send({"draft_id": did}, "main", store, settings)
-        with pytest.raises(BridgeInputError, match="SMTP send failed"):
-            _do_agent_send(
-                {"draft_id": did, "send_token": out["send_token"]},
-                "main", store, settings,
-            )
+        with pytest.raises(RuntimeError, match="relay refused"):
+            _transmit(store, settings, did)
         row = store.list_sent_messages()[0]
         assert row["outcome"] == "FAILED"
         assert "relay refused" in (row["error_text"] or "")

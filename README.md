@@ -730,9 +730,7 @@ prompt_override_dir = ""         # default: <config dir>/prompts
 heavy_lift_base_url = ""         # any OpenAI-compatible endpoint; "" => local only
 heavy_lift_model = ""
 heavy_lift_key_env = "MAILFORGE_HEAVY_KEY"
-agent_send_enabled = false       # prompt-gated agent-relayed send; ships OFF
-agent_send_per_hour = 10
-agent_send_token_ttl_s = 900
+agent_send_enabled = false       # no longer used: the bridge has no send action
 ```
 
 `db_path` may be set at the top level to move the SQLite database.
@@ -779,8 +777,8 @@ fully functional on your local LLM server. When one is present:
   and on any error it falls back to the local model.
 - **The bridge** — `mailforge bridge <action> --site <id>` speaks JSON on
   stdin/stdout: `status`, `list`, `get`, `propose`, `revise`, `daily-brief`,
-  `weekly-summary`, `reference-search`, `notes`, `note-add` (plus
-  `prepare-send` / `send`, below). Quarantined and
+  `weekly-summary`, `reference-search`, `notes`, `note-add`, the draft
+  actions and triage actions. The bridge cannot send. Quarantined and
   screened-out messages are **metadata only**; eligible bodies come wrapped in
   explicit untrusted-content markers with a content-policy field. There is no
   delete, archive, move, forward, credential, filesystem or shell tool.
@@ -789,12 +787,9 @@ fully functional on your local LLM server. When one is present:
   Drafts and never sends it. Content guardrails apply (an explicitly blocked
   recipient domain still refuses); `openclaw.agent_compose_per_day` (default
   20, `0` = off) caps drafts per rolling 24 h. A human reviews and presses Send.
-- **Human-instructed send** — OFF by default (`openclaw.agent_send_enabled`).
-  When enabled, `prepare-send` re-runs the guardrails, binds the recipient to
-  the thread/allowlist (first-contact addresses are refused — use Compose) and
-  returns the exact message plus a single-use token (15 min TTL, voided by any
-  edit, rate-capped). Only after a human confirms that content does `send`
-  transmit, fully audited. Autonomous sending remains impossible.
+- **No agent send.** The bridge has no `prepare-send` / `send` action; every email is
+  sent by a human in the MailForge UI. `openclaw.agent_send_*` keys are still read so old
+  configs load, but do nothing.
 
 ---
 

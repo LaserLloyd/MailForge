@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from mailforge.bridge_cli import BridgeInputError, _compose_draft, _prepare_send
+from mailforge.bridge_cli import OPS, BridgeInputError, _compose_draft
 from mailforge.config import Settings
 from mailforge.db.store import open_store, register_sites
 
@@ -152,13 +152,8 @@ def test_compose_cap_zero_turns_agent_compose_off(tmp_path):
             _compose_draft(_payload(), "main", store, _settings(per_day=0))
 
 
-def test_agent_cannot_send_its_own_first_contact_draft(tmp_path):
-    """Even with agent send ON, a composed draft to a new address can only go out
-    through the human Compose UI — prepare-send refuses the unbound recipient."""
-    with open_store(tmp_path / "i.db") as store:
-        out = _compose_draft(_payload(), "main", store, _settings(send_enabled=True))
-        with pytest.raises(BridgeInputError, match="thread participant or allowlisted"):
-            _prepare_send({"draft_id": out["draft_id"]}, "main", store, _settings())
+def test_bridge_has_no_send_action():
+    assert "send" not in OPS and "prepare-send" not in OPS
 
 
 def test_compose_guardrails_scan_the_subject_too(tmp_path):
