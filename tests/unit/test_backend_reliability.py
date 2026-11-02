@@ -534,8 +534,9 @@ def test_classify_attempts_are_counted_from_the_deferred_draft(tmp_path):
     store.update_draft_state(
         did, "DEFERRED_NO_LLM",
         guardrail_flags={"reason": "classify_failed", "classify_attempts": 7},
+        expect_states=None,
     )
     assert graph._classify_attempts(message_id) == 8 - 1
-    store.update_draft_state(did, "PENDING", guardrail_flags=json.loads("{}"))
+    store.update_draft_state(did, "PENDING", guardrail_flags=json.loads("{}"), expect_states=None)
     assert graph._classify_attempts(message_id) == 0
     store.close()

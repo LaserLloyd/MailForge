@@ -124,10 +124,29 @@ def _latest_draft(store: object, message_id: int) -> Any:
     ).fetchone()
 
 
+def _message_participants(store: object, message: Any) -> set[str]:
+    """Everyone on the mail's own thread, plus the mail's own from/to/cc."""
+    rows = [message]
+    try:
+        rows.extend(store.thread_messages(str(_value(message, "thread_id", "") or "")))  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001
+        pass
+    people: set[str] = set()
+    for row in rows:
+        for key in ("from_addr", "to_addrs", "cc_addrs"):
+            people |= {
+                a.strip().lower()
+                for a in str(_value(row, key, "") or "").split(",")
+                if a.strip()
+            }
+    return people
+
+
 def _create_working_draft(store: object, message: Any, current_body: str) -> int:
     message_id = int(_value(message, "id"))
     existing = _latest_draft(store, message_id)
-    if existing is not None:
+    # A rejected draft is finished: the owner may ask for a fresh one.
+    if existing is not None and str(_value(existing, "state", "")).upper() != "REJECTED":
         return int(_value(existing, "id"))
     subject = str(_value(message, "subject", "") or "")
     reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
@@ -220,7 +239,11 @@ def render_drawer(
                 "body": body,
                 "thread_id": thread_id,
             },
-            {"recipient": recipient, "site_id": site_id},
+            {
+                "recipient": recipient,
+                "site_id": site_id,
+                "thread_participants": _message_participants(store, message),
+            },
             store,
             getattr(settings, "security", settings),
             bridge,
