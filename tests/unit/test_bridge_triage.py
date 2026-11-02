@@ -368,11 +368,18 @@ def test_daily_brief_has_guidance_overrides_and_requests(tmp_path):
         from mailforge.audit.log import AuditLog
         log = AuditLog(store)
         log.record(actor="agent", event="tool_call", subject_table="guidance",
-                   detail={"tool": "guidance_write", "kind": "policy"})
+                   detail={"tool": "guidance_write", "kind": "policy", "site_id": "main",
+                           "op": "save", "key": "policy", "author": "ds_flash"})
+        log.record(actor="agent", event="tool_call", subject_table="guidance",
+                   detail={"tool": "guidance_write", "kind": "policy", "site_id": "shop"})
+        log.record(actor="guardrail", event="block",
+                   detail={"tool": "guidance_write", "site_id": "main"})
         log.record(actor="user", event="approval", subject_table="drafts", subject_id=1,
                    detail={"action": "guardrail_override"})
         brief = _daily_brief(store, "main")
-        assert brief["guidance_changes_24h"] == 1
+        assert brief["guidance_changes_24h"] == 1  # this site only, refusals apart
+        assert brief["guidance_refused_24h"] == 1
+        assert [c["key"] for c in brief["guidance_changes"]] == ["policy"]
         assert brief["overrides_24h"] == 1
         assert [n["title"] for n in brief["open_requests"]] == ["please unquarantine"]
 

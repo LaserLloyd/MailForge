@@ -467,6 +467,12 @@ def record_override(
     ids = [c.id for c in items]
     if not ids:
         return ids
+    site_id = None
+    try:
+        if draft_id is not None:
+            site_id = store.get_draft(int(draft_id))["site_id"]
+    except Exception:  # noqa: BLE001 — the site tag is for the brief only
+        site_id = None
     AuditLog(store).record(
         actor="user",
         event="approval",
@@ -474,6 +480,7 @@ def record_override(
         subject_id=draft_id,
         detail={
             "action": "guardrail_override",
+            "site_id": site_id,
             "draft_id": draft_id,
             "recipient": recipient,
             "overridden": ids,

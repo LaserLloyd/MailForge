@@ -280,10 +280,22 @@ def _daily_brief(store: Any, site: str) -> dict[str, Any]:
             for r in store.list_agent_notes(site, limit=10, since_days=1)
         ],
         "coverage": store.mailbox_coverage(site),
-        "guidance_changes_24h": store.count_audit_tool_calls("guidance_write", since),
-        "overrides_24h": store.count_audit_events(
-            "approval", since, action="guardrail_override"
-        ),
+        # What the owner reviews next morning: the edits themselves (this site
+        # only), refusals counted apart, never mixed into the change count.
+        "guidance_changes": _guidance_changes_for(store, site, since),
+        "guidance_changes_24h": len(_guidance_changes_for(store, site, since)),
+        "guidance_refused_24h": int(store.conn.execute(
+            "SELECT COUNT(*) FROM audit_log WHERE event='block' AND ts>=? "
+            "AND json_extract(detail_json,'$.tool')='guidance_write' "
+            "AND COALESCE(json_extract(detail_json,'$.site_id'),?)=?",
+            (since, site, site),
+        ).fetchone()[0]),
+        "overrides_24h": int(store.conn.execute(
+            "SELECT COUNT(*) FROM audit_log WHERE event='approval' AND ts>=? "
+            "AND json_extract(detail_json,'$.action')='guardrail_override' "
+            "AND COALESCE(json_extract(detail_json,'$.site_id'),?)=?",
+            (since, site, site),
+        ).fetchone()[0]),
         "open_requests": [
             {"id": int(r["id"]), "author": r["author"], "title": r["title"],
              "body": r["body"], "created_at": r["created_at"]}
@@ -291,6 +303,13 @@ def _daily_brief(store: Any, site: str) -> dict[str, Any]:
             if r["kind"] == "request"
         ],
     }
+
+
+def _guidance_changes_for(store: Any, site: str, since: str) -> list[dict[str, Any]]:
+    from .bridge_ops import guidance_ops
+
+    return [c for c in guidance_ops.guidance_changes_24h(store, since)
+            if (c.get("site_id") or site) == site]
 
 
 def _guard_draft_body(
