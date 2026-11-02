@@ -643,8 +643,7 @@ async def confirm(
             else:
                 if st["notice"]:
                     ui.label(st["notice"]).style("color: var(--warning-text); font-size: 13px")
-                ordered = hard + soft + [c for c in checks if c.passed]
-                for c in ordered:
+                def _row(c: Check) -> None:
                     if c.passed:
                         icon, colour = "check_circle", "var(--success-text, #2e7d32)"
                     elif c.overridable:
@@ -664,6 +663,20 @@ async def confirm(
                                 ui.label(c.detail).style(
                                     f"font-size: 12.5px; color: {colour}; overflow-wrap: anywhere"
                                 )
+
+                for c in hard + soft:
+                    _row(c)
+                ok_rows = [c for c in checks if c.passed]
+                if ok_rows:
+                    title_ok = (
+                        f"{len(ok_rows)} other checks passed" if (hard or soft)
+                        else f"All {len(ok_rows)} checks passed"
+                    )
+                    with ui.expansion(title_ok, icon="check_circle").props("dense").classes(
+                        "w-full"
+                    ).style("font-size: 13px"):
+                        for c in ok_rows:
+                            _row(c)
                 if hard:
                     ui.label("Fix the red items to send. They can't be skipped.").style(
                         "font-size: 12.5px; color: var(--danger-text); font-weight: 600"
