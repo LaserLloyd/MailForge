@@ -32,26 +32,9 @@ def _draft(store, mid, state="PENDING") -> int:
                               "Hello,\n\nThanks.\n\nJake", state, {})
 
 
-# --- 1. the re-type box must accept the exact address ----------------------
-ADDR = "ann@example.test"
-
-
-@pytest.mark.parametrize("typed", [ADDR, f" {ADDR.upper()} ", ADDR + "\n"])
-def test_retype_matches_the_exact_address(typed):
-    assert detail.retype_matches(typed, ADDR) is True
-
-
-@pytest.mark.parametrize("typed", [None, "", ADDR[:-1], "bob" + ADDR[3:], ADDR + "t"])
-def test_retype_rejects_anything_else(typed):
-    assert detail.retype_matches(typed, ADDR) is False
-
-
-def test_retype_value_reads_the_event_not_the_widget():
-    # NiceGUI hands the handler the NEW value in e.args; reading input.value
-    # inside the handler lags one keystroke behind.
-    assert detail.event_text(ADDR) == ADDR
-    assert detail.event_text([ADDR]) == ADDR
-    assert detail.event_text(None) == ""
+# --- 1. the re-type gate is gone ---------------------------------------------
+def test_there_is_no_retype_gate_any_more():
+    assert not hasattr(detail, "retype_matches")
 
 
 # --- 2. a stale page must not overwrite a draft that moved on -----------------

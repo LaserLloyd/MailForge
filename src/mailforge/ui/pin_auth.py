@@ -315,6 +315,8 @@ def render_page(*, message: str = "", next_url: str = "/", kind_hint: str | None
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0e0e1b">
 <title>Sign in - MailForge</title>
 <style>
 :root{{color-scheme:light dark;--bg:#f5f6f8;--card:#fff;--fg:#1c2330;--muted:#5d6778;--accent:#2f5fd0;--bad:#b3261e;--line:#d5d9e2}}

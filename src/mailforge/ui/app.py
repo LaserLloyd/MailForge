@@ -37,7 +37,7 @@ from ..paths import (
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse, Response
 
-from . import pin_auth, theme
+from . import pin_auth, pwa, theme
 from .pages import activity as activity_page
 from .pages import compose as compose_page
 from .pages import dashboard as dashboard_page
@@ -655,6 +655,7 @@ def build_app(
     _install_host_guard(_PORT)
     _install_theme_files()
     _register_health(store)
+    pwa.register_routes(nicegui_app)
     _register_signin()
     _register_pages(store, settings, bridge)
 
