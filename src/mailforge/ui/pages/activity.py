@@ -80,7 +80,7 @@ def _event_list(store: object) -> None:
     with ui.column().classes("w-full").style("gap: 6px"):
         for r in shown:
             with ui.element("div").classes("bb-row w-full").style("cursor: default"):
-                with ui.row().classes("w-full items-center no-wrap").style("gap: 10px"):
+                with ui.row().classes("w-full items-center no-wrap bb-split").style("gap: 10px"):
                     theme.badge(r["event"], _EVENT_KINDS.get(r["event"], ""))
                     ui.label(r["actor"]).style("font-weight: 600; font-size: 13px")
                     subject = (

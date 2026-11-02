@@ -289,7 +289,7 @@ def _render_row(kind: str, row: Any) -> None:
     with ui.element("div").classes("bb-row w-full").on(
         "click", lambda: ui.navigate.to(_row_url(kind, row_id))
     ):
-        with ui.row().classes("w-full items-start no-wrap").style("gap: 10px"):
+        with ui.row().classes("w-full items-start no-wrap bb-split").style("gap: 10px"):
             with ui.column().classes("col").style("gap: 3px; min-width: 0"):
                 theme.subject_label(_value(row, "subject", ""), style="font-weight: 700")
                 ui.label(
@@ -345,7 +345,7 @@ def render_detail(store: object, settings: object, kind: str, row_id: int) -> No
             ("To", _recipients(kind, row) or "(none)"),
             ("Recorded", _local(_value(row, "created_at"))),
         ):
-            with ui.row().classes("w-full no-wrap").style("gap: 8px"):
+            with ui.row().classes("w-full no-wrap bb-kv").style("gap: 8px"):
                 ui.label(caption).style(
                     "font-size: 11.5px; color: var(--text-tertiary); min-width: 168px"
                 )
@@ -357,7 +357,7 @@ def render_detail(store: object, settings: object, kind: str, row_id: int) -> No
                 ("SMTP Message-ID", str(_value(row, "smtp_message_id", "") or "—")),
                 ("Origin", _origin_label(kind, row)),
             ):
-                with ui.row().classes("w-full no-wrap").style("gap: 8px"):
+                with ui.row().classes("w-full no-wrap bb-kv").style("gap: 8px"):
                     ui.label(caption).style(
                         "font-size: 11.5px; color: var(--text-tertiary); min-width: 168px"
                     )
@@ -380,7 +380,7 @@ def render_detail(store: object, settings: object, kind: str, row_id: int) -> No
                 ).style("font-size: 12.5px; color: var(--danger-text)")
         else:
             expires = _local(_value(row, "expires_at"))
-            with ui.row().classes("w-full no-wrap").style("gap: 8px"):
+            with ui.row().classes("w-full no-wrap bb-kv").style("gap: 8px"):
                 ui.label("Authorisation expires").style(
                     "font-size: 11.5px; color: var(--text-tertiary); min-width: 168px"
                 )
