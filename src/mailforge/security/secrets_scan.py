@@ -38,6 +38,17 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 _TOKEN_RE = re.compile(r"\b[A-Za-z0-9+/=_\-]{20,}\b")
 
 
+# A token made only of short lowercase words, numbers and separators
+# (firmware_package_model_m7_v2, /blog/2026/11/how-to-license-music) is prose or
+# a path, not an opaque credential, however long it is.
+_WORDLIKE_SEGMENT_RE = re.compile(r"^(?:[a-z]{1,15}[0-9]{0,4}|[0-9]{1,6})$")
+
+
+def _is_wordlike(tok: str) -> bool:
+    segments = [s for s in re.split(r"[_\-/]+", tok) if s]
+    return len(segments) >= 2 and all(_WORDLIKE_SEGMENT_RE.match(s) for s in segments)
+
+
 def _shannon_entropy(s: str) -> float:
     if not s:
         return 0.0
@@ -56,7 +67,7 @@ def _heuristic_scan(text: str) -> list[str]:
             found.add(name)
     # High-entropy generic tokens (catch-all for opaque credentials).
     for tok in _TOKEN_RE.findall(text):
-        if len(tok) >= 24 and _shannon_entropy(tok) >= 4.0:
+        if len(tok) >= 24 and _shannon_entropy(tok) >= 4.0 and not _is_wordlike(tok):
             found.add("HighEntropyString")
     return sorted(found)
 
