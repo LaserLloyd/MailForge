@@ -22,8 +22,11 @@ log = logging.getLogger(__name__)
 # Presidio-compatible entity names so the rest of the system speaks one vocab.
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")
 _SSN_RE = re.compile(r"\b(?!000|666|9\d\d)\d{3}[-\s]?(?!00)\d{2}[-\s]?(?!0000)\d{4}\b")
+# A phone number embedded in a longer hyphenated id (123-4567890-1234567, a
+# marketplace order number) is not a phone number: refuse a hyphen+digit on
+# either side.
 _PHONE_RE = re.compile(
-    r"(?<!\d)(?:\+?1[-.\s]?)?(?:\(\d{3}\)|\d{3})[-.\s]?\d{3}[-.\s]?\d{4}(?!\d)"
+    r"(?<!\d)(?<!\d-)(?:\+?1[-.\s]?)?(?:\(\d{3}\)|\d{3})[-.\s]?\d{3}[-.\s]?\d{4}(?!\d)(?!-\d)"
 )
 _IBAN_RE = re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b")
 _CC_RE = re.compile(r"\b(?:\d[ -]?){13,19}\b")
@@ -41,6 +44,29 @@ def _luhn_ok(digits: str) -> bool:
                 d -= 9
         total += d
     return total % 10 == 0
+
+
+def _card_prefix_ok(digits: str) -> bool:
+    """True when the digits start like a real card issuer range.
+
+    Luhn alone passes about one random number in ten, so a 14-digit order
+    reference such as 20261102123456 would be reported as a card. Real
+    issuers use fixed prefixes (Visa 4, Mastercard 51-55 / 2221-2720, Amex
+    34/37, Discover 6011/644-649/65, Diners 300-305/36/38/39, JCB 3528-3589,
+    UnionPay 62).
+    """
+    d = "".join(c for c in digits if c.isdigit())
+    if not d:
+        return False
+    if d[0] == "4":
+        return True
+    two = int(d[:2])
+    if 51 <= two <= 55 or two in (34, 37, 36, 38, 39, 62, 65):
+        return True
+    four = int(d[:4]) if len(d) >= 4 else 0
+    if 2221 <= four <= 2720 or 3528 <= four <= 3589 or four == 6011:
+        return True
+    return 300 <= int(d[:3]) <= 305 or 644 <= int(d[:3]) <= 649
 
 
 def _iban_ok(iban: str) -> bool:
@@ -65,7 +91,7 @@ def _heuristic_detect(text: str) -> dict[str, list[tuple[int, int]]]:
     for m in _SSN_RE.finditer(text):
         add("US_SSN", m)
     for m in _CC_RE.finditer(text):
-        if _luhn_ok(m.group()):
+        if _luhn_ok(m.group()) and _card_prefix_ok(m.group()):
             add("CREDIT_CARD", m)
     for m in _IBAN_RE.finditer(text):
         if _iban_ok(m.group()):
