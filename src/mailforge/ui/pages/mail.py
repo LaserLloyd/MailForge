@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 from nicegui import ui
 
 from ...security.inbound_screening import ai_may_read
+from .. import links as links_ui
 from .. import markdown as markdown_ui
 from .. import presend, theme
 from . import assistant
@@ -372,14 +373,15 @@ def _render_row(
             )
             with ui.column().classes("col").style("gap: 2px; min-width: 0"):
                 with ui.row().classes("w-full items-center no-wrap").style("gap: 6px"):
-                    ui.label(
+                    theme.copyable_address(
+                        _value(row, "from_addr"),
                         str(
                             _value(row, "from_name")
                             or _value(row, "from_addr")
                             or "(unknown sender)"
-                        )
-                    ).classes("bb-clip-1").style(
-                        "font-weight: 800" if unseen else "font-weight: 600"
+                        ),
+                        classes="bb-clip-1",
+                        style="font-weight: 800" if unseen else "font-weight: 600",
                     )
                     ui.space()
                     ui.label(_short_time(_value(row, "received_at"))).style(
@@ -672,9 +674,15 @@ def _message_reader(
             )
         with ui.column().classes("col").style("gap: 1px; min-width: 0"):
             theme.subject_label(subject, full=True, style="font-size: 18px; font-weight: 800")
-            ui.label(f"{sender} · {_short_time(_value(msg, 'received_at'))}").style(
-                "font-size: 12px; color: var(--text-secondary)"
-            )
+            with ui.row().classes("items-center no-wrap").style("gap: 4px"):
+                theme.copyable_address(
+                    _value(msg, "from_addr"),
+                    str(sender),
+                    style="font-size: 12px; color: var(--text-secondary)",
+                )
+                ui.label(f"· {_short_time(_value(msg, 'received_at'))}").style(
+                    "font-size: 12px; color: var(--text-secondary)"
+                )
         prev_id, next_id = neighbors
         if prev_id is not None or next_id is not None:
             prev_btn = ui.button(
@@ -802,25 +810,45 @@ def _message_reader(
         ).style("font-size: 12px; color: var(--text-secondary)")
 
     with ui.card().classes("w-full bb-card").style("padding: 12px; gap: 3px"):
-        ui.label(
-            f"From: {sender}"
-            + (
-                f" <{_value(msg, 'from_addr')}>"
-                if _value(msg, "from_name") and _value(msg, "from_addr")
-                else ""
+        with ui.row().classes("items-center").style("gap: 4px"):
+            ui.label("From:").style("font-size: 13px; font-weight: 700")
+            theme.copyable_address(
+                _value(msg, "from_addr"),
+                str(sender)
+                + (
+                    f" <{_value(msg, 'from_addr')}>"
+                    if _value(msg, "from_name") and _value(msg, "from_addr")
+                    else ""
+                ),
+                style="font-size: 13px; font-weight: 700; overflow-wrap: anywhere",
             )
-        ).style("font-size: 13px; font-weight: 700; overflow-wrap: anywhere")
-        ui.label(f"To: {_value(msg, 'to_addrs', '') or ''}").style(
-            "font-size: 11.5px; color: var(--text-tertiary); overflow-wrap: anywhere"
+        theme.copyable_addresses(
+            _value(msg, "to_addrs", ""),
+            prefix="To:",
+            style="font-size: 11.5px; color: var(--text-tertiary); overflow-wrap: anywhere",
         )
+        if _value(msg, "cc_addrs", ""):
+            theme.copyable_addresses(
+                _value(msg, "cc_addrs", ""),
+                prefix="Cc:",
+                style="font-size: 11.5px; color: var(--text-tertiary); overflow-wrap: anywhere",
+            )
 
-    markdown_ui.reader(
-        str(_value(msg, "sanitized_text", "") or "(no text content)"),
-        trusted_markdown=False,
-        title="Message",
-        note="Sanitized content. Remote images, scripts, and active content are never loaded.",
-        markdown_default=True,
-        allow_links=False,
+    body_text = str(_value(msg, "sanitized_text", "") or "(no text content)")
+    links_ui.body_with_links(
+        store,
+        message_id,
+        body_text,
+        screening_status=_value(msg, "screening_status", ""),
+        quarantined=_value(msg, "quarantined", 0),
+        render_plain=lambda: markdown_ui.reader(
+            body_text,
+            trusted_markdown=False,
+            title="Message",
+            note="Sanitized content. Remote images, scripts, and active content are never loaded.",
+            markdown_default=True,
+            allow_links=False,
+        ),
     )
 
     _attachments_card(store, message_id, bool(_value(msg, "has_attachments", 0)))

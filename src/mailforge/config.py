@@ -101,6 +101,8 @@ class IMAPAccount(BaseModel):
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_starttls: bool = True
+    # Optional signature for this mailbox; empty => the global one is used.
+    signature: str = ""
 
     @field_validator("site_id")
     @classmethod

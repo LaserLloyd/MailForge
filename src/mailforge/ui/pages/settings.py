@@ -127,6 +127,16 @@ def render(store: object, settings: object) -> None:
 
     # --- IMAP accounts (display + editable host/port/username) ---------------
     imap_inputs: list[dict[str, Any]] = []
+    style_inputs: dict[str, Any] = {}
+
+    def _shared_signature() -> str:
+        box = style_inputs.get("signature")
+        if box is not None:
+            return str(box.value or "").strip()
+        from ...signatures import global_signature
+
+        return global_signature(settings)
+
     with ui.card().classes("bb-card w-full"):
         ui.label("IMAP accounts").classes("text-subtitle1 text-weight-bold").style("color: var(--text-link)")
         accounts = list(getattr(settings, "imap_accounts", []) or [])
@@ -153,8 +163,36 @@ def render(store: object, settings: object) -> None:
                 ).props("flat dense round color=negative").tooltip(
                     f"Stop listening to {acct.username} (messages are kept)"
                 )
+            with ui.column().classes("w-full").style("gap: 2px; margin: -4px 0 8px 0"):
+                with ui.row().classes("items-center").style("gap: 6px"):
+                    ui.label("Address:").style("font-size: 12px; color: var(--text-secondary)")
+                    theme.copyable_address(acct.username, style="font-size: 12px; font-weight: 700")
+                sig = ui.textarea(
+                    "Signature for this mailbox (optional)",
+                    value=getattr(acct, "signature", "") or "",
+                    placeholder="Leave empty to use the shared signature below.",
+                ).classes("w-full").props("outlined dense autogrow")
+                sig_preview = ui.label("").style(
+                    "white-space: pre-wrap; font-size: 12px; color: var(--text-secondary); "
+                    "border-left: 3px solid var(--border); padding-left: 8px"
+                )
+
+                def _paint(_e=None, s=sig, pv=sig_preview) -> None:
+                    from ...signatures import block
+
+                    own = str(s.value or "").strip()
+                    shared = _shared_signature()
+                    text = own or shared
+                    if not text:
+                        pv.set_text("Preview: no signature will be added for this mailbox.")
+                    else:
+                        who = "its own" if own else "the shared"
+                        pv.set_text(f"Preview ({who} signature):" + block(text))
+
+                sig.on_value_change(_paint)
+                _paint()
             imap_inputs.append(
-                {"acct": acct, "host": host, "port": port, "user": user, "site": site}
+                {"acct": acct, "host": host, "port": port, "user": user, "site": site, "sig": sig}
             )
 
     # --- Add mailbox ---------------------------------------------------------
@@ -330,7 +368,6 @@ def render(store: object, settings: object) -> None:
                 smtp_inputs["starttls"] = ui.switch("STARTTLS", value=smtp.starttls)
 
     # --- Style / context docs / signature / tone -----------------------------
-    style_inputs: dict[str, Any] = {}
     with ui.card().classes("bb-card w-full q-mt-md"):
         ui.label("Style & context").classes("text-subtitle1 text-weight-bold").style("color: var(--text-link)")
         style_inputs["style_paths"] = ui.input(
@@ -342,7 +379,8 @@ def render(store: object, settings: object) -> None:
             value=_csv(getattr(style, "context_doc_paths", []) if style else []),
         ).classes("w-full")
         style_inputs["signature"] = ui.textarea(
-            "Signature", value=getattr(style, "signature", "") if style else ""
+            "Shared signature (used by any mailbox without its own)",
+            value=getattr(style, "signature", "") if style else "",
         ).classes("w-full").props("outlined")
         style_inputs["tone"] = ui.input(
             "Tone", value=getattr(style, "tone", "professional") if style else "professional"
@@ -491,6 +529,7 @@ def render(store: object, settings: object) -> None:
                 acct.port = int(row["port"].value or acct.port)
                 acct.username = (row["user"].value or "").strip()
                 acct.site_id = row["site"].value or default_site
+                acct.signature = str(row["sig"].value or "").strip()
             if smtp is not None and smtp_inputs:
                 smtp.host = (smtp_inputs["host"].value or "").strip()
                 smtp.port = int(smtp_inputs["port"].value or smtp.port)

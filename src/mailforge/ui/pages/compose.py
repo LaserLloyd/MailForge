@@ -15,6 +15,7 @@ from nicegui import run, ui
 from ...mail.markdown import markdown_to_safe_html
 from ...response_templates import expand_template
 from ...security.inbound_screening import ai_may_read
+from ...signatures import append_signature, signature_for, swap_signature
 from .. import presend, theme
 from ..markdown import safe_markdown
 
@@ -386,12 +387,12 @@ def render(
             template_subject,
             question=subject,
             site_name=site_name,
-            signature=_signature(settings),
+            signature=signature_for(settings, from_addr),
         )
         template_body = expand_template(
             template_body,
             site_name=site_name,
-            signature=_signature(settings),
+            signature=signature_for(settings, from_addr),
         )
     prefill_body = template_body
     if saved is None and replied is not None and not template_body:
@@ -411,7 +412,13 @@ def render(
         "subject": str(_value(saved, "subject", subject or template_subject) or ""),
         "body": str(_value(saved, "body", prefill_body) or ""),
         "in_reply_to": in_reply_to,
+        "sig": "",  # the signature text MailForge itself last inserted
     }
+    if saved is None:
+        # New message or reply: sign it with the From mailbox's signature.
+        _sig = signature_for(settings, state["from"])
+        state["body"] = append_signature(state["body"], _sig)
+        state["sig"] = _sig if state["body"] != prefill_body else ""
 
     with ui.row().classes("w-full items-center no-wrap").style("gap: 8px"):
         ui.button(icon="arrow_back", on_click=lambda: ui.navigate.to("/mail")).props(
@@ -430,8 +437,19 @@ def render(
             {u: u for u in usernames},
             value=state["from"],
             label="From",
-            on_change=lambda e: state.update({"from": e.value}),
+            on_change=lambda e: _from_changed(e.value),
         ).props("outlined dense").classes("w-full")
+        def _from_changed(value: Any) -> None:
+            state.update({"from": value})
+            new_sig = signature_for(settings, value)
+            current = str(body_in.value or "")
+            swapped = swap_signature(current, state["sig"], new_sig)
+            if swapped != current:
+                body_in.value = swapped
+                state["sig"] = new_sig
+            elif not state["sig"] and not current.strip():
+                state["sig"] = new_sig
+
         to_in = ui.input(
             "To",
             value=state["to"],
@@ -490,12 +508,12 @@ def render(
                         str(_value(row, "subject", "") or ""),
                         question=str(subj_in.value or ""),
                         site_name=name,
-                        signature=_signature(settings),
+                        signature=signature_for(settings, from_addr),
                     )
                     body_value = expand_template(
                         str(_value(row, "body", "") or ""),
                         site_name=name,
-                        signature=_signature(settings),
+                        signature=signature_for(settings, from_addr),
                     )
                     if subject_value and not str(subj_in.value or "").strip():
                         subj_in.value = subject_value
@@ -698,10 +716,18 @@ def render(
                                 theme.clean_subject(_value(row, "subject", "")),
                                 _draft_url(did),
                             ).classes("bb-subject").style("font-weight: 700")
-                            ui.label(
-                                f"To: {str(_value(row, 'recipient', '') or '(not set)')} · "
-                                f"{str(_value(row, 'updated_at', '') or '')[:19].replace('T', ' ')}"
-                            ).style("font-size: 11.5px; color: var(--text-tertiary)")
+                            with ui.row().classes("items-center no-wrap").style("gap: 4px"):
+                                small = "font-size: 11.5px; color: var(--text-tertiary)"
+                                ui.label("To:").style(small)
+                                theme.copyable_address(
+                                    _value(row, "recipient", ""),
+                                    str(_value(row, "recipient", "") or "(not set)"),
+                                    style=small,
+                                )
+                                ui.label(
+                                    "· "
+                                    + str(_value(row, "updated_at", "") or "")[:19].replace("T", " ")
+                                ).style(small)
                         ui.button(
                             icon="delete", on_click=lambda _e, i=did: _delete(i)
                         ).props("flat round dense color=negative")
@@ -728,8 +754,10 @@ def render(
                     ui.label(theme.clean_subject(_value(row, "subject", ""))).classes(
                         "col bb-clip-1"
                     )
-                    ui.label(str(_value(row, "recipient", "") or "")).style(
-                        "font-size: 11.5px; color: var(--text-tertiary)"
+                    theme.copyable_address(
+                        _value(row, "recipient", ""),
+                        str(_value(row, "recipient", "") or ""),
+                        style="font-size: 11.5px; color: var(--text-tertiary)",
                     )
                     theme.badge("SENT", "success")
                     ui.label(
