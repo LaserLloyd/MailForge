@@ -18,8 +18,9 @@ Actions (spec §5):
   * Reject  — audit only; state REJECTED. No send.
 
 Recipient binding (spec §0.4 / §11): if the recipient is a NEW external address
-(``not store.is_allowlisted(recipient)``), the human must RE-TYPE the exact
-address before Approve/Send is enabled.
+(``not store.is_allowlisted(recipient)``), the pre-send popup shows the address
+prominently and raises an overridable "you haven't emailed this address before"
+warning (no typing).
 
 Approvals are rate-limited per hour via ``settings.security.approvals_per_hour``.
 """
@@ -115,22 +116,6 @@ def _value(row: Any, name: str, default: Any = None) -> Any:
 #: can be looking at a draft that has since been sent (or rejected) elsewhere.
 EDITABLE = frozenset({"DRAFT", "PENDING", "BLOCKED", "DEFERRED_NO_LLM"})
 REJECTABLE = EDITABLE
-
-
-def retype_matches(typed: Any, recipient: str) -> bool:
-    """Did the owner re-type the recipient address exactly (case-blind)?"""
-    return str(typed or "").strip().lower() == str(recipient or "").strip().lower() != ""
-
-
-def event_text(args: Any) -> str:
-    """The new text of an input's ``update:model-value`` event.
-
-    Read the event, never ``input.value`` inside the handler: the widget's own
-    value is still one keystroke behind there, so the exact address never matched.
-    """
-    if isinstance(args, (list, tuple)):
-        args = args[0] if args else ""
-    return "" if args is None else str(args)
 
 
 def stale_reason(store: object, draft_id: int, allowed: frozenset[str]) -> str | None:
@@ -518,8 +503,6 @@ def render(
             ui.label("No guardrail flags recorded.").style("color: var(--text-secondary)")
 
     # --- recipient binding (§0.4) ----------------------------------------------
-    retype_ok = {"value": not is_external}  # allowlisted => no retype needed
-
     with ui.element("div").classes("bb-card w-full q-pa-md"):
         with ui.row().classes("items-center").style("gap: 8px; margin-bottom: 8px"):
             ui.icon("outbox", size="20px").style("color: var(--text-secondary)")
@@ -547,18 +530,9 @@ def render(
                 theme.badge("known recipient", "success")
         if is_external:
             ui.label(
-                "This is a new / external recipient. Re-type the exact address "
-                "to enable Approve & Send (invariant §0.4)."
+                "You haven't emailed this address before. You'll be asked to check "
+                "it before sending."
             ).style("font-size: 12px; color: var(--danger-text); margin-top: 4px")
-            confirm = ui.input("Re-type recipient address").props("dense outlined").classes(
-                "w-96"
-            )
-
-            def _check_retype(typed: str) -> None:
-                retype_ok["value"] = retype_matches(typed, recipient)
-                _sync_buttons()
-
-            confirm.on("update:model-value", lambda e: _check_retype(event_text(e.args)))
 
     # --- drafted reply (outbound bubble, editable) -------------------------------
     with ui.row().classes("w-full no-wrap justify-end").style("gap: 10px"):
@@ -640,7 +614,7 @@ def render(
     def _sync_buttons() -> None:
         body_ok = bool(str(state["body"] or "").strip())
         source_ok = source_identity != "unresolved"
-        approve_btn.set_enabled(retype_ok["value"] and _sendable() and body_ok and source_ok)
+        approve_btn.set_enabled(_sendable() and body_ok and source_ok)
         save_btn.set_enabled(_editable())
         reject_btn.set_enabled(state["draft_state"] not in {"SENT", "REJECTED", "APPROVED"})
 
@@ -749,7 +723,6 @@ def render(
                 participants=people,
                 source_message_id=message_id,
                 draft_state=state["draft_state"],
-                retype_ok=retype_ok["value"],
                 rate=_rate_limit_ok(settings),
                 sender_ok=source_identity != "unresolved",
                 bridge=bridge,

@@ -29,6 +29,8 @@ from typing import Any, Iterator
 
 from nicegui import background_tasks, ui
 
+from . import pwa
+
 log = logging.getLogger(__name__)
 
 # (key, label, material icon, route) — order = sidebar order.
@@ -482,6 +484,7 @@ def apply() -> None:
     Quasar's dark mode and brand colours are NOT set here: the theme's Quasar
     adapter keeps both in step with whichever theme the user picked."""
     ui.add_head_html(_theme_head())
+    ui.add_head_html(pwa.head_tags())
 
 
 def theme_picker() -> None:

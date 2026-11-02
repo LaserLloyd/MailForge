@@ -147,7 +147,6 @@ def _gate_checks(
     source_message_id: int | None,
     draft_state: str | None,
     sendable_states: Iterable[str],
-    retype_ok: bool | None,
     rate: tuple[bool, int] | None,
     sender_ok: bool | None,
     require_subject: bool,
@@ -251,16 +250,6 @@ def _gate_checks(
                 "This draft is ready to send",
                 ok,
                 "" if ok else f"This draft is {str(draft_state).lower()}, so it can't be sent.",
-                overridable=False,
-            )
-        )
-    if retype_ok is not None:
-        out.append(
-            Check(
-                "retype",
-                "You re-typed the new recipient's address",
-                bool(retype_ok),
-                "" if retype_ok else "Type the recipient's address again to confirm it's right.",
                 overridable=False,
             )
         )
@@ -369,7 +358,6 @@ def evaluate(
     source_message_id: int | None = None,
     draft_state: str | None = None,
     sendable_states: Iterable[str] = ("DRAFT", "PENDING"),
-    retype_ok: bool | None = None,
     rate: tuple[bool, int] | None = None,
     sender_ok: bool | None = None,
     relax_recipient_rules: bool = False,
@@ -388,13 +376,13 @@ def evaluate(
         source_message_id=source_message_id,
         draft_state=draft_state,
         sendable_states=sendable_states,
-        retype_ok=retype_ok,
         rate=rate,
         sender_ok=sender_ok,
         require_subject=require_subject,
     )
     sec = getattr(settings, "security", settings)
     people = {a.lower() for a in participants}
+    checks.extend(_first_contact_checks(store, addrs, people))
     if relax_recipient_rules and addrs:
         # A brand-new email from the owner: its own recipients count as known
         # (rules a/b bind *replies* to people already in the conversation).
@@ -429,6 +417,33 @@ def evaluate(
             )
         )
     return Evaluation(checks, flags)
+
+
+def _first_contact_checks(store: Any, addrs: list[str], people: set[str]) -> list[Check]:
+    """A soft warning for an address never written to before: not allowlisted and
+    not someone in this thread. The owner clears it with the ordinary tick; no
+    typing, and it is never a hard gate."""
+    new: list[str] = []
+    for a in addrs:
+        if a.lower() in people:
+            continue
+        try:
+            known = bool(store.is_allowlisted(a))
+        except Exception:  # noqa: BLE001
+            known = False
+        if not known:
+            new.append(a)
+    if not new:
+        return []
+    return [
+        Check(
+            "first_contact",
+            "You've emailed this address before",
+            False,
+            "You haven't emailed this address before: " + ", ".join(new)
+            + ". Check it's the right person.",
+        )
+    ]
 
 
 def collect_checks(*args: Any, **kwargs: Any) -> list[Check]:
@@ -662,6 +677,11 @@ async def _confirm_dialog(
         ui.label(title).style("font-weight: 800; font-size: 16px")
         with ui.column().classes("w-full").style("gap: 2px"):
             for caption, text in facts:
+                if caption == "To":  # the recipient is the one fact to get right
+                    ui.label(f"To: {text}").style(
+                        "font-size: 16px; font-weight: 800; overflow-wrap: anywhere"
+                    ).props("data-testid=presend-recipient")
+                    continue
                 ui.label(f"{caption}: {text}").style(
                     "font-size: 13px; color: var(--text-secondary); overflow-wrap: anywhere"
                 )

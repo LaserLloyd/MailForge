@@ -14,7 +14,19 @@ Published by Laser Lloyd — https://www.laserlloyd.com
   mail it answers, and the thread before it, as read. New columns
   `messages.seen_sync_pending` / `seen_sync_error` (idempotent migration).
 
+### Changed
+- **No more re-typing the recipient.** Approve & Send no longer waits for the address to be typed
+  again. The pre-send popup shows the recipient large, and an address you have never written to (not
+  allowlisted, not in the thread) adds an overridable "You haven't emailed this address before" row,
+  covered by the usual "I've read these warnings" tick. Invalid or blocked recipients still stop the
+  send.
+
 ### Added
+- **Install MailForge as an app (PWA).** A web app manifest (`/manifest.webmanifest`: name, standalone,
+  dark theme colours, 192/512/maskable gold-envelope icons), a pass-through service worker (`/sw.js`;
+  it never caches or answers anything, so no mail is stored) and the head tags let Chrome offer
+  "Install app". The routes hold no data, sit before the sign-in gate and stay behind the Host/Origin
+  guard. Icons regenerate with `scripts/make_pwa_icons.py`.
 - **PIN or password sign-in for the web UI**, so a phone can open it without a launcher link.
   `mailforge ui-pin set | clear | status` (the secret is typed twice at a hidden prompt or piped on
   stdin, never on the command line; a numeric PIN needs 6+ digits, a password 8+ characters). Only a

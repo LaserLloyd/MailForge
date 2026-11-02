@@ -128,7 +128,6 @@ def _ok_report(monkeypatch):
         ({"rate": (False, 5)}, "rate_limit"),
         ({"draft_state": "SENT"}, "draft_sendable"),
         ({"draft_state": "APPROVED"}, "draft_sendable"),
-        ({"retype_ok": False}, "retype"),
         ({"sender_ok": False}, "sender_ok"),
     ],
 )
@@ -241,3 +240,30 @@ def test_signature_changes_when_a_check_changes():
     b = [presend.Check("x", "X", False, "now bad")]
     assert presend.signature(a) != presend.signature(b)
     assert presend.signature(a) == presend.signature(list(a))
+
+
+# --- first contact: an overridable warning, never a gate, never typing ------
+def test_never_contacted_recipient_is_an_overridable_warning(store, monkeypatch):
+    _ok_report(monkeypatch)
+    ev = _eval(store, recipients="stranger@new.test", participants=set())
+    row = _by_id(ev.checks)["first_contact"]
+    assert not row.passed and row.overridable and not row.blocking
+    assert "haven't emailed this address before" in row.detail
+    assert "stranger@new.test" in row.detail
+    assert presend.hard_failures(ev.checks) == []
+    assert row in presend.warnings(ev.checks)
+
+
+def test_allowlisted_or_thread_recipient_has_no_first_contact_warning(store, monkeypatch):
+    _ok_report(monkeypatch)
+    store.record_allowlist("old@friend.test", "sent")
+    assert "first_contact" not in _by_id(
+        _eval(store, recipients="old@friend.test", participants=set()).checks)
+    assert "first_contact" not in _by_id(
+        _eval(store, recipients="bob@example.test", participants={"bob@example.test"}).checks)
+
+
+def test_evaluate_takes_no_typed_confirmation(store):
+    import inspect
+
+    assert "retype_ok" not in inspect.signature(presend.evaluate).parameters
