@@ -34,7 +34,10 @@ from ..paths import (
     ui_port_override,
     url_host,
 )
-from . import theme
+from starlette.requests import Request
+from starlette.responses import HTMLResponse, RedirectResponse, Response
+
+from . import pin_auth, theme
 from .pages import activity as activity_page
 from .pages import compose as compose_page
 from .pages import dashboard as dashboard_page
@@ -60,6 +63,9 @@ _LAUNCHER_KEY: str | None = None
 # double-opened launcher tab does not land on "Access denied".
 _PREV_LAUNCHER_KEY: tuple[str, float] | None = None
 _PREV_KEY_GRACE_S = 60.0
+# Set by build_app(): the cookie-signing secret and the store the PIN sign-in audits to.
+_STORAGE_SECRET: str | None = None
+_STORE: object | None = None
 
 
 def _int_or_none(value: str | None) -> int | None:
@@ -209,9 +215,18 @@ def rotate_storage_secret() -> str:
 # --------------------------------------------------------------------------- #
 def _is_authenticated() -> bool:
     try:
-        return bool(nicegui_app.storage.user.get("authenticated"))
+        if nicegui_app.storage.user.get("authenticated"):
+            return True
     except Exception:
-        return False
+        pass
+    # PIN/password sign-in cookie (only honoured while a PIN is set).
+    try:
+        req = context.client.request
+        if _STORAGE_SECRET and req is not None:
+            return pin_auth.cookie_valid(_STORAGE_SECRET, req.cookies.get(pin_auth.COOKIE_NAME))
+    except Exception:
+        pass
+    return False
 
 
 def _try_consume_token(token: str | None) -> bool:
@@ -243,7 +258,25 @@ def _gate(token: str | None) -> bool:
     return _try_consume_token(token)
 
 
+def _signin_target() -> str:
+    """Where to send the person after signing in: the page they asked for, minus any
+    launch credentials in its query string."""
+    try:
+        from urllib.parse import parse_qsl, urlencode
+
+        req = context.client.request
+        q = [(k, v) for k, v in parse_qsl(req.url.query) if k not in ("token", "k")]
+        return pin_auth.safe_next(req.url.path + ("?" + urlencode(q) if q else ""))
+    except Exception:
+        return "/"
+
+
 def _denied() -> None:
+    if pin_auth.pin_is_set():
+        from urllib.parse import quote
+
+        ui.navigate.to("/signin?next=" + quote(_signin_target(), safe="/"))
+        return
     # 403, not the default 200, so a monitor can tell "denied" from "served".
     context.client.status_code = 403
     theme.apply()
@@ -608,7 +641,7 @@ def build_app(
     ``storage_secret`` so :func:`run_ui` (or a test) can launch / inspect. Safe
     to call in tests; does not bind a socket beyond the one-shot port probe.
     """
-    global _PORT, _LAUNCH_TOKEN, _TOKEN_CONSUMED, _LAUNCHER_KEY
+    global _PORT, _LAUNCH_TOKEN, _TOKEN_CONSUMED, _LAUNCHER_KEY, _STORAGE_SECRET, _STORE
 
     host = host or ui_host()
     _PORT = int(port) if port is not None else persistent_port()
@@ -616,10 +649,13 @@ def build_app(
     _TOKEN_CONSUMED = False
     _LAUNCHER_KEY = launcher_key()
     storage_secret = _load_or_create_storage_secret()
+    _STORAGE_SECRET = storage_secret
+    _STORE = store
 
     _install_host_guard(_PORT)
     _install_theme_files()
     _register_health(store)
+    _register_signin()
     _register_pages(store, settings, bridge)
 
     return {
@@ -629,6 +665,117 @@ def build_app(
         "storage_secret": storage_secret,
         "url": f"http://{_display_host(host)}:{_PORT}/?token={_LAUNCH_TOKEN}",
     }
+
+
+def _audit(event: str, detail: dict[str, Any]) -> None:
+    """Sign-in outcomes go to the hash-chained audit log (never a secret value)."""
+    if _STORE is None:
+        return
+    try:
+        from ..audit.log import AuditLog
+
+        AuditLog(_STORE).record("user", event, detail=detail)
+    except Exception as e:  # noqa: BLE001 - auditing must not break the page
+        log.warning("signin audit failed: %s", e)
+
+
+def _request_ip(request: Any) -> str:
+    peer = request.client.host if request.client else ""
+    return pin_auth.client_ip(peer, request.headers.get("x-forwarded-for"))
+
+
+def _https_request(request: Any) -> bool:
+    peer = request.client.host if request.client else ""
+    if request.url.scheme == "https":
+        return True
+    return pin_auth._is_loopback(peer) and request.headers.get("x-forwarded-proto", "") == "https"
+
+
+def _register_signin() -> None:
+    """``GET/POST /signin`` and ``POST /signout``: plain routes (no socket needed), behind
+    the Host/Origin guard like everything else."""
+    from urllib.parse import parse_qs
+
+    if any(getattr(r, "path", None) == "/signin" for r in nicegui_app.routes):
+        return
+    nocache = {"Cache-Control": "no-store"}
+
+    def _page(request: Request, message: str = "", status: int = 200, next_url: str = "/",
+              extra: dict[str, str] | None = None) -> HTMLResponse:
+        resp = HTMLResponse(pin_auth.render_page(message=message, next_url=next_url,
+                                                 kind_hint=pin_auth.kind()), status_code=status)
+        for k, v in {**nocache, **(extra or {})}.items():
+            resp.headers[k] = v
+        if not request.cookies.get(pin_auth.DEVICE_COOKIE):
+            resp.set_cookie(pin_auth.DEVICE_COOKIE, pin_auth.new_device_id(), max_age=365 * 86400,
+                            httponly=True, samesite="strict", secure=_https_request(request))
+        return resp
+
+    def _signin_get(request: Request) -> Response:
+        nxt = pin_auth.safe_next(request.query_params.get("next"))
+        if not pin_auth.pin_is_set():
+            return RedirectResponse("/", status_code=303)
+        if _STORAGE_SECRET and pin_auth.cookie_valid(_STORAGE_SECRET, request.cookies.get(pin_auth.COOKIE_NAME)):
+            return RedirectResponse(nxt, status_code=303)
+        return _page(request, next_url=nxt)
+
+    async def _signin_post(request: Request) -> Response:
+        if not pin_auth.pin_is_set() or not _STORAGE_SECRET:
+            return RedirectResponse("/", status_code=303)
+        raw = b""
+        async for chunk in request.stream():
+            raw += chunk
+            if len(raw) > 4096:
+                return Response("Too large", status_code=413)
+        form = {k: v[0] for k, v in parse_qs(raw.decode("utf-8", "replace")).items()}
+        nxt = pin_auth.safe_next(form.get("next"))
+        remember = form.get("remember") == "1"
+        device = request.cookies.get(pin_auth.DEVICE_COOKIE, "")
+        ip = _request_ip(request)
+        import asyncio
+
+        ok, wait = await asyncio.to_thread(pin_auth.attempt, form.get("secret", ""), device, ip)
+        if ok:
+            _audit("signin_ok", {"ip": ip, "remember": remember})
+            resp = RedirectResponse(nxt, status_code=303)
+            resp.headers["Cache-Control"] = "no-store"
+            resp.set_cookie(
+                pin_auth.COOKIE_NAME,
+                pin_auth.make_cookie(_STORAGE_SECRET, remember),
+                max_age=pin_auth.REMEMBER_SECONDS if remember else None,
+                httponly=True, samesite="strict", secure=_https_request(request), path="/",
+            )
+            return resp
+        if wait > 0:
+            secs = max(1, int(wait) + 1)
+            _audit("signin_locked", {"ip": ip, "retry_after_s": secs})
+            return _page(request, f"Too many tries. Please wait {secs} seconds, then try again.",
+                         429, nxt, {"Retry-After": str(secs)})
+        _audit("signin_failed", {"ip": ip})
+        return _page(request, "That PIN or password isn't right. Please try again.", 401, nxt)
+
+    def _signout(request: Request) -> Response:
+        _audit("signout", {"ip": _request_ip(request)})
+        resp = Response(status_code=204)
+        resp.delete_cookie(pin_auth.COOKIE_NAME, path="/")
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
+    nicegui_app.get("/signin")(_signin_get)
+    nicegui_app.post("/signin")(_signin_post)
+    nicegui_app.post("/signout")(_signout)
+
+
+def sign_out_current_browser() -> None:
+    """The header's Sign out button: drop the launcher/storage flag, then the cookie."""
+    try:
+        nicegui_app.storage.user.pop("authenticated", None)
+    except Exception:  # noqa: BLE001
+        pass
+    ui.run_javascript(
+        "fetch('/signout',{method:'POST',credentials:'same-origin'})"
+        ".finally(()=>{location.href='/signin'})"
+    )
 
 
 def _register_health(store: object) -> None:

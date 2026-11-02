@@ -505,6 +505,21 @@ mailforge token rotate           # new launcher key + cookie secret; restart `ma
 Everything binds `127.0.0.1` unless you set `MAILFORGE_UI_HOST`. The server also prints a one-shot
 `http://127.0.0.1:PORT/?token=...` URL at every start (in Docker: `docker compose logs app | grep "MailForge UI"`).
 
+### Sign in with a PIN or password
+
+```bash
+mailforge ui-pin set      # asks twice, hidden; 6+ digits for a PIN or 8+ characters for a password
+mailforge ui-pin status   # "set" or "not set"; never shows it
+mailforge ui-pin clear    # back to launcher-key access only
+```
+
+With a PIN set, anyone who is not signed in gets a sign-in page. "Remember this device" keeps a
+browser signed in for 30 days; otherwise it ends when the browser closes. Only a salted
+PBKDF2-HMAC-SHA256 hash is stored (`ui_pin`, mode 0600, next to `ui_launcher_key`) and it applies
+at once, no restart. After 5 wrong tries from one device (15 from one address) sign-in waits, with a
+growing delay. Behind a proxy on the same machine the real client address is
+read from `X-Forwarded-For`. The launcher link still works as before.
+
 ### Recovery without the CLI: the `RESET_LOGIN` file
 
 If you can only reach the files (or the app will not start far enough to run a command), create an

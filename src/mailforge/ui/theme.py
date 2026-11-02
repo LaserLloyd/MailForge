@@ -750,6 +750,12 @@ def _outbox_widget(store: object | None = None) -> None:
     chip.on("click", lambda: ui.navigate.to("/outbox"))
 
 
+def _sign_out() -> None:
+    from .app import sign_out_current_browser
+
+    sign_out_current_browser()
+
+
 @contextmanager
 def shell(
     active: str,
@@ -784,6 +790,9 @@ def shell(
             )
             with ui.element("div").classes("w-full q-px-sm"):
                 theme_picker()
+            ui.button("Sign out", icon="logout", on_click=_sign_out).props(
+                "flat no-caps dense"
+            ).classes("bb-nav-btn")
 
     with ui.header(elevated=False).classes("bb-header items-center q-px-md q-py-sm"):
         ui.button(icon="menu", on_click=drawer.toggle).props("flat round dense").classes(
