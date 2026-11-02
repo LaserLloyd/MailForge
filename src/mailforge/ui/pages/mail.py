@@ -665,7 +665,7 @@ def _message_reader(
                 ),
             ).props("outline no-caps color=negative")
 
-    with ui.row().classes("w-full items-center bb-toolbar").style("gap: 6px"):
+    with ui.row().classes("w-full items-center bb-toolbar bb-reader-head").style("gap: 6px"):
         if full_page:
             ui.button(icon="arrow_back", on_click=lambda: ui.navigate.to(back_url)).props(
                 "flat round dense"
@@ -714,7 +714,7 @@ def _message_reader(
         with (
             ui.card().classes("w-full bb-card").style("padding: 12px; border-color: var(--danger-text)")
         ):
-            with ui.row().classes("w-full items-center").style("gap: 8px"):
+            with ui.row().classes("w-full items-center bb-notice").style("gap: 8px"):
                 ui.icon("gpp_maybe", size="22px").style("color: var(--danger-text)")
                 with ui.column().classes("col").style("gap: 1px"):
                     ui.label("Quarantined — suspected prompt injection").style(
@@ -762,7 +762,7 @@ def _message_reader(
             .classes("w-full bb-card")
             .style(f"padding: 12px; border-color: {theme.tone_border(tone)}")
         ):
-            with ui.row().classes("w-full items-center").style("gap: 8px"):
+            with ui.row().classes("w-full items-center bb-notice").style("gap: 8px"):
                 ui.icon(
                     "gpp_maybe" if screening_status == "POTENTIAL_ISSUE"
                     else ("folder_special" if filed else "report"),
@@ -942,7 +942,7 @@ def render(
         else:
             _go(filter=value.removeprefix("view:"), tag="")
 
-    with ui.row().classes("w-full items-center bb-toolbar"):
+    with ui.row().classes("w-full items-center bb-toolbar bb-mail-filters"):
         ui.button("Compose", icon="edit", on_click=lambda: ui.navigate.to("/compose")).props(
             "unelevated no-caps color=primary"
         )
@@ -1287,7 +1287,7 @@ def render(
 
     with (
         ui.row()
-        .classes("w-full items-center bb-card bb-toolbar")
+        .classes("w-full items-center bb-card bb-toolbar bb-bulkbar-inbox")
         .style("gap: 6px; padding: 7px 10px")
     ):
         select_all = ui.checkbox("Select all", on_change=_select_all).props("dense")
@@ -1377,11 +1377,11 @@ def render(
                 with ui.column().classes("w-full items-center q-pa-xl"):
                     ui.icon("drafts", size="52px").style("color: var(--text-tertiary)")
                     ui.label("Select a message to read").style("font-size: 17px; font-weight: 700")
-                    ui.label("On a phone, the message opens as a full reading pane.").style(
+                    ui.label("On a phone or narrow window, the message opens full screen.").style(
                         "color: var(--text-secondary)"
                     )
             else:
-                with ui.row().classes("w-full bb-menu-btn"):
+                with ui.row().classes("w-full bb-back-row"):
                     ui.button(
                         "Back to inbox",
                         icon="arrow_back",

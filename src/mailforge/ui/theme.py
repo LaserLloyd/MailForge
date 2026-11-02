@@ -108,7 +108,7 @@ body, .q-page, .nicegui-content {
 }
 html, body, .q-page-container, .nicegui-content { max-width: 100vw; }
 .nicegui-content { padding: 18px 22px; }
-.bb-menu-btn { display: none; }
+.bb-menu-btn, .bb-back-row { display: none; }
 .bb-header-note { white-space: nowrap; }
 .bb-toolbar { gap: 12px; }
 .bb-ai-drawer {
@@ -180,10 +180,10 @@ html, body, .q-page-container, .nicegui-content { max-width: 100vw; }
 .bb-brand-name { font-weight: 800; letter-spacing: -0.02em; }
 .bb-nav-btn .q-icon { margin-right: 8px; }
 .bb-nav-btn .q-btn__content { width: 100%; justify-content: flex-start; }
-.bb-main-column { min-width: 0; }
+.bb-main-column { min-width: 0; container: page / inline-size; }
 .bb-mail-workspace {
   display: grid;
-  grid-template-columns: minmax(310px, 390px) minmax(0, 1fr);
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
   min-height: calc(100vh - 160px);
   overflow: hidden;
 }
@@ -195,6 +195,7 @@ html, body, .q-page-container, .nicegui-content { max-width: 100vw; }
 /* rows must scroll, never flex-compress into unreadable slivers */
 .bb-mail-list > * { flex: 0 0 auto; }
 .bb-mail-pane {
+  min-width: 0; container: pane / inline-size;
   overflow-y: auto;
   max-height: calc(100vh - 160px);
   padding: 16px 20px 96px; /* room for the sticky action bar */
@@ -375,7 +376,6 @@ html, body, .q-page-container, .nicegui-content { max-width: 100vw; }
 .bb-sync--warn  .bb-sync-text { color: var(--warning-text); font-weight: 600; }
 .bb-sync--new { cursor: pointer; border-color: var(--accent); }
 .bb-sync--new .bb-sync-text { color: var(--text-link); font-weight: 700; }
-@media (max-width: 760px) { .bb-sync .bb-sync-text { display: none; } }
 
 /* quasar component re-skin */
 .q-field--outlined .q-field__control {
@@ -397,12 +397,32 @@ code, pre, .q-code, .bb-mono { font-family: var(--font-mono); }
 }
 a { color: var(--text-link); }
 
-@media (max-width: 760px) {
+/* ---- responsive layout -------------------------------------------------
+   Navigation: the sidebar is a drawer below 1100 px (hamburger in the
+   header); the page gets the full width.  Mail: list + reading pane sit
+   side by side only while the page column is >= 780 px wide (list <= 380,
+   pane >= ~420); narrower, the list and the open message take turns, with a
+   Back control.  Reader pieces wrap by the width of THEIR container (the
+   pane), so they behave the same on a phone and in a squeezed pane. */
+@media (max-width: 1099px) {
   html, body, .q-page-container, .nicegui-content { overflow-x: hidden !important; }
-  .nicegui-content { padding: 12px !important; }
   .bb-menu-btn { display: inline-flex; }
   .bb-header-note { display: none; }
-  .bb-toolbar { align-items: stretch !important; flex-wrap: wrap !important; }
+  .q-header.bb-header { gap: 4px; }
+  .q-btn { min-height: 40px; }
+  .q-btn.q-btn--round { min-width: 40px; }
+  .bb-sync-btn { margin: -8px 0; }
+  .q-checkbox { min-height: 40px; }
+  .q-btn-group .q-btn { padding: 0 14px; font-size: 13px; }
+  .q-field--outlined .q-field__control { min-height: 40px; }
+  .bb-toolbar { flex-wrap: wrap !important; }
+  .bb-nav-btn { min-height: 44px; }
+  .q-drawer { max-width: 86vw; }
+}
+@media (max-width: 760px) {
+  .nicegui-content { padding: 12px !important; }
+  .bb-sync .bb-sync-text { display: none; }
+  .bb-toolbar { align-items: stretch !important; }
   .bb-toolbar .bb-toolbar-grow { width: 100% !important; max-width: none !important; }
   .bb-toolbar .bb-toolbar-grow.col { flex: 1 1 100% !important; }
   .bb-toolbar .q-tabs { width: 100% !important; max-width: 100% !important; overflow: hidden; }
@@ -413,11 +433,46 @@ a { color: var(--text-link); }
   .bb-stat { min-width: 0; flex: 1 1 120px; }
   .bb-row { padding: 11px 12px; }
   .bb-ai-drawer { width: min(94vw, 440px) !important; }
+}
+/* single-pane mail: one thing on screen at a time */
+@container page (max-width: 779px) {
   .bb-mail-workspace { display: block; min-height: 0; }
   .bb-mail-list, .bb-mail-pane { max-height: none; border-right: 0; }
+  .bb-mail-pane { padding: 12px 14px 20px; }
   .bb-mail-workspace.has-selection .bb-mail-list { display: none; }
   .bb-mail-workspace:not(.has-selection) .bb-mail-pane { display: none; }
+  .bb-back-row { display: flex; }
+  /* a message is open full-screen: the list's filters and bulk bar wait behind Back */
+  .bb-main-column:has(.bb-mail-workspace.has-selection) :is(.bb-mail-filters, .bb-bulkbar-inbox) { display: none; }
 }
+/* the bulk-action strip: hide the keyboard hint, keep actions in tidy rows */
+@container page (max-width: 779px) {
+  .bb-bulkbar-inbox .bb-header-note { display: none; }
+  .bb-bulkbar-inbox .q-space { display: none; }
+  .bb-bulkbar-inbox .q-btn { flex: 1 1 auto; }
+}
+/* reader pieces, sized by the pane (or the page, on the full-page reader) */
+@container (max-width: 599px) {
+  .bb-reader-head { flex-wrap: wrap !important; }
+  .bb-reader-head > .col { flex: 1 1 100% !important; order: -1; }
+  .bb-sticky-actions { gap: 6px; padding: 8px; }
+  .bb-sticky-actions > .q-btn { flex: 1 1 calc(50% - 6px); min-width: 0; }
+  .bb-sticky-actions > .q-btn .q-btn__content { white-space: normal; text-align: center; }
+}
+/* rows that are "text left, status/actions right" stack when the container is narrow */
+@container (max-width: 599px) {
+  .bb-split, .bb-kv, .bb-notice { flex-wrap: wrap !important; }
+  .bb-split > .col, .bb-notice > .col { flex: 1 1 100% !important; min-width: 0; }
+  .bb-split > .col:first-child { flex-basis: 100% !important; }
+  .bb-kv > :first-child { min-width: 0 !important; width: 100%; }
+  .bb-split > .bb-clip-1, .bb-split > .col.bb-mono { flex: 1 1 100% !important; }
+  .bb-notice > .q-btn { flex: 1 1 calc(50% - 8px); }
+  .bb-notice > .col { order: 1; }
+  .bb-notice > .q-btn { order: 2; }
+}
+/* long addresses / subjects wrap instead of pushing the page wide */
+.bb-main-column, .bb-main-column .q-card, .bb-row, .bb-mail-pane { overflow-wrap: anywhere; }
+.bb-main-column .q-btn, .bb-main-column .q-badge, .bb-badge { overflow-wrap: normal; }
 """
 
 
@@ -786,7 +841,7 @@ def shell(
     """Page chrome: palette + icon sidebar + header; yields the content column."""
     apply()
 
-    drawer = ui.left_drawer(value=None, fixed=True).props(":breakpoint=760 :width=210")
+    drawer = ui.left_drawer(value=None, fixed=True).props(":breakpoint=1100 :width=210")
     with drawer:
         with ui.column().classes("w-full q-pa-sm").style("gap: 10px"):
             with ui.row().classes("items-center no-wrap q-px-sm").style("gap: 10px"):

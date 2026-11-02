@@ -27,6 +27,17 @@ Published by Laser Lloyd — https://www.laserlloyd.com
   sign-in, failure, lockout and sign-out is written to the audit log. Changing or clearing the PIN
   signs every browser out. The launcher key and one-shot token keep working, and with no PIN set
   nothing changes.
+### Changed
+- **The web UI now fits phones, tablets and foldables.** Below 1100 px the sidebar becomes a drawer
+  (hamburger in the header) so pages get the full width. In the Inbox the list and the reading pane
+  sit side by side only when the page is at least 780 px wide (the pane never drops under about
+  420 px); narrower, the list and the open message take turns and a "Back to inbox" button returns
+  to the list. The reading pane's subject, action buttons and notices wrap by the pane's own width
+  (two-column button grid, status cards stack), the bulk-action bar drops its keyboard hint, and
+  Outbox / Activity rows stack instead of squeezing text into a sliver. Buttons are at least 40 px
+  tall under 1100 px. Layout and CSS only; desktop widths look the same. New `tests/ui/` check
+  (`check_responsive.py`, see its README) measures horizontal scroll, one-letter-per-line text and
+  overlapping buttons at five viewport sizes against a scratch instance.
 
 ### Removed
 - **The bridge no longer has `prepare-send` and `send`.** Agents can read, draft, edit and triage;
