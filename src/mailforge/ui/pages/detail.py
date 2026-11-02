@@ -784,6 +784,7 @@ def render(
             persist=_persist,
             on_failed=_failed,
             store=store,
+            flight_key=f"draft:{int(draft['id'])}",
         )
         if result is None:
             return

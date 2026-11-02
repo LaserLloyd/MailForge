@@ -225,3 +225,87 @@ def test_ui_save_and_reject_refuse_a_moved_row(tmp_path):
         pid = store.create_draft(None, "t", "bob@example.test", "Re", "b", "PENDING")
         assert detail.save_draft_text(store, pid, "PENDING", "new", {}) is True
         assert detail.reject_draft(store, pid) is True
+
+
+# ---- B1: a double click inside the pre-send dialog sends once ---------------
+def _drive_dialog(monkeypatch, clicks, *, flight_key=None, gap=0.02, recheck=0.15):
+    import asyncio
+    from unittest.mock import MagicMock
+
+    fake_ui = MagicMock()
+    buttons = {}
+
+    def button(label="", **kw):
+        b = MagicMock(name=f"btn:{label}")
+        b.on_click = kw.get("on_click")
+        b.enabled = True
+        b.set_enabled.side_effect = lambda v: setattr(b, "enabled", bool(v))
+        b.props.return_value = b
+        buttons[label] = b
+        return b
+
+    fake_ui.button.side_effect = button
+    fake_ui.checkbox.return_value.value = False
+    fake_ui.context.client.id = "page-1"
+    monkeypatch.setattr(presend, "ui", fake_ui)
+
+    calls = {"collect": 0, "transmit": 0}
+
+    async def io_bound(fn, *a, **k):
+        if calls["collect"] >= 1:  # the re-check is slow, like Presidio + the LLM guard
+            await asyncio.sleep(recheck)
+        return fn(*a, **k)
+
+    monkeypatch.setattr(presend, "run", MagicMock(io_bound=io_bound))
+
+    def collect():
+        calls["collect"] += 1
+        return [presend.Check("ok", "Fine", True)]
+
+    async def transmit(_over):
+        calls["transmit"] += 1
+        await asyncio.sleep(0.05)
+        return None
+
+    async def main():
+        task = asyncio.ensure_future(presend.confirm(
+            title="Send?", facts=[("To", "bob@example.test")], collect=collect,
+            transmit=transmit, persist=lambda _r: None, on_failed=lambda e: None,
+            store=None, **({"flight_key": flight_key} if flight_key else {}),
+        ))
+        await asyncio.sleep(0.05)
+        send = buttons["Send"]
+        click_tasks = []
+        for _ in range(clicks):
+            click_tasks.append(asyncio.ensure_future(send.on_click()))
+            await asyncio.sleep(gap)
+            if _ == 0:
+                first_state = (send.enabled, [c.args for c in send.set_text.call_args_list])
+        await asyncio.gather(*click_tasks)
+        res = await asyncio.wait_for(task, 5)
+        return res, first_state
+
+    res, first_state = asyncio.run(main())
+    return calls, res, first_state
+
+
+def test_double_click_in_the_dialog_transmits_once(monkeypatch):
+    calls, res, (enabled, texts) = _drive_dialog(monkeypatch, clicks=2)
+    assert calls["transmit"] == 1
+    assert res is not None and res.sent
+    # the button was disabled and relabelled before the slow re-check finished
+    assert enabled is False
+    assert any("ending" in t[0] for t in texts)
+
+
+def test_single_flight_key_blocks_a_second_dialog_for_the_same_draft(monkeypatch):
+    presend.release_flight(["draft:7"])
+    assert presend.claim_flight(["draft:7"]) is True
+    try:
+        assert presend.claim_flight(["draft:7", "page:x"]) is False
+        assert presend.claim_flight(["page:x"]) is True  # all-or-nothing: x was not taken
+        presend.release_flight(["page:x"])
+    finally:
+        presend.release_flight(["draft:7"])
+    assert presend.claim_flight(["draft:7"]) is True
+    presend.release_flight(["draft:7"])
