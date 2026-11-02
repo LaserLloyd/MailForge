@@ -185,12 +185,41 @@ class Store:
 
     def _migrate_agent_notes_request_kind(self) -> None:
         """Widen ``agent_notes.kind`` to allow 'request' (SQLite cannot alter a
-        CHECK, so rebuild the table once). Idempotent."""
+        CHECK, so rebuild the table once). Idempotent, and atomic: the rebuild
+        runs in one explicit transaction, so a failure leaves the old table."""
+        cols = ("id,site_id,author,kind,title,body,related_message_ids,created_at")
+        names = {
+            r["name"]
+            for r in self.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        if "agent_notes_old" in names:
+            # A previous non-atomic rebuild was cut short: finish the copy.
+            self.conn.commit()
+            self.conn.execute("BEGIN IMMEDIATE")
+            try:
+                if "agent_notes" in names:
+                    self.conn.execute(
+                        f"INSERT OR IGNORE INTO agent_notes({cols}) "
+                        f"SELECT {cols} FROM agent_notes_old"
+                    )
+                    self.conn.execute("DROP TABLE agent_notes_old")
+                else:
+                    self.conn.execute("ALTER TABLE agent_notes_old RENAME TO agent_notes")
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                raise
+            names = {
+                r["name"]
+                for r in self.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
         row = self.conn.execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='agent_notes'"
         ).fetchone()
         if row is None or "'request'" in (row["sql"] or ""):
             return
+        self.conn.commit()
+        self.conn.execute("BEGIN IMMEDIATE")
         try:
             self.conn.execute("ALTER TABLE agent_notes RENAME TO agent_notes_old")
             self.conn.execute(
@@ -201,9 +230,7 @@ class Store:
                 "created_at TEXT NOT NULL)"
             )
             self.conn.execute(
-                "INSERT INTO agent_notes(id,site_id,author,kind,title,body,related_message_ids,"
-                "created_at) SELECT id,site_id,author,kind,title,body,related_message_ids,"
-                "created_at FROM agent_notes_old"
+                f"INSERT INTO agent_notes({cols}) SELECT {cols} FROM agent_notes_old"
             )
             self.conn.execute("DROP TABLE agent_notes_old")
             self.conn.execute(

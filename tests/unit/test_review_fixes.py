@@ -309,3 +309,71 @@ def test_single_flight_key_blocks_a_second_dialog_for_the_same_draft(monkeypatch
         presend.release_flight(["draft:7"])
     assert presend.claim_flight(["draft:7"]) is True
     presend.release_flight(["draft:7"])
+
+
+# ---- S6: the agent_notes rebuild is atomic ----------------------------------
+_OLD_NOTES = (
+    "CREATE TABLE agent_notes (id INTEGER PRIMARY KEY, site_id TEXT NOT NULL, "
+    "author TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'observation' "
+    "CHECK (kind IN ('observation','action','incident','context')), "
+    "title TEXT NOT NULL, body TEXT NOT NULL, related_message_ids TEXT, "
+    "created_at TEXT NOT NULL)"
+)
+
+
+class _FailOnDrop:
+    def __init__(self, conn):
+        self._c = conn
+
+    def execute(self, sql, *a):
+        if "DROP TABLE agent_notes_old" in sql:
+            raise OSError("disk full")
+        return self._c.execute(sql, *a)
+
+    def __getattr__(self, name):
+        return getattr(self._c, name)
+
+
+def _old_notes_store(store):
+    store.conn.execute("DROP TABLE agent_notes")
+    store.conn.execute(_OLD_NOTES)
+    store.conn.execute("INSERT INTO agent_notes VALUES(1,'main','bits','observation','t','b',NULL,'x')")
+    store.conn.commit()
+
+
+def test_notes_rebuild_failure_leaves_the_old_table_intact(tmp_path):
+    with open_store(tmp_path / "n.db") as store:
+        _old_notes_store(store)
+        real = store.conn
+        store.conn = _FailOnDrop(real)
+        try:
+            with pytest.raises(OSError):
+                store._migrate_agent_notes_request_kind()
+        finally:
+            store.conn = real
+        names = {r[0] for r in real.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert "agent_notes_old" not in names
+        assert real.execute("SELECT COUNT(*) FROM agent_notes").fetchone()[0] == 1
+        store._migrate_agent_notes_request_kind()  # the retry completes
+        assert real.execute("SELECT COUNT(*) FROM agent_notes").fetchone()[0] == 1
+        real.execute("INSERT INTO agent_notes(site_id,author,kind,title,body,created_at) "
+                     "VALUES('main','a','request','t','b','x')")
+
+
+def test_stranded_agent_notes_old_is_recovered_at_start(tmp_path):
+    with open_store(tmp_path / "o.db") as store:
+        store.conn.execute("ALTER TABLE agent_notes RENAME TO agent_notes_old")
+        store.conn.execute(_OLD_NOTES)
+        store.conn.execute("DROP TABLE agent_notes")
+        store.conn.execute(
+            "CREATE TABLE agent_notes (id INTEGER PRIMARY KEY, site_id TEXT NOT NULL, "
+            "author TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'observation' "
+            "CHECK (kind IN ('observation','action','incident','context','request')), "
+            "title TEXT NOT NULL, body TEXT NOT NULL, related_message_ids TEXT, "
+            "created_at TEXT NOT NULL)")
+        store.conn.execute("INSERT INTO agent_notes_old VALUES(1,'main','b','action','t','b',NULL,'x')")
+        store.conn.commit()
+        store._migrate_agent_notes_request_kind()
+        names = {r[0] for r in store.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert "agent_notes_old" not in names
+        assert store.conn.execute("SELECT COUNT(*) FROM agent_notes").fetchone()[0] == 1
