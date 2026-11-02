@@ -18,23 +18,18 @@ import platform
 import shutil
 import subprocess
 
+from pathlib import Path
+
 from ..paths import desktop_entry_path, icon_path
 
 log = logging.getLogger(__name__)
 
-# A small, dependency-free envelope-with-claw mark. Scalable SVG lives in the
-# hicolor theme so the launcher renders it at any size.
-_ICON_SVG = """<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
-  <rect width="128" height="128" rx="24" fill="#1f2937"/>
-  <rect x="22" y="36" width="84" height="60" rx="8" fill="#f9fafb" stroke="#9ca3af" stroke-width="2"/>
-  <path d="M22 44 L64 74 L106 44" fill="none" stroke="#2563eb" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="64" cy="92" r="13" fill="#1f2937"/>
-  <circle cx="59" cy="90" r="3" fill="#38bdf8"/>
-  <circle cx="69" cy="90" r="3" fill="#38bdf8"/>
-  <path d="M55 98 q9 6 18 0" fill="none" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round"/>
-</svg>
-"""
+# The master mark (ui/static/pwa/mailforge.svg): one source for the launcher icon,
+# favicon, sidebar and app icons. Scalable SVG lives in the hicolor theme so the
+# launcher renders it at any size.
+_ICON_SVG = (Path(__file__).resolve().parents[1] / "ui" / "static" / "pwa" / "mailforge.svg").read_text(
+    encoding="utf-8"
+)
 
 
 def _desktop_entry(exec_cmd: str) -> str:

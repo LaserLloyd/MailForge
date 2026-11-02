@@ -23,6 +23,7 @@ ICONS = {
     "icon-512.png": "image/png",
     "icon-maskable-512.png": "image/png",
     "apple-touch-icon.png": "image/png",
+    "mailforge.svg": "image/svg+xml",  # the master mark (favicon, sidebar, launcher)
 }
 
 MANIFEST: dict[str, Any] = {
@@ -39,6 +40,7 @@ MANIFEST: dict[str, Any] = {
         {"src": "/pwa/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
         {"src": "/pwa/icon-maskable-512.png", "sizes": "512x512", "type": "image/png",
          "purpose": "maskable"},
+        {"src": "/pwa/mailforge.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any"},
     ],
 }
 
@@ -59,6 +61,7 @@ def head_tags() -> str:
     """Tags for every page's <head>: manifest, theme colour, iOS icon, SW registration."""
     return (
         '<link rel="manifest" href="/manifest.webmanifest">\n'
+        '<link rel="icon" type="image/svg+xml" href="/pwa/mailforge.svg">\n'
         f'<meta name="theme-color" content="{THEME_COLOR}">\n'
         '<link rel="apple-touch-icon" href="/pwa/apple-touch-icon.png">\n'
         f"<script>{REGISTER_JS}</script>\n"

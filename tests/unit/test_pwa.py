@@ -34,8 +34,11 @@ def test_manifest_is_valid_and_installable(client):
     assert {("192x192", "any"), ("512x512", "any"), ("512x512", "maskable")} <= sizes
     for icon in m["icons"]:  # every declared icon is actually served
         got = client.get(icon["src"])
-        assert got.status_code == 200 and got.headers["content-type"] == "image/png"
-        assert got.content[:8] == b"\x89PNG\r\n\x1a\n"
+        assert got.status_code == 200 and got.headers["content-type"] == icon["type"]
+        if icon["type"] == "image/png":
+            assert got.content[:8] == b"\x89PNG\r\n\x1a\n"
+        else:
+            assert b"<svg" in got.content[:200] and b"MailForge" in got.content
 
 
 def test_service_worker_is_javascript_and_never_caches(client):
@@ -78,3 +81,11 @@ def test_routes_stay_behind_the_host_guard(monkeypatch):
     assert good.get("/manifest.webmanifest").status_code == 200
     assert bad.get("/manifest.webmanifest").status_code == 403
     assert good.get("/sw.js", headers={"Origin": "http://evil.example"}).status_code == 403
+
+
+def test_master_mark_is_the_favicon_and_launcher_icon():
+    from mailforge.service import desktop
+    from mailforge.ui import pwa
+
+    assert 'rel="icon" type="image/svg+xml" href="/pwa/mailforge.svg"' in pwa.head_tags()
+    assert desktop._ICON_SVG == (pwa.PWA_DIR / "mailforge.svg").read_text(encoding="utf-8")

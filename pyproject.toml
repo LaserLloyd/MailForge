@@ -90,6 +90,7 @@ cache-keys = [
     { file = "src/**/*.sql" },
     { file = "src/**/*.md" },
     { file = "src/**/*.png" },
+    { file = "src/**/*.svg" },
     { file = "src/**/VERSION" },
 ]
 

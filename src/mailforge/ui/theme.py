@@ -173,12 +173,11 @@ html, body, .q-page-container, .nicegui-content { max-width: 100vw; }
 }
 .bb-logo {
   width: 42px; height: 42px;
-  border-radius: var(--radius-md);
-  background: var(--cta-gradient);
+  flex: 0 0 42px;
   display: flex; align-items: center; justify-content: center;
-  font-weight: 800; font-size: 19px; color: var(--on-cta);
   user-select: none;
 }
+.bb-logo img { width: 42px; height: 42px; display: block; }
 .bb-brand-name { font-weight: 800; letter-spacing: -0.02em; }
 .bb-nav-btn .q-icon { margin-right: 8px; }
 .bb-nav-btn .q-btn__content { width: 100%; justify-content: flex-start; }
@@ -849,7 +848,8 @@ def shell(
         with ui.column().classes("w-full q-pa-sm").style("gap: 10px"):
             with ui.row().classes("items-center no-wrap q-px-sm").style("gap: 10px"):
                 with ui.element("div").classes("bb-logo"):
-                    ui.html("&#9993;")  # envelope glyph
+                    # the master mark, same file as the favicon and app icons
+                    ui.html('<img src="/pwa/mailforge.svg" alt="" width="42" height="42">')
                 ui.label("MailForge").classes("bb-brand-name")
             ui.element("div").style(
                 "height:1px;width:100%;background:var(--border-strong)"

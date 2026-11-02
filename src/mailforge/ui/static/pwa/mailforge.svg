@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="MailForge">
+  <!-- MailForge's mark: a clean envelope outline holding "MF" in brass.
+       Same family as DisPatch's mark: ivory line on a deep navy tile, the detail
+       in brass, one stroke weight (3.2), round joins. The flap is a shallow V so
+       the letters keep their room; MF is drawn as strokes (no font needed). -->
+  <defs>
+    <linearGradient id="mf-tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b2033"/>
+      <stop offset="1" stop-color="#0d1020"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#mf-tile)"/>
+  <rect x="9.5" y="15.5" width="45" height="33" rx="4" fill="none" stroke="#f2ebdd" stroke-width="3.2" stroke-linejoin="round"/>
+  <path d="M11.5 18 L32 30.5 L52.5 18" fill="none" stroke="#f2ebdd" stroke-width="3.2" stroke-linejoin="round" stroke-linecap="round"/>
+  <g fill="none" stroke="#c9a35b" stroke-width="3.2" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M19.5 43 V33.5 L24.5 39 L29.5 33.5 V43"/>
+    <path d="M35.5 43 V33.5 H43.5 M35.5 38.3 H41.5"/>
+  </g>
+</svg>
