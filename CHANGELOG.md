@@ -5,6 +5,20 @@ Published by Laser Lloyd — https://www.laserlloyd.com
 
 ## Unreleased (dev)
 
+### Added
+- **PIN or password sign-in for the web UI**, so a phone can open it without a launcher link.
+  `mailforge ui-pin set | clear | status` (the secret is typed twice at a hidden prompt or piped on
+  stdin, never on the command line; a numeric PIN needs 6+ digits, a password 8+ characters). Only a
+  salted PBKDF2-HMAC-SHA256 hash (200,000 rounds) is stored, in `ui_pin` beside `ui_launcher_key`
+  (mode 0600). With a PIN set, a visitor who is not signed in sees a plain sign-in page (with
+  "Remember this device": 30 days, otherwise until the browser closes) instead of "Access denied";
+  a header "Sign out" button ends the session. Wrong tries are throttled per device (5, then a
+  growing wait), per client address (15) and install-wide (60 in 10 minutes); the client address
+  comes from `X-Forwarded-For` only when the request arrives from loopback (a same-machine proxy). Every
+  sign-in, failure, lockout and sign-out is written to the audit log. Changing or clearing the PIN
+  signs every browser out. The launcher key and one-shot token keep working, and with no PIN set
+  nothing changes.
+
 ### Removed
 - **The bridge no longer has `prepare-send` and `send`.** Agents can read, draft, edit and triage;
   only a human sends, in the MailForge UI. The `openclaw.agent_send_*` config keys are still read so

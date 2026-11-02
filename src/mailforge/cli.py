@@ -35,6 +35,11 @@ token_app = typer.Typer(
     help="Web UI access: show the launcher URL, or rotate the keys (signs every browser out at the next restart).",
 )
 app.add_typer(token_app, name="token")
+ui_pin_app = typer.Typer(
+    no_args_is_help=True,
+    help="Web UI sign-in: set, clear or check the PIN/password (stored only as a salted hash).",
+)
+app.add_typer(ui_pin_app, name="ui-pin")
 users_app = typer.Typer(
     no_args_is_help=True,
     help=(
@@ -572,6 +577,63 @@ def token_rotate(
     if any(outcome.values()):
         raise typer.Exit(code=1)
     typer.secho(_restart_hint("to apply it, then run 'mailforge token show'"), fg="yellow")
+
+
+def _read_new_secret() -> str:
+    """The new secret, typed twice at a hidden prompt, or two lines on piped stdin. Never argv."""
+    if sys.stdin.isatty():
+        first = getpass.getpass("New PIN (6+ digits) or password (8+ characters): ")
+        second = getpass.getpass("Type it again: ")
+    else:
+        first = sys.stdin.readline().rstrip("\r\n")
+        second = sys.stdin.readline().rstrip("\r\n")
+    if first != second:
+        typer.secho("The two entries do not match. Nothing changed.", fg="red", err=True)
+        raise typer.Exit(code=2)
+    return first
+
+
+@ui_pin_app.command("set")
+def ui_pin_set() -> None:
+    """Set the web-UI PIN (6+ digits) or password (8+ characters). Takes effect at once."""
+    from .ui import pin_auth
+
+    _announce()
+    secret = _read_new_secret()
+    try:
+        kind = pin_auth.set_secret(secret)
+    except ValueError as e:
+        typer.secho(f"{e} Nothing changed.", fg="red", err=True)
+        raise typer.Exit(code=2) from None
+    except OSError as e:
+        typer.secho(f"Could not save it ({e.__class__.__name__}); check the data directory is writable.",
+                    fg="red", err=True)
+        raise typer.Exit(code=1) from None
+    typer.secho(f"Web-UI {kind} set. Every browser signed in with the old one is signed out.", fg="green")
+
+
+@ui_pin_app.command("clear")
+def ui_pin_clear() -> None:
+    """Remove the PIN/password; the UI goes back to launcher-key access only."""
+    from .ui import pin_auth
+
+    _announce()
+    if pin_auth.clear_secret():
+        typer.secho("Web-UI PIN/password cleared.", fg="green")
+    else:
+        typer.echo("No PIN/password was set.")
+
+
+@ui_pin_app.command("status")
+def ui_pin_status() -> None:
+    """Say whether a web-UI PIN/password is set (never shows it)."""
+    from .ui import pin_auth
+
+    _announce()
+    if pin_auth.pin_is_set():
+        typer.echo(f"Web-UI sign-in: set ({pin_auth.kind() or 'unreadable file'}).")
+    else:
+        typer.echo("Web-UI sign-in: not set.")
 
 
 @app.command()
