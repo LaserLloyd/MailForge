@@ -180,3 +180,48 @@ def test_allowlisting_does_not_hide_the_first_contact_warning(tmp_path, monkeypa
         ids = {c.id for c in _eval(store, recipients="cold2@new.test",
                                    participants={"cold2@new.test"}).checks}
         assert "first_contact" not in ids
+
+
+# ---- S2 (UI side): the approve/restore/sent transitions are compare-and-swap
+def test_approve_refuses_when_the_draft_moved_on_after_the_check(tmp_path, monkeypatch):
+    from mailforge.ui.pages import detail
+
+    calls = []
+    monkeypatch.setattr(detail, "_do_send", lambda *a, **k: calls.append(1) or 1)
+    with open_store(tmp_path / "u.db") as store:
+        did = store.create_draft(None, "t", "bob@example.test", "Re", "b", "PENDING",
+                                 sender_addr="inbox@main.example")
+        draft = store.get_draft(did)
+
+        def flip(*a, **k):  # another process (the bridge) rejects it right now
+            store.update_draft_state(did, "REJECTED")
+            return []
+
+        monkeypatch.setattr(presend, "record_override", flip)
+        with pytest.raises(RuntimeError):
+            detail.approve_and_transmit(store, _settings(), draft, "b", "bob@example.test", {}, [])
+        assert calls == [] and store.get_draft(did)["state"] == "REJECTED"
+
+
+def test_restore_after_failed_send_is_a_swap_from_approved(tmp_path):
+    from mailforge.ui.pages import detail
+
+    with open_store(tmp_path / "v.db") as store:
+        did = store.create_draft(None, "t", "bob@example.test", "Re", "b", "SENT")
+        assert detail._restore_retryable_after_send_failure(
+            store, did, "b", {}, RuntimeError("x")) is False
+        assert store.get_draft(did)["state"] == "SENT"
+
+
+def test_ui_save_and_reject_refuse_a_moved_row(tmp_path):
+    from mailforge.ui.pages import detail
+
+    with open_store(tmp_path / "w.db") as store:
+        did = store.create_draft(None, "t", "bob@example.test", "Re", "b", "SENT")
+        assert detail.reject_draft(store, did) is False
+        assert detail.save_draft_text(store, did, "PENDING", "new", {}) is False
+        row = store.get_draft(did)
+        assert (row["state"], row["body"]) == ("SENT", "b")
+        pid = store.create_draft(None, "t", "bob@example.test", "Re", "b", "PENDING")
+        assert detail.save_draft_text(store, pid, "PENDING", "new", {}) is True
+        assert detail.reject_draft(store, pid) is True

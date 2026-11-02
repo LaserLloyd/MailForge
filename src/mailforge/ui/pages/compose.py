@@ -257,9 +257,11 @@ def send_manual(
             store, draft_id=draft_id, recipient=to_addr, overridden=overridden
         )
         if ids:
-            store.update_draft_state(  # type: ignore[attr-defined]
-                draft_id, "DRAFT", guardrail_flags={**(flags or {}), "override": ids}
-            )
+            if not store.update_draft_state(  # type: ignore[attr-defined]
+                draft_id, "DRAFT", expect_states=["DRAFT"],
+                guardrail_flags={**(flags or {}), "override": ids},
+            ):
+                raise RuntimeError("This draft changed, so it was not sent.")
         return _do_send(
             store, settings, frm, to_addr, subject, body, in_reply_to, draft_id
         )

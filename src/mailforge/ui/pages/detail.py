@@ -251,13 +251,16 @@ def _restore_retryable_after_send_failure(
     body: str,
     guardrail_flags: dict[str, Any],
     error: Exception,
-) -> None:
-    """Return an SMTP-failed approval to PENDING with an auditable failure flag."""
+) -> bool:
+    """Return an SMTP-failed approval to PENDING with an auditable failure flag.
+
+    A swap from APPROVED only: a draft that moved on (SENT, REJECTED) is left."""
     flags = dict(guardrail_flags or {})
     flags["send_error"] = str(error)[:200]
-    store.update_draft_state(  # type: ignore[attr-defined]
+    return store.update_draft_state(  # type: ignore[attr-defined]
         draft_id,
         "PENDING",
+        expect_states=["APPROVED"],
         approved_by=None,
         approved_at=None,
         body=body,
@@ -301,14 +304,16 @@ def approve_and_transmit(
         if override_ids:
             saved_flags["override"] = override_ids
         approved_at = _now_iso()
-        store.update_draft_state(  # type: ignore[attr-defined]
+        if not store.update_draft_state(  # type: ignore[attr-defined]
             draft_id,
             "APPROVED",
+            expect_states=["DRAFT", "PENDING"],
             approved_by="ui-user",
             approved_at=approved_at,
             body=body,
             guardrail_flags=saved_flags,
-        )
+        ):
+            raise RuntimeError("This draft changed while it was being approved, so nothing was sent.")
         approval = ApprovalRecord(
             draft_id=draft_id,
             approved_by="ui-user",
@@ -324,11 +329,33 @@ def approve_and_transmit(
             _inflight.discard(draft_id)
 
 
+def reject_draft(store: object, draft_id: int) -> bool:
+    """Reject an open draft; False (nothing written) if it moved on."""
+    return bool(store.update_draft_state(  # type: ignore[attr-defined]
+        draft_id, "REJECTED", expect_states=REJECTABLE
+    ))
+
+
+def save_draft_text(
+    store: object, draft_id: int, new_state: str, body: str, flags: dict[str, Any]
+) -> bool:
+    """Save an edit to an open draft; False (nothing written) if it moved on."""
+    return bool(store.update_draft_state(  # type: ignore[attr-defined]
+        draft_id, new_state, expect_states=EDITABLE, body=body, guardrail_flags=flags
+    ))
+
+
 def mark_sent(store: object, draft_id: int, body: str, recipient: str) -> None:
     """Bookkeeping after a real send. Not part of the send's try block."""
-    store.update_draft_state(  # type: ignore[attr-defined]
-        draft_id, "SENT", sent_at=_now_iso(), body=body
-    )
+    if not store.update_draft_state(  # type: ignore[attr-defined]
+        draft_id, "SENT", expect_states=["APPROVED"], sent_at=_now_iso(), body=body
+    ):
+        # The mail is out. Say so loudly; never leave it looking unsent.
+        log.error("draft %s was not APPROVED when its send was recorded", draft_id)
+        store.update_draft_state(  # type: ignore[attr-defined]
+            draft_id, "SENT", expect_states=["PENDING", "DRAFT", "BLOCKED"],
+            sent_at=_now_iso(), body=body,
+        )
     _record_approval_time()
     _audit(store, "user", "send", draft_id, {"recipient": recipient})
     # The reply is out, so the mail it answers (and the thread before it) is
@@ -655,9 +682,11 @@ def render(
             return None
 
         guard_box.clear()
-        store.update_draft_state(  # type: ignore[attr-defined]
-            draft["id"], state["draft_state"], body=body, guardrail_flags=report.flags
-        )
+        if not save_draft_text(
+            store, draft["id"], state["draft_state"], body, report.flags
+        ):
+            _refuse_if_stale(EDITABLE)
+            return None
         if not report.passed:
             _audit(store, "guardrail", "block", draft["id"], {"reasons": report.reasons})
             with guard_box:
@@ -681,12 +710,11 @@ def render(
         if report is None:
             return
         new_state = "PENDING" if state["draft_state"] == "PENDING" else "DRAFT"
-        store.update_draft_state(  # type: ignore[attr-defined]
-            draft["id"],
-            new_state,
-            body=str(state["body"] or "").strip(),
-            guardrail_flags=report.flags,
-        )
+        if not save_draft_text(
+            store, draft["id"], new_state, str(state["body"] or "").strip(), report.flags
+        ):
+            _refuse_if_stale(EDITABLE)
+            return
         state["draft_state"] = new_state
         ui.notify("Draft saved; guardrails passed. Nothing was sent.", type="positive")
         _sync_buttons()
@@ -779,7 +807,9 @@ def render(
         if _refuse_if_stale(REJECTABLE):
             return
         try:
-            store.update_draft_state(draft["id"], "REJECTED")  # type: ignore[attr-defined]
+            if not reject_draft(store, draft["id"]):
+                _refuse_if_stale(REJECTABLE)
+                return
             _audit(store, "user", "block", draft["id"], {"action": "reject"})
             state["draft_state"] = "REJECTED"
             ui.notify("Rejected (audit only).", type="info")
