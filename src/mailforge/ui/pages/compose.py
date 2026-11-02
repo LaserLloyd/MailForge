@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
 from collections import deque
 from typing import Any
@@ -14,7 +15,7 @@ from nicegui import run, ui
 from ...mail.markdown import markdown_to_safe_html
 from ...response_templates import expand_template
 from ...security.inbound_screening import ai_may_read
-from .. import theme
+from .. import presend, theme
 from ..markdown import safe_markdown
 
 log = logging.getLogger(__name__)
@@ -46,22 +47,7 @@ def _domain(addr: str) -> str:
     return addr.rsplit("@", 1)[-1].strip().lower() if "@" in addr else ""
 
 
-def split_recipients(value: str) -> list[str]:
-    """Comma/semicolon-separated recipient field → individual addresses.
-
-    Display names are tolerated (``Name <a@b>`` → ``a@b``); every returned
-    entry is checked individually so a block-listed domain cannot hide behind
-    an allowed one in the same field.
-    """
-    out: list[str] = []
-    for part in re.split(r"[,;]", value or ""):
-        part = part.strip()
-        if not part:
-            continue
-        if "<" in part and part.endswith(">"):
-            part = part[part.rfind("<") + 1 : -1].strip()
-        out.append(part)
-    return out
+split_recipients = presend.split_recipients
 
 
 def quoted_reply_body(sender: str, received_at: str | None, text: str, width: int = 2000) -> str:
@@ -130,8 +116,8 @@ def _do_send(
     body: str,
     in_reply_to: str | None = None,
     draft_id: int | None = None,
-) -> None:
-    """Privileged SMTP transmit called only after the confirmation dialog."""
+) -> int | None:
+    """Privileged SMTP transmit called only after the pre-send dialog."""
     sec = getattr(settings, "security", None)
     if not bool(getattr(sec, "require_human_approval", False)):
         raise PermissionError("INVARIANT VIOLATION: human approval must be required")
@@ -186,7 +172,7 @@ def _do_send(
             "in_reply_to": in_reply_to,
         },
     )
-    transmit_and_record(
+    record_id = transmit_and_record(
         store,
         settings,
         smtp_cfg=smtp_cfg,
@@ -219,6 +205,110 @@ def _do_send(
         )
     except Exception:  # noqa: BLE001
         log.exception("Audit append failed for manual send")
+    return record_id
+
+
+_inflight: set[int] = set()
+_inflight_lock = threading.Lock()
+
+
+def save_for_send(
+    store: object,
+    settings: object,
+    draft_id: int | None,
+    frm: str,
+    to_addr: str,
+    subject: str,
+    body: str,
+) -> int:
+    """Persist the text before transport so any SMTP failure leaves a retryable draft."""
+    if draft_id is None:
+        return int(
+            store.create_manual_draft(  # type: ignore[attr-defined]
+                frm, to_addr, subject, body, site_id=_site_for_sender(settings, frm)
+            )
+        )
+    store.update_manual_draft(draft_id, frm, to_addr, subject, body)  # type: ignore[attr-defined]
+    return int(draft_id)
+
+
+def send_manual(
+    store: object,
+    settings: object,
+    draft_id: int,
+    frm: str,
+    to_addr: str,
+    subject: str,
+    body: str,
+    in_reply_to: str | None,
+    flags: dict[str, Any],
+    overridden: list[presend.Check],
+) -> int | None:
+    """Everything up to and including the transmit; any failure means not sent."""
+    with _inflight_lock:
+        if draft_id in _inflight:
+            raise RuntimeError("This email is already being sent, so nothing was sent twice.")
+        _inflight.add(draft_id)
+    try:
+        row = store.get_manual_draft(draft_id)  # type: ignore[attr-defined]
+        if row is None or str(_value(row, "state", "") or "").upper() != "DRAFT":
+            raise RuntimeError("This draft was already sent, so it was not sent again.")
+        ids = presend.record_override(  # fails closed: no audit row, no send
+            store, draft_id=draft_id, recipient=to_addr, overridden=overridden
+        )
+        if ids:
+            store.update_draft_state(  # type: ignore[attr-defined]
+                draft_id, "DRAFT", guardrail_flags={**(flags or {}), "override": ids}
+            )
+        return _do_send(
+            store, settings, frm, to_addr, subject, body, in_reply_to, draft_id
+        )
+    finally:
+        with _inflight_lock:
+            _inflight.discard(draft_id)
+
+
+def mark_manual_sent(store: object, draft_id: int) -> None:
+    """Bookkeeping after a real send; runs outside the send's try block."""
+    _send_times.append(time.monotonic())
+    if not store.mark_manual_draft_sent(draft_id):  # type: ignore[attr-defined]
+        raise RuntimeError("the saved draft was not in the DRAFT state")
+
+
+def evaluate_compose(
+    store: object,
+    settings: object,
+    draft_id: int | None,
+    frm: str,
+    to_addr: str,
+    subject: str,
+    body: str,
+) -> presend.Evaluation:
+    """The pre-send checks for a human-written email (guardrails included)."""
+    site: str | None
+    try:
+        site = _site_for_sender(settings, frm)
+    except PermissionError:
+        site = None
+    draft_state = "DRAFT"
+    if draft_id is not None:
+        row = store.get_manual_draft(int(draft_id))  # type: ignore[attr-defined]
+        draft_state = str(_value(row, "state", "") or "gone") if row is not None else "gone"
+    return presend.evaluate(
+        store,
+        settings,
+        recipients=to_addr,
+        subject=subject,
+        body=body,
+        site_id=site,
+        draft_state=draft_state,
+        sendable_states=("DRAFT",),
+        rate=_rate_limit_ok(settings),
+        sender_ok=site is not None and frm in _account_usernames(settings),
+        relax_recipient_rules=True,
+        require_subject=True,
+        scan_subject=True,
+    )
 
 
 def render(
@@ -509,96 +599,56 @@ def render(
                 log.exception("manual draft save failed")
                 ui.notify(f"Save draft failed: {e}", type="negative")
 
-        async def _send() -> None:
+        async def _confirm() -> None:
+            client = ui.context.client  # captured before any await: the page may be gone later
             frm, to_addr, subject_v, body_v = _values()
-            if "@" not in to_addr:
-                ui.notify("Enter a valid recipient address.", type="negative")
-                return
-            if not subject_v:
-                ui.notify("Subject is empty.", type="warning")
-                return
-            if not body_v:
-                ui.notify("Message body is empty.", type="negative")
-                return
-            if _UNRESOLVED_PLACEHOLDER.search(subject_v + "\n" + body_v):
-                ui.notify(
-                    "Replace all {{template_placeholders}} before sending.",
-                    type="negative",
-                )
-                return
-            ok, limit = _rate_limit_ok(settings)
-            if not ok:
-                ui.notify(f"Send rate limit reached ({limit}/hour).", type="negative")
-                return
-            try:
-                # Persist before transport so any SMTP failure leaves a retryable draft.
-                if state["id"] is None:
-                    state["id"] = int(
-                        store.create_manual_draft(  # type: ignore[attr-defined]
-                            frm,
-                            to_addr,
-                            subject_v,
-                            body_v,
-                            site_id=_site_for_sender(settings, frm),
-                        )
-                    )
-                else:
-                    store.update_manual_draft(  # type: ignore[attr-defined]
-                        state["id"], frm, to_addr, subject_v, body_v
-                    )
-                await run.io_bound(
-                    _do_send, store, settings, frm, to_addr, subject_v, body_v,
-                    state.get("in_reply_to"), state["id"],
-                )
-                store.mark_manual_draft_sent(state["id"])  # type: ignore[attr-defined]
-            except Exception as e:  # noqa: BLE001
-                ui.notify(f"Send FAILED: {e}", type="negative", timeout=8000)
-                log.warning("Manual send failed: %s", e)
-                return
-            _send_times.append(time.monotonic())
-            ui.notify(f"Sent to {to_addr}.", type="positive")
-            state.update({"id": None, "to": "", "subject": "", "body": ""})
-            to_in.value = subj_in.value = body_in.value = ""
-            _saved_drafts.refresh()
-            _sent_history.refresh()
+            seen: dict[str, Any] = {"flags": {}}
 
-        def _confirm() -> None:
-            frm, to_addr, subject_v, body_v = _values()
-            if "@" not in to_addr:
-                ui.notify("Enter a valid recipient address.", type="negative")
-                return
-            if not subject_v or not body_v:
-                ui.notify("Subject and message body are required.", type="negative")
-                return
-            if _UNRESOLVED_PLACEHOLDER.search(subject_v + "\n" + body_v):
-                ui.notify(
-                    "Replace all {{template_placeholders}} before sending.",
-                    type="negative",
+            def _collect() -> list[presend.Check]:
+                ev = evaluate_compose(
+                    store, settings, state["id"], frm, to_addr, subject_v, body_v
                 )
-                return
-            with ui.dialog() as dialog, ui.card().style("gap: 10px; max-width: 460px"):
-                ui.label("Send this email?").style("font-weight: 800; font-size: 15px")
-                ui.label(f"From: {frm}").style(
-                    "font-size: 13px; color: var(--text-secondary); overflow-wrap: anywhere"
-                )
-                ui.label(f"To: {to_addr}").style(
-                    "font-size: 13px; color: var(--text-secondary); overflow-wrap: anywhere"
-                )
-                ui.label("This is the only action that transmits the message.").style(
-                    "font-size: 12px; color: var(--warning-text)"
-                )
-                with ui.row().classes("w-full justify-end").style("gap: 8px"):
-                    ui.button("Cancel", on_click=dialog.close).props("flat no-caps")
-                    async def _confirmed_send() -> None:
-                        dialog.close()
-                        await _send()
+                seen["flags"] = ev.flags
+                return ev.checks
 
-                    ui.button(
-                        "Send",
-                        icon="send",
-                        on_click=_confirmed_send,
-                    ).props("unelevated no-caps color=primary")
-            dialog.open()
+            async def _transmit(overridden: list[presend.Check]) -> int | None:
+                state["id"] = await run.io_bound(
+                    save_for_send, store, settings, state["id"], frm, to_addr, subject_v, body_v
+                )
+                return await run.io_bound(
+                    send_manual, store, settings, state["id"], frm, to_addr, subject_v,
+                    body_v, state.get("in_reply_to"), seen["flags"], overridden,
+                )
+
+            def _persist(_record_id: Any) -> None:
+                sent_id = state["id"]
+                state.update({"id": None, "to": "", "subject": "", "body": ""})
+                mark_manual_sent(store, int(sent_id))
+
+            def _reset_form() -> None:
+                to_in.value = subj_in.value = body_in.value = ""
+                _saved_drafts.refresh()
+                _sent_history.refresh()
+
+            result = await presend.confirm(
+                title="Send this email?",
+                facts=[
+                    ("From", frm),
+                    ("To", to_addr or "(nobody yet)"),
+                    ("Subject", subject_v or "(none)"),
+                ],
+                collect=_collect,
+                transmit=_transmit,
+                persist=_persist,
+                store=store,
+            )
+            if result is None:
+                return
+            presend.notify_result(
+                client, result, sent_text=f"Sent to {to_addr}.", failed_prefix="Send FAILED"
+            )
+            if result.sent:
+                presend.safe_ui(client, _reset_form)
 
         with ui.row().classes("w-full justify-end bb-toolbar").style("gap: 8px"):
             ui.label("Saved drafts stay local. Nothing auto-sends.").style(

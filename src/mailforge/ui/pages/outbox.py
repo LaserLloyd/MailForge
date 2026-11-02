@@ -303,7 +303,8 @@ def _render_row(kind: str, row: Any) -> None:
                 theme.badge(label, badge_kind)
                 if kind == "sent":
                     note = _append_note(row)
-                    if note is not None and str(_value(row, "imap_append", "")) == "FAILED":
+                    copy_status = str(_value(row, "imap_append", "") or "").upper()
+                    if note is not None and copy_status in {"FAILED", "SKIPPED"}:
                         theme.badge("no Sent-folder copy", "warning")
 
 

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -40,6 +41,7 @@ from ...security.inbound_screening import ai_may_read
 from .. import theme
 from .. import markdown as markdown_ui
 from ..interrupt import ApprovalRecord
+from .. import presend
 from . import assistant
 
 log = logging.getLogger(__name__)
@@ -131,7 +133,9 @@ def source_account_for_draft(store: object, draft: Any) -> Any:
     return account
 
 
-def _do_send(store: object, settings: object, draft: Any, body: str, approval: ApprovalRecord) -> None:
+def _do_send(
+    store: object, settings: object, draft: Any, body: str, approval: ApprovalRecord
+) -> int | None:
     """Privileged SMTP transmit — gated by an explicit human-approval record.
 
     Mirrors invariant §0.1 / §11: verify a human-approval record exists and
@@ -194,7 +198,7 @@ def _do_send(store: object, settings: object, draft: Any, body: str, approval: A
     except Exception:
         pass
 
-    transmit_and_record(
+    return transmit_and_record(
         store,
         settings,
         smtp_cfg=smtp_cfg,
@@ -234,6 +238,93 @@ def _restore_retryable_after_send_failure(
         body=body,
         guardrail_flags=flags,
     )
+
+
+_inflight: set[int] = set()
+_inflight_lock = threading.Lock()
+
+
+def approve_and_transmit(
+    store: object,
+    settings: object,
+    draft: Any,
+    body: str,
+    recipient: str,
+    flags: dict[str, Any],
+    overridden: list[presend.Check],
+) -> int | None:
+    """Approve and send one draft. Everything in here happens BEFORE or DURING
+    the transmit, so any failure means "not sent" and the draft may go back to
+    Pending. Marking it SENT is :func:`mark_sent`, which runs after, apart."""
+    draft_id = int(draft["id"])
+    with _inflight_lock:
+        if draft_id in _inflight:
+            raise RuntimeError("This draft is already being sent, so nothing was sent twice.")
+        _inflight.add(draft_id)
+    try:
+        current = store.get_draft(draft_id)  # type: ignore[attr-defined]
+        state_now = str(_value(current, "state", "") or "").upper()
+        if current is None or state_now not in {"DRAFT", "PENDING"}:
+            raise RuntimeError(
+                f"This draft is {state_now.lower() or 'gone'}, so it was not sent again."
+            )
+        saved_flags = dict(flags or {})
+        # Fail closed: no audit row for the override, no send.
+        override_ids = presend.record_override(
+            store, draft_id=draft_id, recipient=recipient, overridden=overridden
+        )
+        if override_ids:
+            saved_flags["override"] = override_ids
+        approved_at = _now_iso()
+        store.update_draft_state(  # type: ignore[attr-defined]
+            draft_id,
+            "APPROVED",
+            approved_by="ui-user",
+            approved_at=approved_at,
+            body=body,
+            guardrail_flags=saved_flags,
+        )
+        approval = ApprovalRecord(
+            draft_id=draft_id,
+            approved_by="ui-user",
+            approved_at=approved_at,
+            response_type="edit",
+            recipient=recipient,
+            flags=saved_flags,
+        )
+        _audit(store, "user", "approval", draft_id, {"recipient": recipient})
+        return _do_send(store, settings, draft, body, approval)
+    finally:
+        with _inflight_lock:
+            _inflight.discard(draft_id)
+
+
+def mark_sent(store: object, draft_id: int, body: str, recipient: str) -> None:
+    """Bookkeeping after a real send. Not part of the send's try block."""
+    store.update_draft_state(  # type: ignore[attr-defined]
+        draft_id, "SENT", sent_at=_now_iso(), body=body
+    )
+    _record_approval_time()
+    _audit(store, "user", "send", draft_id, {"recipient": recipient})
+
+
+def restore_after_failed_send(
+    store: object, draft_id: int, body: str, flags: dict[str, Any], error: Exception
+) -> bool:
+    """Put a draft back to Pending after a send that did NOT go out.
+
+    Only touches a draft still in APPROVED: one that is SENT (or anything
+    else) is never reverted, so a retry cannot send the mail twice.
+    """
+    with _inflight_lock:
+        busy_elsewhere = draft_id in _inflight
+    current = store.get_draft(draft_id)  # type: ignore[attr-defined]
+    if busy_elsewhere or str(_value(current, "state", "") or "").upper() != "APPROVED":
+        _audit(store, "user", "error", draft_id, {"error": str(error)})
+        return False
+    _restore_retryable_after_send_failure(store, draft_id, body, flags, error)
+    _audit(store, "user", "error", draft_id, {"error": str(error)})
+    return True
 
 
 def _any_guard_fired(flags: Any) -> bool:
@@ -564,63 +655,85 @@ def render(
         ui.notify("Draft saved; guardrails passed. Nothing was sent.", type="positive")
         _sync_buttons()
 
+    def _participants() -> set[str]:
+        people: set[str] = set()
+        for msg in thread:
+            for key in ("from_addr", "to_addrs", "cc_addrs"):
+                people |= {
+                    addr.strip().lower()
+                    for addr in str(msg[key] or "").split(",")
+                    if addr.strip()
+                }
+        return people
+
     async def _approve_and_send() -> None:
         if not _sendable():
             ui.notify("This draft is not ready to send. Revise and save it first.", type="warning")
             return
-        allowed, limit = _rate_limit_ok(settings)
-        if not allowed:
-            ui.notify(f"Rate limit reached ({limit}/hour). Try later.", type="negative")
-            return
-        if not retype_ok["value"]:
-            ui.notify("Re-type the recipient address first.", type="warning")
-            return
-        report = _guard_current()  # always scan the exact current textarea body
-        if report is None:
-            return
+        client = ui.context.client  # captured before any await: the page may be gone later
         body = str(state["body"] or "").strip()
-        approved_at = _now_iso()
-        try:
-            store.update_draft_state(  # type: ignore[attr-defined]
-                draft["id"],
-                "APPROVED",
-                approved_by="ui-user",
-                approved_at=approved_at,
+        people = _participants()
+        seen: dict[str, Any] = {"flags": {}}
+
+        def _collect() -> list[presend.Check]:
+            ev = presend.evaluate(
+                store,
+                settings,
+                recipients=recipient,
+                subject=str(draft["subject"] or ""),
                 body=body,
-                guardrail_flags=report.flags,
+                site_id=source_site,
+                thread_id=str(draft["thread_id"] or ""),
+                participants=people,
+                source_message_id=message_id,
+                draft_state=state["draft_state"],
+                retype_ok=retype_ok["value"],
+                rate=_rate_limit_ok(settings),
+                sender_ok=source_identity != "unresolved",
+                bridge=bridge,
             )
-            state["draft_state"] = "APPROVED"
-            approval = ApprovalRecord(
-                draft_id=draft["id"],
-                approved_by="ui-user",
-                approved_at=approved_at,
-                response_type="edit",
-                recipient=recipient,
-                flags=report.flags,
+            seen["flags"] = ev.flags
+            return ev.checks
+
+        async def _transmit(overridden: list[presend.Check]) -> int | None:
+            return await run.io_bound(
+                approve_and_transmit,
+                store, settings, draft, body, recipient, seen["flags"], overridden,
             )
-            _audit(store, "user", "approval", draft["id"], {"recipient": recipient})
-            await run.io_bound(_do_send, store, settings, draft, body, approval)
-            store.update_draft_state(  # type: ignore[attr-defined]
-                draft["id"], "SENT", sent_at=_now_iso(), body=body
-            )
+
+        def _persist(_record_id: Any) -> None:
+            mark_sent(store, int(draft["id"]), body, recipient)
             state["draft_state"] = "SENT"
-            _record_approval_time()
-            _audit(store, "user", "send", draft["id"], {"recipient": recipient})
-            ui.notify("Approved and sent.", type="positive")
-            ui.navigate.to("/drafts")
-        except Exception as e:  # noqa: BLE001
-            log.exception("send failed")
-            _restore_retryable_after_send_failure(
-                store, int(draft["id"]), body, report.flags, e
-            )
-            state["draft_state"] = "PENDING"
-            _audit(store, "user", "error", draft["id"], {"error": str(e)})
-            ui.notify(
-                f"Send failed after approval: {e}. The draft is back in Pending for review/retry.",
-                type="negative",
-                timeout=10000,
-            )
-            _sync_buttons()
+
+        def _failed(error: Exception) -> None:
+            if restore_after_failed_send(store, int(draft["id"]), body, seen["flags"], error):
+                state["draft_state"] = "PENDING"
+
+        result = await presend.confirm(
+            title="Send this reply?",
+            facts=[
+                ("From", source_identity),
+                ("To", recipient),
+                ("Subject", str(draft["subject"] or "")),
+            ],
+            collect=_collect,
+            transmit=_transmit,
+            persist=_persist,
+            on_failed=_failed,
+            store=store,
+        )
+        if result is None:
+            return
+        presend.notify_result(
+            client,
+            result,
+            sent_text="Approved and sent.",
+            failed_prefix="Not sent. The draft is back in Pending so you can retry",
+        )
+        if result.sent:
+            presend.safe_ui(client, ui.navigate.to, "/drafts")
+        else:
+            presend.safe_ui(client, _sync_buttons)
 
     def _reject() -> None:
         try:

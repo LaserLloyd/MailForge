@@ -20,7 +20,7 @@ from typing import Any
 from nicegui import run, ui
 
 from ...db.store import DEFAULT_SITE_ID
-from .. import theme
+from .. import presend, theme
 
 log = logging.getLogger(__name__)
 
@@ -222,6 +222,7 @@ def render(store: object, settings: object) -> None:
             ui.notify(str(e), type="negative", timeout=8000)
             return
         ui.notify(f"Testing IMAP login for {fields['username']}…", type="ongoing")
+        client = ui.context.client  # the page may be gone when the login test returns
         try:
             # Blocking socket I/O — off the event loop or the whole UI stalls.
             await run.io_bound(
@@ -233,18 +234,21 @@ def render(store: object, settings: object) -> None:
                 fields["auth_method"],
             )
         except AccountError as e:
-            ui.notify(str(e), type="negative", timeout=12000)
+            presend.safe_notify(client, str(e), type="negative", timeout=12000)
             return
         except Exception as e:  # noqa: BLE001
             log.exception("mailbox test failed")
-            ui.notify(f"Test failed: {e}", type="negative", timeout=12000)
+            presend.safe_notify(client, f"Test failed: {e}", type="negative", timeout=12000)
             return
-        ui.notify(f"IMAP login OK for {fields['username']}.", type="positive", timeout=6000)
+        presend.safe_notify(
+            client, f"IMAP login OK for {fields['username']}.", type="positive", timeout=6000
+        )
 
     async def _add_new() -> None:
         from ...accounts import AccountError, add_account
 
         secret = add_secret.value or ""
+        client = ui.context.client  # the page may be gone when the add finishes
         try:
             fields = _collect_new()
             account = await run.io_bound(
@@ -257,19 +261,26 @@ def render(store: object, settings: object) -> None:
                 )
             )
         except AccountError as e:
-            ui.notify(str(e), type="negative", timeout=10000)
+            presend.safe_notify(client, str(e), type="negative", timeout=10000)
             return
         except Exception as e:  # noqa: BLE001
             log.exception("add mailbox failed")
-            ui.notify(f"Could not add mailbox: {e}", type="negative", timeout=10000)
+            presend.safe_notify(
+                client, f"Could not add mailbox: {e}", type="negative", timeout=10000
+            )
             return
-        add_secret.value = ""  # never leave a credential sitting in the DOM
-        ui.notify(
+
+        def _clear_secret() -> None:
+            add_secret.value = ""  # never leave a credential sitting in the DOM
+
+        presend.safe_ui(client, _clear_secret)
+        presend.safe_notify(
+            client,
             f"Added {account.username}. Restart MailForge to start collecting its mail.",
             type="positive",
             timeout=10000,
         )
-        ui.navigate.reload()
+        presend.safe_ui(client, ui.navigate.reload)
 
     def _confirm_remove(account: Any) -> None:
         with ui.dialog() as dialog, ui.card().classes("bb-card"):
