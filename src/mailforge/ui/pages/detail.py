@@ -111,6 +111,46 @@ def _value(row: Any, name: str, default: Any = None) -> Any:
         return getattr(row, name, default)
 
 
+#: Draft states a person may still edit, save or reject. A page opened earlier
+#: can be looking at a draft that has since been sent (or rejected) elsewhere.
+EDITABLE = frozenset({"DRAFT", "PENDING", "BLOCKED", "DEFERRED_NO_LLM"})
+REJECTABLE = EDITABLE
+
+
+def retype_matches(typed: Any, recipient: str) -> bool:
+    """Did the owner re-type the recipient address exactly (case-blind)?"""
+    return str(typed or "").strip().lower() == str(recipient or "").strip().lower() != ""
+
+
+def event_text(args: Any) -> str:
+    """The new text of an input's ``update:model-value`` event.
+
+    Read the event, never ``input.value`` inside the handler: the widget's own
+    value is still one keystroke behind there, so the exact address never matched.
+    """
+    if isinstance(args, (list, tuple)):
+        args = args[0] if args else ""
+    return "" if args is None else str(args)
+
+
+def stale_reason(store: object, draft_id: int, allowed: frozenset[str]) -> str | None:
+    """Why a click on an old page must do nothing, or ``None`` when it may go ahead.
+
+    Compares the draft's state *now* with what the action needs, so a draft
+    that was sent in another tab is never flipped back to Rejected or Pending.
+    """
+    current = store.get_draft(int(draft_id))  # type: ignore[attr-defined]
+    if current is None:
+        return "This draft no longer exists."
+    state = str(_value(current, "state", "") or "").upper()
+    if state not in allowed:
+        return (
+            f"This draft is {state.lower() or 'gone'} now, so nothing was changed. "
+            "Reload the page."
+        )
+    return None
+
+
 def source_account_for_draft(store: object, draft: Any) -> Any:
     """Resolve the persisted receiving account; fail closed if it is ambiguous."""
     message_id = _value(draft, "message_id")
@@ -506,11 +546,11 @@ def render(
                 "w-96"
             )
 
-            def _check_retype() -> None:
-                retype_ok["value"] = (confirm.value or "").strip().lower() == recipient.lower()
+            def _check_retype(typed: str) -> None:
+                retype_ok["value"] = retype_matches(typed, recipient)
                 _sync_buttons()
 
-            confirm.on("update:model-value", lambda _e: _check_retype())
+            confirm.on("update:model-value", lambda e: _check_retype(event_text(e.args)))
 
     # --- drafted reply (outbound bubble, editable) -------------------------------
     with ui.row().classes("w-full no-wrap justify-end").style("gap: 10px"):
@@ -575,7 +615,19 @@ def render(
         return state["draft_state"] in {"DRAFT", "PENDING"} and not source_withheld
 
     def _editable() -> bool:
-        return state["draft_state"] in {"DRAFT", "PENDING", "BLOCKED", "DEFERRED_NO_LLM"}
+        return state["draft_state"] in EDITABLE
+
+    def _refuse_if_stale(allowed: frozenset[str]) -> bool:
+        """True (after saying so) when the draft moved on since this page loaded."""
+        reason = stale_reason(store, int(draft["id"]), allowed)
+        if reason is None:
+            return False
+        current = store.get_draft(int(draft["id"]))  # type: ignore[attr-defined]
+        if current is not None:
+            state["draft_state"] = str(_value(current, "state", "") or "").upper()
+        ui.notify(reason, type="warning")
+        _sync_buttons()
+        return True
 
     def _sync_buttons() -> None:
         body_ok = bool(str(state["body"] or "").strip())
@@ -640,6 +692,8 @@ def render(
     def _save_changes() -> None:
         if not _editable():
             ui.notify("This draft is immutable in its current state.", type="warning")
+            return
+        if _refuse_if_stale(EDITABLE):
             return
         report = _guard_current()
         if report is None:
@@ -730,17 +784,25 @@ def render(
             sent_text="Approved and sent.",
             failed_prefix="Not sent. The draft is back in Pending so you can retry",
         )
-        if result.sent:
-            presend.safe_ui(client, ui.navigate.to, "/drafts")
+        if result.sent and not presend.stay_on_page(result):
+            # Let the "sent" toast be read; a navigate right away wipes it.
+            presend.safe_ui(
+                client, ui.timer, 2.6, lambda: ui.navigate.to("/drafts"), once=True
+            )
         else:
+            # Failed, or sent with a warning that must stay on screen (the
+            # Sent-folder copy failed, or the record could not be updated).
             presend.safe_ui(client, _sync_buttons)
 
     def _reject() -> None:
+        if _refuse_if_stale(REJECTABLE):
+            return
         try:
             store.update_draft_state(draft["id"], "REJECTED")  # type: ignore[attr-defined]
             _audit(store, "user", "block", draft["id"], {"action": "reject"})
+            state["draft_state"] = "REJECTED"
             ui.notify("Rejected (audit only).", type="info")
-            ui.navigate.to("/drafts")
+            ui.timer(1.2, lambda: ui.navigate.to("/drafts"), once=True)
         except Exception as e:
             log.exception("reject failed")
             ui.notify(f"Reject failed: {e}", type="negative")
