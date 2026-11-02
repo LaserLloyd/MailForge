@@ -71,6 +71,14 @@ VALID_SITES: frozenset[str] = frozenset({DEFAULT_SITE_ID})
 _SITE_CHECK_RE = re.compile(r"CHECK\s*\(\s*site_id\s+IN\s*\(([^)]*)\)", re.IGNORECASE)
 
 
+def _addr_set(value: Any) -> set[str]:
+    from email.utils import getaddresses
+
+    text = str(value or "")
+    out = {a.strip().lower() for _n, a in getaddresses([text.replace(";", ",")]) if "@" in a}
+    return out
+
+
 def register_sites(site_ids: Iterable[str]) -> None:
     """Install the configured site registry (called by config.load_settings)."""
     global VALID_SITES
@@ -177,12 +185,41 @@ class Store:
 
     def _migrate_agent_notes_request_kind(self) -> None:
         """Widen ``agent_notes.kind`` to allow 'request' (SQLite cannot alter a
-        CHECK, so rebuild the table once). Idempotent."""
+        CHECK, so rebuild the table once). Idempotent, and atomic: the rebuild
+        runs in one explicit transaction, so a failure leaves the old table."""
+        cols = ("id,site_id,author,kind,title,body,related_message_ids,created_at")
+        names = {
+            r["name"]
+            for r in self.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        if "agent_notes_old" in names:
+            # A previous non-atomic rebuild was cut short: finish the copy.
+            self.conn.commit()
+            self.conn.execute("BEGIN IMMEDIATE")
+            try:
+                if "agent_notes" in names:
+                    self.conn.execute(
+                        f"INSERT OR IGNORE INTO agent_notes({cols}) "
+                        f"SELECT {cols} FROM agent_notes_old"
+                    )
+                    self.conn.execute("DROP TABLE agent_notes_old")
+                else:
+                    self.conn.execute("ALTER TABLE agent_notes_old RENAME TO agent_notes")
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                raise
+            names = {
+                r["name"]
+                for r in self.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
         row = self.conn.execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='agent_notes'"
         ).fetchone()
         if row is None or "'request'" in (row["sql"] or ""):
             return
+        self.conn.commit()
+        self.conn.execute("BEGIN IMMEDIATE")
         try:
             self.conn.execute("ALTER TABLE agent_notes RENAME TO agent_notes_old")
             self.conn.execute(
@@ -193,9 +230,7 @@ class Store:
                 "created_at TEXT NOT NULL)"
             )
             self.conn.execute(
-                "INSERT INTO agent_notes(id,site_id,author,kind,title,body,related_message_ids,"
-                "created_at) SELECT id,site_id,author,kind,title,body,related_message_ids,"
-                "created_at FROM agent_notes_old"
+                f"INSERT INTO agent_notes({cols}) SELECT {cols} FROM agent_notes_old"
             )
             self.conn.execute("DROP TABLE agent_notes_old")
             self.conn.execute(
@@ -1141,10 +1176,17 @@ class Store:
                 (normalized, reason, int(message_id)),
             )
             if normalized != "CONTENT":
+                # An agent's flag must not kill a reply the owner has started
+                # (state DRAFT); only a human mark does.
+                open_states = (
+                    "'PENDING','BLOCKED','DEFERRED_NO_LLM'"
+                    if str(actor or "").startswith("agent:")
+                    else "'DRAFT','PENDING','BLOCKED','DEFERRED_NO_LLM'"
+                )
                 self.conn.execute(
                     "UPDATE drafts SET state='REJECTED',updated_at=?,"
                     "guardrail_flags=? "
-                    "WHERE message_id=? AND state IN ('DRAFT','PENDING','BLOCKED','DEFERRED_NO_LLM')",
+                    f"WHERE message_id=? AND state IN ({open_states})",
                     (
                         now,
                         json.dumps({"reason": "human_screening", "status": normalized}),
@@ -1494,7 +1536,10 @@ class Store:
 
     @staticmethod
     def _poke_seen_sync() -> None:
-        """Wake the IMAP listeners so the new read state reaches the server now."""
+        """Wake the IMAP listeners of THIS process so the new read state is pushed soon.
+
+        A change made by the bridge CLI (another process) reaches the server on
+        the listeners' next cycle, up to about 30 s later."""
         try:
             from ..mail.sync_state import registry
 
@@ -1950,7 +1995,21 @@ class Store:
             )
         return int(existing["id"])
 
-    def update_draft_state(self, draft_id: int, state: DraftState, **f: Any) -> None:
+    def update_draft_state(
+        self,
+        draft_id: int,
+        state: DraftState,
+        *,
+        expect_states: Iterable[str] | None = None,
+        **f: Any,
+    ) -> bool:
+        """Set a draft's state and fields.
+
+        With ``expect_states`` this is a compare-and-swap: the row changes only
+        if its current state is one of them, and the return value says whether
+        it did (False = the row moved on, nothing written). Without it the
+        write is unconditional (and still returns True when a row matched).
+        """
         sets = ["state=?", "updated_at=?"]
         vals: list[Any] = [state, _now()]
         for k in (
@@ -1969,8 +2028,16 @@ class Store:
             sets.append("guardrail_flags=?")
             vals.append(json.dumps(f["guardrail_flags"]))
         vals.append(draft_id)
-        self.conn.execute(f"UPDATE drafts SET {','.join(sets)} WHERE id=?", vals)
+        where = "id=?"
+        if expect_states is not None:
+            exp = [str(x).upper() for x in expect_states]
+            if not exp:
+                return False
+            where += f" AND state IN ({','.join('?' * len(exp))})"
+            vals.extend(exp)
+        cur = self.conn.execute(f"UPDATE drafts SET {','.join(sets)} WHERE {where}", vals)
         self.conn.commit()
+        return cur.rowcount == 1
 
     def get_draft(self, draft_id: int) -> sqlite3.Row | None:
         return self.conn.execute("SELECT * FROM drafts WHERE id=?", (draft_id,)).fetchone()
@@ -2109,16 +2176,45 @@ class Store:
         self.conn.commit()
         return cur.rowcount == 1
 
-    def thread_started_by_us(self, thread_id: str | None) -> bool:
-        """True when ``thread_id`` is the Message-ID of mail this app sent."""
+    def thread_started_by_us(
+        self, thread_id: str | None, sender: str | None = None
+    ) -> bool:
+        """True when ``thread_id`` is the Message-ID of mail this app sent.
+
+        With ``sender`` the sent message must also have been addressed to that
+        address (To/Cc as recorded): a Message-ID is known to everyone who got
+        the mail, so the id alone must not buy trust.
+        """
         tid = str(thread_id or "").strip()
         if not tid:
             return False
-        row = self.conn.execute(
-            "SELECT 1 FROM sent_messages WHERE smtp_message_id=? AND outcome='SENT' LIMIT 1",
+        rows = self.conn.execute(
+            "SELECT to_addrs FROM sent_messages WHERE smtp_message_id=? AND outcome='SENT'",
             (tid,),
-        ).fetchone()
-        return row is not None
+        ).fetchall()
+        if sender is None:
+            return bool(rows)
+        want = _addr_set(sender)
+        if not want:
+            return False
+        return any(want & _addr_set(r["to_addrs"]) for r in rows)
+
+    def has_sent_to(self, addr: str) -> bool:
+        """True when WE have actually sent mail to ``addr`` (a SENT record).
+
+        This is the "emailed before" test: unlike the recipient allowlist it is
+        never written by the drafter, only by a real transmission.
+        """
+        want = _addr_set(addr)
+        if not want:
+            return False
+        needle = sorted(want)[0]
+        rows = self.conn.execute(
+            "SELECT to_addrs FROM sent_messages WHERE outcome='SENT' "
+            "AND lower(to_addrs) LIKE ?",
+            (f"%{needle}%",),
+        ).fetchall()
+        return any(want & _addr_set(r["to_addrs"]) for r in rows)
 
     def count_audit_tool_calls(self, tool: str, since_iso: str) -> int:
         """Agent attempts for ``tool`` at or after ``since_iso``: ``tool_call`` rows

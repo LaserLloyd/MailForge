@@ -240,9 +240,13 @@ def render_drawer(
             )
             return
         state = old_state if old_state == "PENDING" else "DRAFT"
-        store.update_draft_state(  # type: ignore[attr-defined]
-            did, state, body=body, guardrail_flags=report.flags
-        )
+        if not store.update_draft_state(  # type: ignore[attr-defined]
+            did, state, expect_states=["DRAFT", "PENDING", "BLOCKED", "DEFERRED_NO_LLM"],
+            body=body, guardrail_flags=report.flags,
+        ):
+            ui.notify("That draft changed in the meantime, so the revision was not applied.",
+                      type="warning")
+            return
         apply_body(body, did)
         ui.notify("AI revision applied to the draft.", type="positive")
 

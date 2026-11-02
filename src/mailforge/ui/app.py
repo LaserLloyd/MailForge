@@ -749,10 +749,12 @@ def _register_signin() -> None:
             return resp
         if wait > 0:
             secs = max(1, int(wait) + 1)
-            _audit("signin_locked", {"ip": ip, "retry_after_s": secs})
+            if pin_auth.audit_allowed("signin_locked", ip):
+                _audit("signin_locked", {"ip": ip, "retry_after_s": secs})
             return _page(request, f"Too many tries. Please wait {secs} seconds, then try again.",
                          429, nxt, {"Retry-After": str(secs)})
-        _audit("signin_failed", {"ip": ip})
+        if pin_auth.audit_allowed("signin_failed", ip):
+            _audit("signin_failed", {"ip": ip})
         return _page(request, "That PIN or password isn't right. Please try again.", 401, nxt)
 
     def _signout(request: Request) -> Response:

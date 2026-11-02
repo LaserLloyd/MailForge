@@ -108,7 +108,14 @@ class PolicyEngine:
             rows = self.store.thread_messages(str(tid))  # type: ignore[attr-defined]
         except Exception:
             return set()
-        return {_addr(r["from_addr"]) for r in rows if r["from_addr"]}
+        # Only senders whose mail was not flagged: answering someone who wrote to
+        # us is the point of the exemption, a flagged or quarantined sender is not.
+        return {
+            _addr(r["from_addr"]) for r in rows
+            if r["from_addr"] and not r["quarantined"]
+            and str(r["screening_status"] or "").upper()
+            not in {"SPAM", "POTENTIAL_SPAM", "POTENTIAL_ISSUE"}
+        }
 
     # ---- main entry ----
     def evaluate(self, draft: object, context: dict | None = None) -> PolicyResult:
@@ -151,9 +158,10 @@ class PolicyEngine:
             res.violations.append(f"(b) recipient domain '{dom}' is explicitly blocked")
         elif (dom and allowed_domains and dom not in allowed_domains and not store_allows
               and recipient not in self._thread_senders(draft)):
-            # Someone who wrote to us in this thread may be answered even when the
-            # auto-built domain allowlist doesn't know them yet; a cc-only
-            # participant may not (they never chose to write to us).
+            # Deliberate (review S7): rule (b) does not apply to answering someone
+            # who wrote to us in this thread and was not flagged or quarantined;
+            # it still applies to compose, agent edits to new mail, cc-only
+            # participants (they never chose to write to us) and flagged senders.
             res.passed = False
             res.violations.append(f"(b) recipient domain '{dom}' is outside the link/recipient allowlist")
 

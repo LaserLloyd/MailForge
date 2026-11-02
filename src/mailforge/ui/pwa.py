@@ -47,8 +47,6 @@ SERVICE_WORKER = """\
 // never answers a request itself, so no mail data is ever stored here.
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
-// The handler answers nothing: the browser handles every request exactly as it would without a worker.
-self.addEventListener('fetch', () => {});
 """
 
 REGISTER_JS = (

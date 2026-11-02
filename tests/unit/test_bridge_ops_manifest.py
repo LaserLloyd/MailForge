@@ -14,6 +14,10 @@ import pytest
 from mailforge import bridge_cli
 from mailforge.bridge_cli import OP_CLASS, OPS
 
+# NOTE: the AST test below catches DIRECT calls only. A transitive path (propose ->
+# AgentGraph -> record_allowlist) is allowed on purpose: the drafter records the
+# inbound sender it answers, which is not "known" for first-contact (it reads sent
+# history), so it widens no recipient check that a human send relies on.
 # class: read | draft_write | triage | guidance_write
 FROZEN_BASE = {
     "status": "read", "list": "read", "get": "read", "weekly-summary": "read",

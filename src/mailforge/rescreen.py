@@ -146,7 +146,7 @@ def rescreen(
             site_terms=terms,
             brand_terms=brand,
             headers=header_facts.loads(row["header_meta"]),
-            reply_to_our_mail=store.thread_started_by_us(row["thread_id"]),
+            reply_to_our_mail=store.thread_started_by_us(row["thread_id"], row["from_addr"]),
             category_rules=settings.category_rules,
             site_id=site_id,
             learned_spam_domains=learned_domains_cache[site_id],

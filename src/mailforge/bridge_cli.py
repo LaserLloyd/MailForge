@@ -280,10 +280,22 @@ def _daily_brief(store: Any, site: str) -> dict[str, Any]:
             for r in store.list_agent_notes(site, limit=10, since_days=1)
         ],
         "coverage": store.mailbox_coverage(site),
-        "guidance_changes_24h": store.count_audit_tool_calls("guidance_write", since),
-        "overrides_24h": store.count_audit_events(
-            "approval", since, action="guardrail_override"
-        ),
+        # What the owner reviews next morning: the edits themselves (this site
+        # only), refusals counted apart, never mixed into the change count.
+        "guidance_changes": _guidance_changes_for(store, site, since),
+        "guidance_changes_24h": len(_guidance_changes_for(store, site, since)),
+        "guidance_refused_24h": int(store.conn.execute(
+            "SELECT COUNT(*) FROM audit_log WHERE event='block' AND ts>=? "
+            "AND json_extract(detail_json,'$.tool')='guidance_write' "
+            "AND COALESCE(json_extract(detail_json,'$.site_id'),?)=?",
+            (since, site, site),
+        ).fetchone()[0]),
+        "overrides_24h": int(store.conn.execute(
+            "SELECT COUNT(*) FROM audit_log WHERE event='approval' AND ts>=? "
+            "AND json_extract(detail_json,'$.action')='guardrail_override' "
+            "AND COALESCE(json_extract(detail_json,'$.site_id'),?)=?",
+            (since, site, site),
+        ).fetchone()[0]),
         "open_requests": [
             {"id": int(r["id"]), "author": r["author"], "title": r["title"],
              "body": r["body"], "created_at": r["created_at"]}
@@ -291,6 +303,13 @@ def _daily_brief(store: Any, site: str) -> dict[str, Any]:
             if r["kind"] == "request"
         ],
     }
+
+
+def _guidance_changes_for(store: Any, site: str, since: str) -> list[dict[str, Any]]:
+    from .bridge_ops import guidance_ops
+
+    return [c for c in guidance_ops.guidance_changes_24h(store, since)
+            if (c.get("site_id") or site) == site]
 
 
 def _guard_draft_body(
@@ -383,6 +402,9 @@ def _compose_draft(data: dict[str, Any], site: str, store: Any, settings: Any) -
         raise BridgeInputError("guardrails blocked this draft: " + "; ".join(report.reasons[:3]))
 
     draft_id = store.create_manual_draft(from_addr, to, subject, body, site_id=site)
+    store.update_draft_state(draft_id, "DRAFT", expect_states=["DRAFT"],
+                             guardrail_flags={**report.flags, "agent_written": True,
+                                              "author": author})
     AuditLog(store).record(
         actor="agent", event="tool_call", subject_table="drafts", subject_id=draft_id,
         detail={"tool": "compose_draft", "recipient": to, "author": author},
@@ -650,6 +672,20 @@ def _edit_draft(data: dict[str, Any], site: str, store: Any, settings: Any) -> d
         raise BridgeInputError("draft_id not found for site")
     if str(draft["state"]).upper() not in _EDITABLE_STATES:
         raise BridgeInputError(f"draft state {draft['state']} cannot be edited")
+    try:
+        old_flags = json.loads(draft["guardrail_flags"] or "{}")
+    except ValueError:
+        old_flags = {}
+    if not isinstance(old_flags, dict):
+        old_flags = {}
+    if draft["message_id"] is None and not old_flags.get("agent_written"):
+        raise BridgeInputError(
+            "this is the owner's own draft; an agent can only edit drafts an agent wrote"
+        )
+    if draft["message_id"] is not None and str(draft["state"]).upper() == "DRAFT":
+        raise BridgeInputError(
+            "the owner has already edited this reply, so an agent cannot rewrite it"
+        )
     reason = _source_block_reason(store, draft["message_id"])
     if reason:
         raise BridgeInputError(reason)
@@ -687,9 +723,16 @@ def _edit_draft(data: dict[str, Any], site: str, store: Any, settings: Any) -> d
     store.create_ai_revision(draft_id, feedback=f"agent edit by {author}", body=old_body,
                              model_used=author, role="user")
     new_state = "PENDING" if is_reply else "DRAFT"
-    flags = {**report.flags, "agent_written": True, "author": author}
-    store.update_draft_state(draft_id, new_state, body=body, subject=subject,
-                             guardrail_flags=flags)
+    # Ownership is fixed at creation: an edit never makes a draft agent-owned.
+    flags = {**report.flags, "author": author}
+    if old_flags.get("agent_written"):
+        flags["agent_written"] = True
+    if not store.update_draft_state(
+        draft_id, new_state, expect_states=_EDITABLE_STATES, body=body, subject=subject,
+        guardrail_flags=flags,
+    ):
+        raise BridgeInputError("the draft changed while it was being checked "
+                               "(it may have been sent); nothing was edited")
     store.revoke_send_authorizations([draft_id])
     store.create_ai_revision(draft_id, feedback="", body=body, model_used=author,
                              role="assistant")

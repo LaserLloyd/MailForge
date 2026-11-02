@@ -420,15 +420,16 @@ def evaluate(
 
 
 def _first_contact_checks(store: Any, addrs: list[str], people: set[str]) -> list[Check]:
-    """A soft warning for an address never written to before: not allowlisted and
-    not someone in this thread. The owner clears it with the ordinary tick; no
+    """A soft warning for an address never written to before: no SENT record to
+    it in our own sent history (the allowlist is NOT used: the drafter fills it
+    automatically) and not someone who wrote in this thread. The owner clears it with the ordinary tick; no
     typing, and it is never a hard gate."""
     new: list[str] = []
     for a in addrs:
         if a.lower() in people:
             continue
         try:
-            known = bool(store.is_allowlisted(a))
+            known = bool(store.has_sent_to(a))
         except Exception:  # noqa: BLE001
             known = False
         if not known:
@@ -466,6 +467,12 @@ def record_override(
     ids = [c.id for c in items]
     if not ids:
         return ids
+    site_id = None
+    try:
+        if draft_id is not None:
+            site_id = store.get_draft(int(draft_id))["site_id"]
+    except Exception:  # noqa: BLE001 — the site tag is for the brief only
+        site_id = None
     AuditLog(store).record(
         actor="user",
         event="approval",
@@ -473,6 +480,7 @@ def record_override(
         subject_id=draft_id,
         detail={
             "action": "guardrail_override",
+            "site_id": site_id,
             "draft_id": draft_id,
             "recipient": recipient,
             "overridden": ids,
@@ -506,7 +514,7 @@ def append_warning(store: Any, record_id: int | None) -> str:
         row = store.get_sent_message(int(record_id))
     except Exception:  # noqa: BLE001
         log.exception("could not read the Sent-folder status")
-        return ""
+        return "Sent. MailForge couldn't confirm whether the copy reached your Sent folder."
     if row is None:
         return ""
     status = str(_value(row, "imap_append", "") or "").upper()
@@ -571,6 +579,24 @@ def end_dialog(page_id: str) -> None:
     _OPEN_DIALOGS.discard(page_id)
 
 
+_FLIGHTS: set[str] = set()
+
+
+def claim_flight(keys: Iterable[str]) -> bool:
+    """Single-flight guard: claim every key or none. ``False`` = one of them is
+    already sending, so a second click or event must not transmit. Runs on the
+    event loop, so check-and-add is atomic."""
+    keys = list(keys)
+    if any(k in _FLIGHTS for k in keys):
+        return False
+    _FLIGHTS.update(keys)
+    return True
+
+
+def release_flight(keys: Iterable[str]) -> None:
+    _FLIGHTS.difference_update(keys)
+
+
 _TASKS: set[asyncio.Future] = set()
 
 
@@ -631,9 +657,13 @@ async def confirm(
     persist: Callable[[Any], None] | None = None,
     on_failed: Callable[[Exception], None] | None = None,
     store: Any = None,
+    flight_key: str | None = None,
 ) -> SendResult | None:
     """Show the checks, let the owner decide, and send. ``None`` = not sent
     (cancelled, or the checks changed and the owner must look again).
+
+    ``flight_key`` (e.g. ``draft:12``) is a single-flight guard on top of the
+    per-page one: while a send holds it, no other dialog may transmit.
 
     ``collect`` is called off the event loop and must not touch the UI.
     ``transmit(overridden)`` is the only code whose failure means "not sent".
@@ -646,6 +676,7 @@ async def confirm(
         return await _confirm_dialog(
             client, title=title, facts=facts, collect=collect, transmit=transmit,
             persist=persist, on_failed=on_failed, store=store,
+            flight_keys=[f"page:{page_id}"] + ([flight_key] if flight_key else []),
         )
     finally:
         end_dialog(page_id)
@@ -661,6 +692,7 @@ async def _confirm_dialog(
     persist: Callable[[Any], None] | None,
     on_failed: Callable[[Exception], None] | None,
     store: Any,
+    flight_keys: list[str],
 ) -> SendResult | None:
     loop = asyncio.get_running_loop()
     done: asyncio.Future = loop.create_future()
@@ -754,11 +786,13 @@ async def _confirm_dialog(
                 with ui.row().classes("items-center").style("gap: 8px"):
                     ui.spinner(size="sm")
                     ui.label("Sending…")
-        sending = st["phase"] == "sending"
+        sending = st["phase"] in {"sending", "rechecking"}
         checking = st["phase"] == "checking"
         ack.set_visibility(bool(soft) and not hard and not checking)
         send_btn.set_visibility(not hard and not checking)
-        send_btn.set_text("Send anyway" if soft else "Send")
+        send_btn.set_text(
+            "Sending…" if sending else ("Send anyway" if soft else "Send")
+        )
         send_btn.set_enabled(not sending and (not soft or bool(ack.value)))
         back_btn.set_text("Cancel" if (not soft and not hard) else "Go back and edit")
         back_btn.set_enabled(not sending)
@@ -769,12 +803,23 @@ async def _confirm_dialog(
     async def _on_send() -> None:
         if st["phase"] != "review":
             return
+        # Disable and relabel BEFORE the first await: the re-check below takes
+        # hundreds of ms, and a second click in that window must find nothing to do.
+        st.update(phase="rechecking", notice="")
+        _render()
+        try:
+            await _send_once()
+        finally:
+            if st["phase"] == "rechecking":  # the re-check stopped it: let the owner look again
+                st["phase"] = "review"
+                _render()
+
+    async def _send_once() -> None:
         try:
             fresh = await run.io_bound(collect)
         except Exception as e:  # noqa: BLE001
             log.exception("pre-send re-check failed")
             st.update(notice=f"The checks couldn't run again ({e}). Nothing was sent.")
-            _render()
             return
         if signature(fresh) != signature(st["checks"]):
             st.update(
@@ -783,17 +828,24 @@ async def _confirm_dialog(
                 "again. Nothing was sent.",
             )
             ack.value = False
-            _render()
             return
         soft = warnings(fresh)
         if hard_failures(fresh) or (soft and not ack.value):
-            _render()
+            return
+        if not claim_flight(flight_keys):
+            st.update(notice="This is already being sent. Nothing was sent twice.")
             return
         st.update(phase="sending", notice="")
         _render()
-        task = start_send(
-            run_send(lambda: transmit(soft), persist=persist, on_failed=on_failed, store=store)
-        )
+        try:
+            task = start_send(
+                run_send(lambda: transmit(soft), persist=persist, on_failed=on_failed,
+                         store=store)
+            )
+            task.add_done_callback(lambda _t: release_flight(flight_keys))
+        except BaseException:
+            release_flight(flight_keys)
+            raise
         result = await asyncio.shield(task)
         if not done.done():
             done.set_result(result)

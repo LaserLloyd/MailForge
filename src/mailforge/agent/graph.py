@@ -134,8 +134,9 @@ class AgentGraph:
         if candidate in participants:
             # Persist the exact observed sender. This satisfies the downstream
             # domain policy without weakening recipient binding: unrelated
-            # addresses at the same domain still fail rule (a), and the UI
-            # still requires retyping a first-contact address before send.
+            # addresses at the same domain still fail rule (a). This does NOT
+            # make the address "known": the pre-send first-contact warning
+            # reads our sent history, not the allowlist.
             if not self.store.is_allowlisted(candidate):
                 self.store.record_allowlist(candidate, source="inbound_thread")
             return candidate
