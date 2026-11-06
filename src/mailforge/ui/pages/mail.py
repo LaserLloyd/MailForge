@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
 from collections.abc import Callable
@@ -30,7 +31,7 @@ _VIEW_LABELS: dict[str, str] = {
     "quarantined": "Quarantined",
     "review": "Questionable",
     "spam": "Filtered spam",
-    "archived": "Archived",
+    "archived": "Saved",
     "trash": "Trash",
 }
 
@@ -38,8 +39,11 @@ _VIEW_LABELS: dict[str, str] = {
 #: entries that do the same thing in the picker.
 _VIEW_COVERED_TAGS = frozenset({"quarantined", "spam"})
 
-#: Where "Mark as spam" lands: the Filtered-spam view, never ``?tag=spam``.
+#: The Filtered-spam view (never ``?tag=spam``).
 SPAM_VIEW_URL = "/mail?" + urlencode({"filter": "spam"})
+#: The Saved box: archived mail, kept out of the inbox and never auto-deleted.
+SAVED_VIEW_URL = "/mail?" + urlencode({"filter": "archived"})
+SAVED_NOTICE = "Saved — it is out of your inbox and kept under Saved."
 
 
 _TAG_LABELS = {
@@ -110,6 +114,7 @@ def resolve_view(
     view; unknown, stale or zero-count tags and unknown views fall back.
     """
     counts = tag_counts or {}
+    filter = "archived" if filter == "saved" else filter
     filter = filter if filter in _VIEW_LABELS else "all"
     tag = str(tag or "")
     if tag in _VIEW_COVERED_TAGS:
@@ -327,6 +332,7 @@ def _render_row(
     site_labels: dict[str, str] | None = None,
     on_selection_changed: Callable[[int, bool], None] | None = None,
     on_click_intent: Callable[[int, bool], None] | None = None,
+    elements: dict[int, Any] | None = None,
 ) -> Any | None:
     message_id = int(_value(row, "id"))
     unseen = not bool(_value(row, "seen", 0))
@@ -339,7 +345,9 @@ def _render_row(
         ui.element("div")
         .classes(classes)
         .on("click", lambda: ui.navigate.to(_message_url(message_id, **filters)))
-    ):
+    ) as row_el:
+        if elements is not None:
+            elements[message_id] = row_el
         with ui.row().classes("w-full items-start no-wrap").style("gap: 9px"):
             checkbox = None
             if on_selection_changed is not None:
@@ -500,10 +508,22 @@ def _message_reader(
     full_page: bool = False,
     filters: dict[str, str] | None = None,
     neighbors: tuple[int | None, int | None] = (None, None),
+    on_dismiss: Callable[[list[int], str], None] | None = None,
 ) -> None:
     """The reading pane. ``filters`` is the list view the user came from, so
     archive/trash/mark-unread return there instead of to the unfiltered
-    inbox; ``neighbors`` = (previous id, next id) in that list for ⬆/⬇."""
+    inbox; ``neighbors`` = (previous id, next id) in that list for ⬆/⬇.
+
+    ``on_dismiss(ids, notice)`` is supplied by the list page: a message that
+    leaves the current view (saved, deleted, marked spam) is removed from the
+    list and the pane at once, with no page reload. Without it (the stand-alone
+    ``/mail/<id>`` page) the page returns to the list as before."""
+
+    def _gone(notice: str) -> None:
+        if on_dismiss is not None:
+            on_dismiss([int(message_id)], notice)
+        else:
+            _notify_then_navigate(notice, back_url)
     filters = {k: v for k, v in (filters or {}).items() if v}
     back_url = "/mail?" + urlencode(filters) if filters else "/mail"
     try:
@@ -566,14 +586,14 @@ def _message_reader(
     def _archive() -> None:
         try:
             store.set_message_archived(message_id, True)  # type: ignore[attr-defined]
-            _notify_then_navigate("Message archived.", back_url)
+            _gone(SAVED_NOTICE)
         except Exception as e:  # noqa: BLE001
-            ui.notify(f"Could not archive: {e}", type="negative")
+            ui.notify(f"Could not save: {e}", type="negative")
 
     def _trash() -> None:
         try:
             store.set_message_trashed(message_id, True)  # type: ignore[attr-defined]
-            _notify_then_navigate(_delete_notice(settings, 1), back_url)
+            _gone(_delete_notice(settings, 1))
         except Exception as e:  # noqa: BLE001
             ui.notify(f"Could not move message to Trash: {e}", type="negative")
 
@@ -613,10 +633,12 @@ def _message_reader(
             except Exception:  # noqa: BLE001
                 log.exception("audit append failed for screening feedback")
             if label == "SPAM":
-                _notify_then_navigate(
-                    "Marked as spam. Similar sender/subject patterns will be filtered locally; "
-                    "nothing was deleted on the mail server.",
-                    SPAM_VIEW_URL,
+                # Like Delete: the message leaves the view and the person stays
+                # where they were (it is listed under Filtered spam).
+                _gone(
+                    "Marked as spam — it is out of your inbox (see Filtered spam). Similar "
+                    "sender/subject patterns will be filtered locally; nothing was deleted "
+                    "on the mail server."
                 )
             elif label == "CONTENT":
                 _notify_then_navigate(
@@ -705,8 +727,8 @@ def _message_reader(
                 "Restore to inbox"
             )
         else:
-            ui.button(icon="archive", on_click=_archive).props("flat round dense").tooltip(
-                "Archive"
+            ui.button(icon="bookmark_add", on_click=_archive).props("flat round dense").tooltip(
+                "Save — keep it, out of the inbox (find it under Saved)"
             )
         if not trashed:
             ui.button(icon="delete_outline", on_click=_trash).props(
@@ -851,6 +873,8 @@ def _message_reader(
         ),
     )
 
+    _translation_card(store, settings, bridge, msg)
+
     _attachments_card(store, message_id, bool(_value(msg, "has_attachments", 0)))
 
     if working is not None:
@@ -930,6 +954,7 @@ def render(
     except Exception:  # noqa: BLE001
         db_accounts = []
     account_options, account = account_select_options(accounts, account, db_accounts)
+    filter = "archived" if filter == "saved" else filter
     filter = filter if filter in _VIEW_LABELS else "all"
     try:
         page = max(0, int(page))
@@ -1184,7 +1209,7 @@ def render(
                 notice = f"Marked {changed} message(s) unread."
             elif action == "archive":
                 changed = store.set_messages_archived(message_ids, True)  # type: ignore[attr-defined]
-                notice = f"Archived {changed} message(s)."
+                notice = f"Saved {changed} message(s) — they are under Saved."
             elif action == "trash":
                 changed = store.set_messages_trashed(message_ids, True)  # type: ignore[attr-defined]
                 notice = _delete_notice(settings, changed)
@@ -1197,7 +1222,11 @@ def render(
             else:
                 raise ValueError(f"unsupported bulk action: {action}")
             _audit_bulk(action, message_ids, changed)
-            _notify_then_navigate(notice, _current_url())
+            if action in {"archive", "trash", "restore"}:
+                # The rows left this view: drop them now instead of reloading.
+                _dismiss(message_ids, notice)
+            else:
+                _notify_then_navigate(notice, _current_url())
         except Exception as e:  # noqa: BLE001
             ui.notify(f"Bulk action failed: {e}", type="negative")
 
@@ -1305,11 +1334,10 @@ def render(
                 ui.notify(
                     f"The mail server refused the delete — {err}", type="negative", timeout=9000
                 )
-            _notify_then_navigate(
-                report.summary(),
-                _current_url(),
-                kind="positive" if report.ok else "warning",
-            )
+            if report.ok:
+                _dismiss(message_ids, report.summary())
+            else:
+                _notify_then_navigate(report.summary(), _current_url(), kind="warning")
         except Exception:  # the page closed while the server was contacted
             log.debug("purge finished after its page was closed: %s", report.summary())
 
@@ -1352,8 +1380,10 @@ def render(
             if filter != "archived":
                 bulk_buttons.append(
                     ui.button(
-                        "Archive", icon="archive", on_click=lambda: _apply_bulk("archive")
-                    ).props("flat dense no-caps")
+                        "Save", icon="bookmark_add", on_click=lambda: _apply_bulk("archive")
+                    ).props("flat dense no-caps").tooltip(
+                        "Keep these out of the inbox, under Saved"
+                    )
                 )
             bulk_buttons.append(
                 ui.button(
@@ -1365,8 +1395,9 @@ def render(
     workspace_classes = "bb-mail-workspace bb-card w-full"
     if message_id is not None:
         workspace_classes += " has-selection"
-    with ui.element("div").classes(workspace_classes):
-        with ui.column().classes("bb-mail-list").style("gap: 7px; padding: 10px"):
+    row_elements: dict[int, Any] = {}
+    with ui.element("div").classes(workspace_classes) as workspace:
+        with ui.column().classes("bb-mail-list").style("gap: 7px; padding: 10px") as mail_list:
             if not rows:
                 with ui.column().classes("items-center q-pa-xl"):
                     ui.icon("inbox", size="38px").style("color: var(--text-tertiary)")
@@ -1380,6 +1411,7 @@ def render(
                     site_labels,
                     _set_selected,
                     _note_click_intent,
+                    elements=row_elements,
                 )
                 if checkbox is not None:
                     checkboxes[row_id] = checkbox
@@ -1400,14 +1432,9 @@ def render(
                     ).props("flat dense no-caps")
                     if len(rows) < page_size:
                         older.props("disable")
-        with ui.column().classes("bb-mail-pane").style("gap: 12px"):
+        with ui.column().classes("bb-mail-pane").style("gap: 12px") as pane:
             if message_id is None:
-                with ui.column().classes("w-full items-center q-pa-xl"):
-                    ui.icon("drafts", size="52px").style("color: var(--text-tertiary)")
-                    ui.label("Select a message to read").style("font-size: 17px; font-weight: 700")
-                    ui.label("On a phone or narrow window, the message opens full screen.").style(
-                        "color: var(--text-secondary)"
-                    )
+                _empty_pane()
             else:
                 with ui.row().classes("w-full bb-back-row"):
                     ui.button(
@@ -1416,8 +1443,172 @@ def render(
                         on_click=lambda: _go(),
                     ).props("flat no-caps")
                 _message_reader(
-                    store, settings, message_id, bridge, filters=filters, neighbors=neighbors
+                    store,
+                    settings,
+                    message_id,
+                    bridge,
+                    filters=filters,
+                    neighbors=neighbors,
+                    on_dismiss=lambda ids, notice: _dismiss(ids, notice),
                 )
+
+    def _dismiss(message_ids: list[int], notice: str) -> None:
+        """Remove messages that just left this view — instantly, no reload.
+
+        The old flow toasted, waited 2.6 s and reloaded the whole page, so a
+        deleted row sat on screen long enough to look like the delete failed.
+        """
+        # The clicked button may live inside the pane cleared below, so every
+        # UI call here runs in the workspace's context, which outlives it.
+        with workspace:
+            _dismiss_now({int(i) for i in message_ids}, notice)
+
+    def _dismiss_now(gone: set[int], notice: str) -> None:
+        ui.notify(notice, type="positive", timeout=7000)
+        for mid in gone:
+            element = row_elements.pop(mid, None)
+            if element is not None:
+                element.delete()
+            checkboxes.pop(mid, None)
+        visible_ids[:] = [i for i in visible_ids if i not in gone]
+        selection.visible_ids = [i for i in selection.visible_ids if i not in gone]
+        selection.selected -= gone
+        if selection.anchor in gone:
+            selection.anchor = None
+        _sync_selection_controls()
+        if not row_elements:
+            with mail_list:
+                with ui.column().classes("items-center q-pa-xl"):
+                    ui.icon("inbox", size="38px").style("color: var(--text-tertiary)")
+                    ui.label("No matching messages.").style("color: var(--text-secondary)")
+        if message_id is not None and int(message_id) in gone:
+            # The open message left: empty the pane, show the list again on a
+            # phone, and point the address bar at the list (a reload must not
+            # reopen it).
+            pane.clear()
+            with pane:
+                _empty_pane()
+            workspace.classes(remove="has-selection")
+            list_url = "/mail?" + urlencode({k: v for k, v in filters.items() if v})
+            ui.run_javascript(f"history.replaceState(null, '', {json.dumps(list_url)})")
+
+
+def _translation_card(store: object, settings: object, bridge: object | None, msg: Any) -> None:
+    """The English translation of a non-English message, under the original.
+
+    Only the translated text is shown (no model chatter), as plain text — never
+    Markdown/HTML, so nothing in it is clickable. See ``mailforge.translate``
+    for why this is safe for held mail and never runs on quarantined mail.
+    """
+    from ...translate import looks_non_english, may_translate, translate_message
+
+    message_id = int(_value(msg, "id"))
+    subject = str(_value(msg, "subject", "") or "")
+    body = str(_value(msg, "sanitized_text", "") or "")
+    if not may_translate(msg, settings, on_request=True):
+        return
+    busy = {"on": False}
+
+    async def _run() -> None:
+        if busy["on"]:
+            return
+        busy["on"] = True
+        client = ui.context.client
+        note = ui.notification("Translating with the local model…", spinner=True, timeout=None)
+        try:
+            status = await translate_message(
+                store, bridge, settings, message_id, on_request=True
+            )
+        except Exception as e:  # noqa: BLE001
+            log.exception("translation failed for msg %s", message_id)
+            status = f"error: {type(e).__name__}"
+        finally:
+            busy["on"] = False
+            try:
+                note.dismiss()
+            except Exception:  # noqa: BLE001
+                pass
+        messages = {
+            "unavailable": ("The local model is not reachable right now — try again later.",
+                            "warning"),
+            "english": ("The model says this message is already in English.", "info"),
+            "failed": ("Translation failed — the model gave no usable answer.", "negative"),
+            "skipped": ("This message cannot be translated.", "warning"),
+        }
+        if status in messages:
+            text, kind = messages[status]
+            presend.safe_notify(client, text, type=kind)
+        elif status.startswith("error"):
+            presend.safe_notify(client, f"Translation failed ({status}).", type="negative")
+        try:
+            _card.refresh()
+        except Exception:  # noqa: BLE001 — the page was closed meanwhile
+            pass
+
+    @ui.refreshable
+    def _card() -> None:
+        try:
+            tr = store.get_translation(message_id)  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001
+            tr = None
+        status = str(_value(tr, "status", "") or "")
+        if status == "done":
+            with ui.card().classes("w-full bb-card bb-translation").style(
+                "padding: 12px; gap: 6px; border-left: 3px solid var(--text-link)"
+            ):
+                with ui.row().classes("w-full items-center").style("gap: 7px"):
+                    ui.icon("translate", size="19px").style("color: var(--text-link)")
+                    lang = str(_value(tr, "source_language", "") or "another language")
+                    ui.label(f"English translation · from {lang}").style("font-weight: 800")
+                    ui.space()
+                    theme.badge("AI", "accent")
+                    ui.button(icon="refresh", on_click=_run).props(
+                        "flat round dense size=sm"
+                    ).tooltip("Translate again")
+                t_subject = str(_value(tr, "subject", "") or "")
+                if t_subject:
+                    ui.label(t_subject).style(
+                        "font-weight: 700; font-size: 13.5px; overflow-wrap: anywhere"
+                    )
+                ui.label(str(_value(tr, "body", "") or "")).style(
+                    "white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; "
+                    "line-height: 1.5"
+                )
+                if int(_value(tr, "truncated", 0) or 0):
+                    ui.label(
+                        "This is a long message: only its first part was translated."
+                    ).style("font-size: 12px; color: var(--warning-text)")
+                ui.label(
+                    "Machine translation by your local model. It can be wrong, and a hostile "
+                    "message can make it say something the original does not — check the "
+                    "original before acting on anything it asks. Links stay disabled."
+                ).style("font-size: 11.5px; color: var(--text-tertiary)")
+            return
+        if status == "english" or not (status == "failed" or looks_non_english(subject, body)):
+            return
+        with ui.row().classes("w-full items-center bb-card").style(
+            "padding: 8px 12px; gap: 8px"
+        ):
+            ui.icon("translate", size="19px").style("color: var(--text-secondary)")
+            ui.label(
+                "Translation failed last time." if status == "failed"
+                else "This message does not look like it is in English."
+            ).style("font-size: 12.5px; color: var(--text-secondary)")
+            ui.space()
+            ui.button("Translate", icon="translate", on_click=_run).props(
+                "outline dense no-caps color=primary"
+            )
+
+    _card()
+
+
+def _empty_pane() -> None:
+    with ui.column().classes("w-full items-center q-pa-xl"):
+        ui.icon("drafts", size="52px").style("color: var(--text-tertiary)")
+        ui.label("Select a message to read").style("font-size: 17px; font-weight: 700")
+        ui.label("On a phone or narrow window, the message opens full screen.").style(
+            "color: var(--text-secondary)"
+        )
 
 
 def render_detail(

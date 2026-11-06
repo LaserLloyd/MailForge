@@ -37,6 +37,7 @@ log = logging.getLogger(__name__)
 NAV: list[tuple[str, str, str, str]] = [
     ("dashboard", "Dashboard", "dashboard", "/"),
     ("mail", "Inbox", "inbox", "/mail"),
+    ("saved", "Saved", "bookmark", "/mail?filter=archived"),
     ("drafts", "AI Review", "auto_awesome", "/drafts"),
     ("spam", "Spam", "gpp_maybe", "/spam"),
     ("compose", "Compose", "edit", "/compose"),

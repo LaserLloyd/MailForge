@@ -209,6 +209,12 @@ def run_serve(start_ui: bool = True, ui_port: int | None = None) -> None:
         except Exception as e:
             log.warning("Managed handbook refresh deferred: %s", e)
 
+    async def _translator() -> None:
+        """Translate recent non-English mail for the person (display-only)."""
+        from .translate import run_forever
+
+        await run_forever(store, bridge, settings, stop_event)
+
     def _start_background() -> None:
         for lst in listeners:
             lst.start()
@@ -224,6 +230,7 @@ def run_serve(start_ui: bool = True, ui_port: int | None = None) -> None:
         nicegui_app.on_startup(lambda: asyncio.create_task(_deferred_resumer()))
         nicegui_app.on_startup(lambda: asyncio.create_task(_refresh_bot_knowledge()))
         nicegui_app.on_startup(lambda: asyncio.create_task(_retention_sweep()))
+        nicegui_app.on_startup(lambda: asyncio.create_task(_translator()))
 
         def _shutdown() -> None:
             stop_event.set()
@@ -245,6 +252,7 @@ def run_serve(start_ui: bool = True, ui_port: int | None = None) -> None:
                     _deferred_resumer(),
                     _refresh_bot_knowledge(),
                     _retention_sweep(),
+                    _translator(),
                 )
 
             asyncio.run(_headless())

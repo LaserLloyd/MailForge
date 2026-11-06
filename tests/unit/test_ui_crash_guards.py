@@ -66,11 +66,30 @@ def test_spam_tag_with_no_spam_left_still_resolves():
     assert value in mail.filter_options({})
 
 
-def test_mark_as_spam_lands_on_the_spam_view_not_the_hidden_tag():
+def test_mark_as_spam_just_removes_the_message_like_delete():
+    # 2026-11-06: marking spam makes the message go away (like Delete);
+    # it must not take the person to the spam page (or the hidden ?tag=spam).
     assert mail.SPAM_VIEW_URL == "/mail?filter=spam"
     source = inspect.getsource(mail._message_reader)
     assert '"tag": "spam"' not in source
-    assert "SPAM_VIEW_URL" in source
+    assert "SPAM_VIEW_URL" not in source
+    spam_branch = source.split('if label == "SPAM":', 1)[1].split("elif", 1)[0]
+    assert "_gone(" in spam_branch
+
+
+def test_leaving_actions_dismiss_without_a_reload():
+    source = inspect.getsource(mail._message_reader)
+    for action in ("_archive", "_trash"):
+        body = source.split(f"def {action}()", 1)[1].split("def ", 1)[0]
+        assert "_gone(" in body and "_notify_then_navigate" not in body, action
+    page = inspect.getsource(mail.render)
+    bulk = page.split("def _apply_bulk", 1)[1].split("async def", 1)[0]
+    assert '{"archive", "trash", "restore"}' in bulk and "_dismiss(" in bulk
+
+
+def test_saved_box_is_the_archive_view():
+    assert mail._VIEW_LABELS["archived"] == "Saved"
+    assert mail.resolve_view("saved", "", {})[0] == "archived"
 
 
 def test_reader_actions_do_not_navigate_straight_after_a_toast():

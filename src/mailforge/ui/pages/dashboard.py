@@ -185,7 +185,7 @@ class _BulkSelection:
                 notice = f"Marked {changed} message(s) unread."
             elif action == "archive":
                 changed = self.store.set_messages_archived(ids, True)  # type: ignore[attr-defined]
-                notice = f"Archived {changed} message(s)."
+                notice = f"Saved {changed} message(s) — they are under Saved."
             elif action == "trash":
                 changed = self.store.set_messages_trashed(ids, True)  # type: ignore[attr-defined]
                 from .mail import _delete_notice
@@ -235,7 +235,7 @@ class _BulkSelection:
                     "Unread", icon="mark_email_unread", on_click=lambda: self.apply("unread")
                 ).props("flat dense no-caps"),
                 ui.button(
-                    "Archive", icon="archive", on_click=lambda: self.apply("archive")
+                    "Save", icon="bookmark_add", on_click=lambda: self.apply("archive")
                 ).props("flat dense no-caps"),
                 ui.button(
                     "Delete", icon="delete_outline", on_click=lambda: self.apply("trash")

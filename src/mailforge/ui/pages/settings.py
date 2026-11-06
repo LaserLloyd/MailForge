@@ -403,6 +403,51 @@ def render(store: object, settings: object) -> None:
             value=_csv(getattr(sec, "link_allowlist_domains", set()) if sec else set()),
         ).classes("w-full")
 
+    # --- Translation -----------------------------------------------------------
+    tr_cfg = getattr(settings, "translation", None)
+    translation_inputs: dict[str, Any] = {}
+    if tr_cfg is not None:
+        with ui.card().classes("bb-card w-full q-mt-md"):
+            with ui.row().classes("items-center").style("gap: 8px"):
+                ui.icon("translate", size="20px").style("color: var(--text-link)")
+                ui.label("Translation").classes("text-subtitle1 text-weight-bold").style(
+                    "color: var(--text-link)"
+                )
+            ui.label(
+                "Incoming mail that is not in English is translated by your LOCAL model "
+                "(the one under Models — never a cloud link) and the English text is shown "
+                "under the original. The translation is for you only: it is never given to "
+                "triage, drafting, knowledge search or OpenClaw agents, it is shown as plain "
+                "text with links disabled, and it is deleted with the message. Quarantined "
+                "mail is never translated."
+            ).style("font-size: 12px; color: var(--text-secondary)")
+            translation_inputs["enabled"] = ui.switch(
+                "Automatically translate incoming mail that is not in English",
+                value=bool(getattr(tr_cfg, "enabled", True)),
+            )
+            translation_inputs["include_held"] = ui.switch(
+                "Also translate mail held for review (potential spam / potential issue)",
+                value=bool(getattr(tr_cfg, "include_held", True)),
+            )
+            ui.label(
+                "Held mail stays withheld from every AI that can act. The translator cannot "
+                "act — no tools, and only you read its output — but it is still a model "
+                "reading suspicious text; turn this off to keep held mail away from all AI."
+            ).style("font-size: 11.5px; color: var(--text-tertiary)")
+            with ui.row().classes("items-center").style("gap: 12px"):
+                translation_inputs["backfill_days"] = ui.number(
+                    "Translate mail from the last … days", value=int(tr_cfg.backfill_days),
+                    min=0, max=365, format="%d",
+                ).props("dense outlined").classes("w-56")
+                translation_inputs["max_chars"] = ui.number(
+                    "Longest text translated (characters)", value=int(tr_cfg.max_chars),
+                    min=500, max=20000, format="%d",
+                ).props("dense outlined").classes("w-56")
+            ui.label(
+                "Changes apply at once after Save. Older mail can be translated from the "
+                "message itself (Translate button)."
+            ).style("font-size: 11.5px; color: var(--text-tertiary)")
+
     # --- Security & quarantine (read-only) ------------------------------------
     with ui.card().classes("bb-card w-full q-mt-md"):
         ui.label("Security & quarantine").classes("text-subtitle1 text-weight-bold").style(
@@ -551,6 +596,16 @@ def render(store: object, settings: object) -> None:
                     raise ValueError(f"unknown provider delete mode: {mode}")
                 sec.server_delete_mode = mode  # type: ignore[assignment]
                 sec.trash_retention_days = max(0, int(delete_inputs["days"].value or 0))
+
+            if tr_cfg is not None and translation_inputs:
+                tr_cfg.enabled = bool(translation_inputs["enabled"].value)
+                tr_cfg.include_held = bool(translation_inputs["include_held"].value)
+                tr_cfg.backfill_days = min(
+                    365, max(0, int(translation_inputs["backfill_days"].value or 0))
+                )
+                tr_cfg.max_chars = min(
+                    20000, max(500, int(translation_inputs["max_chars"].value or 4000))
+                )
 
             # Re-assert invariants before persisting (spec §0).
             if hasattr(settings, "assert_invariants"):

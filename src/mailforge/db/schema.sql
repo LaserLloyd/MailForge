@@ -239,3 +239,18 @@ CREATE TABLE IF NOT EXISTS recipient_allowlist (
   msg_count INTEGER, source TEXT);                                -- sent_folder|contact|manual
 
 CREATE TABLE IF NOT EXISTS app_config (id INTEGER PRIMARY KEY CHECK (id=1), config_json TEXT);
+
+-- AI translations of non-English mail (translate.py). Display-only: read by the
+-- local UI and nothing else (never triage, drafting, RAG or the agent bridge).
+-- status: done | english (no translation needed) | failed.
+CREATE TABLE IF NOT EXISTS message_translations (
+  message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+  status TEXT NOT NULL,
+  source_language TEXT,
+  subject TEXT,
+  body TEXT,
+  truncated INTEGER NOT NULL DEFAULT 0,
+  model TEXT,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  updated_at TEXT NOT NULL);

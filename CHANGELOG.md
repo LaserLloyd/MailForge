@@ -5,6 +5,20 @@ Published by Laser Lloyd — https://www.laserlloyd.com
 
 ## Unreleased (dev)
 
+- **Automatic translation of non-English mail.** Settings → Translation (on by default): mail
+  that is not in English is translated by the LOCAL model and the English text is shown under the
+  original as plain text (no Markdown/HTML, links stay disabled), labelled as a machine translation.
+  A cheap script/stop-word check means English mail never costs a model call. Display-only: stored
+  in `message_translations`, never given to triage, drafting, RAG or the agent bridge, deleted
+  with the message on purge. Quarantined mail is never translated; mail held for review is
+  translated unless `translation.include_held = false`; SPAM/FILED only on request (Translate
+  button). Frame markers in the email are defanged, output control/bidi characters stripped.
+- **Delete, Save and Spam take effect at once.** The row (and the open message) disappears
+  immediately instead of after a 2.6 s toast-then-reload, and marking spam no longer takes you to
+  the spam page — the message just leaves the list, like Delete.
+- **Saved box.** "Archive" is now **Saved** (bookmark icon, sidebar entry, `?filter=saved`):
+  mail you want to keep but not see in the inbox. Saved mail is never auto-deleted.
+
 - **Click an email address to copy it.** Addresses in the inbox list, the reading pane and detail
   page (From, To, Cc), Outbox, Drafts, the sent history and Settings' mailbox list copy the bare
   address on click, with a "Copied" toast, a pointer cursor and a "Click to copy" tooltip. The

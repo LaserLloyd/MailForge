@@ -466,7 +466,11 @@ def _register_pages(store: object, settings: object, bridge: object | None) -> N
         if not _gate(token):
             _denied()
             return
-        with theme.shell("mail", "Inbox", bridge, store, max_width=1500):
+        saved = filter in {"archived", "saved"}
+        with theme.shell(
+            "saved" if saved else "mail", "Saved" if saved else "Inbox",
+            bridge, store, max_width=1500,
+        ):
             mail_page.render(
                 store,
                 settings,

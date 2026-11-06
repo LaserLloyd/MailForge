@@ -607,6 +607,70 @@ class Store:
         )
         self.conn.commit()
 
+    # ----- translations (translate.py; display-only, never fed to any AI) -----
+    def get_translation(self, message_id: int) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT * FROM message_translations WHERE message_id=?", (int(message_id),)
+        ).fetchone()
+
+    def save_translation(
+        self,
+        message_id: int,
+        *,
+        status: str,
+        source_language: str | None = None,
+        subject: str | None = None,
+        body: str | None = None,
+        truncated: bool = False,
+        model: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        if status not in {"done", "english", "failed"}:
+            raise ValueError(f"unknown translation status: {status}")
+        self.conn.execute(
+            "INSERT INTO message_translations (message_id,status,source_language,subject,body,"
+            "truncated,model,attempts,error,updated_at) VALUES (?,?,?,?,?,?,?,1,?,?) "
+            "ON CONFLICT(message_id) DO UPDATE SET status=excluded.status,"
+            "source_language=excluded.source_language,subject=excluded.subject,"
+            "body=excluded.body,truncated=excluded.truncated,model=excluded.model,"
+            "attempts=message_translations.attempts+1,error=excluded.error,"
+            "updated_at=excluded.updated_at",
+            (
+                int(message_id), status, source_language, subject, body,
+                1 if truncated else 0, model, error, _now(),
+            ),
+        )
+        self.conn.commit()
+
+    def translation_candidates(
+        self,
+        *,
+        statuses: Iterable[str],
+        since_iso: str,
+        max_attempts: int = 3,
+        retry_after_iso: str = "",
+        limit: int = 20,
+    ) -> list[sqlite3.Row]:
+        """Messages that may need a translation: never quarantined, purged or
+        trashed, screened into one of ``statuses``, received since
+        ``since_iso``, and either never looked at or a failed attempt that is
+        old enough to retry."""
+        wanted = sorted({str(x).upper() for x in statuses})
+        if not wanted:
+            return []
+        status_sql = sql_status_list(wanted)  # validates: fixed identifiers only
+        return self.conn.execute(
+            "SELECT m.id, m.subject, m.sanitized_text FROM messages m "
+            "LEFT JOIN message_translations t ON t.message_id=m.id "
+            "WHERE m.quarantined=0 AND m.purged_at IS NULL AND m.trashed=0 "
+            f"AND {_SCREEN} IN ({status_sql}) "
+            "AND datetime(m.received_at) >= datetime(?) "
+            "AND (t.message_id IS NULL OR (t.status='failed' AND t.attempts < ? "
+            "AND t.updated_at < ?)) "
+            "ORDER BY datetime(m.received_at) DESC, m.id DESC LIMIT ?",
+            (since_iso, int(max_attempts), retry_after_iso, max(1, min(int(limit), 200))),
+        ).fetchall()
+
     def unprocessed_message_ids(self, limit: int = 200) -> list[int]:
         rows = self.conn.execute(
             "SELECT m.id FROM messages m "
@@ -1736,6 +1800,11 @@ class Store:
             )
             self.conn.execute(
                 f"DELETE FROM attachments WHERE message_id IN ({placeholders})", tuple(ids)
+            )
+            # A translation is a copy of the body: it goes with it.
+            self.conn.execute(
+                f"DELETE FROM message_translations WHERE message_id IN ({placeholders})",
+                tuple(ids),
             )
             cur = self.conn.execute(
                 "UPDATE messages SET purged_at=?,trashed=1,raw_html=NULL,sanitized_text=NULL,"

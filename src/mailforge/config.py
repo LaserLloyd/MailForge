@@ -334,6 +334,28 @@ class OpenClawSettings(BaseModel):
     agent_compose_per_day: int = Field(default=20, ge=0)
 
 
+class TranslationSettings(BaseModel):
+    """Automatic translation of incoming mail that is not in English.
+
+    Runs on the LOCAL model (``[llm]``), never the OpenClaw heavy-lift link, so
+    mail text does not leave the machines this app already trusts. The output
+    is display-only: it is stored apart from the message, shown to the person
+    as plain text under the original, and never handed to drafting, triage,
+    knowledge search or the agent bridge. Quarantined mail is never translated.
+    """
+
+    enabled: bool = True
+    # Mail held for human review (potential spam / potential issue) is withheld
+    # from every AI that can act. The translator cannot act — no tools, its only
+    # reader is the person — so it may translate those too, unless this is off.
+    include_held: bool = True
+    # Only mail received this many days back is translated automatically
+    # (older mail can still be translated on demand from the message view).
+    backfill_days: int = Field(default=14, ge=0, le=365)
+    # Longer bodies are translated up to this many characters (and say so).
+    max_chars: int = Field(default=4000, ge=500, le=20000)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="MAILFORGE_",
@@ -353,6 +375,7 @@ class Settings(BaseSettings):
     style: StyleSettings = Field(default_factory=StyleSettings)
     compose: ComposeSettings = Field(default_factory=ComposeSettings)
     openclaw: OpenClawSettings = Field(default_factory=OpenClawSettings)
+    translation: TranslationSettings = Field(default_factory=TranslationSettings)
     category_rules: list[CategoryRule] = Field(default_factory=default_category_rules)
     db_path: str = Field(default_factory=lambda: str(default_db_path()))
 
