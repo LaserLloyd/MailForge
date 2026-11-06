@@ -57,7 +57,7 @@ def _size_label(value: Any) -> str:
 
 
 async def _index_document(store: object, bridge: object | None, document_id: int) -> None:
-    if bridge is None or not bool(bridge.is_up()):  # type: ignore[attr-defined]
+    if bridge is None or not bool(getattr(bridge, "local_up", bridge.is_up)()):  # type: ignore[attr-defined]
         store.update_reference_document_status(  # type: ignore[attr-defined]
             document_id,
             "ERROR",

@@ -699,7 +699,7 @@ def _health_dot(bridge: object | None, store: object | None = None) -> None:
             up = False
         try:
             dot.classes(add="bb-dot--up" if up else "bb-dot--down")
-            model = getattr(bridge, "model_id", "configured model")
+            model = getattr(bridge, "active_model", None) or getattr(bridge, "model_id", "configured model")
             tip.set_text(
                 f"AI drafting online ({model}); {retrieval}"
                 if up else f"AI drafting OFFLINE — drafts deferred; {retrieval}"

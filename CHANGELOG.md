@@ -5,8 +5,17 @@ Published by Laser Lloyd — https://www.laserlloyd.com
 
 ## Unreleased (dev)
 
+- **Run on an API model.** Settings → AI model: keep the local model server, or pick a hosted
+  OpenAI-compatible provider (presets: MiniMax, DeepSeek, OpenAI, OpenRouter, or any other) as the
+  primary model for triage, drafts, revisions and translation, with the local server as an
+  optional fallback (e.g. when a plan limit answers 402). The key is entered once and kept in the
+  OS credential store (`MAILFORGE_CLOUD_API_KEY` may override it); it is never written to
+  config.toml or logged. Hosted URLs must be https. Changes apply without a restart, and a
+  "Test connection" button checks URL, model and key. Embeddings stay on the local server.
+  Translation follows the chosen model; `translation.local_only` keeps it local.
+
 - **Automatic translation of non-English mail.** Settings → Translation (on by default): mail
-  that is not in English is translated by the LOCAL model and the English text is shown under the
+  that is not in English is translated by the chosen AI model and the English text is shown under the
   original as plain text (no Markdown/HTML, links stay disabled), labelled as a machine translation.
   A cheap script/stop-word check means English mail never costs a model call. Display-only: stored
   in `message_translations`, never given to triage, drafting, RAG or the agent bridge, deleted

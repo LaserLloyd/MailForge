@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import tomli_w
 from pydantic import BaseModel, Field, field_validator
@@ -142,6 +142,20 @@ class LLMSettings(BaseModel):
     # key itself is never stored in config.toml, logged, or shown. The shared
     # name ``STUDIOFORGE_API_KEY`` is also honoured as a fallback.
     api_key_env: str = "MAILFORGE_LLM_API_KEY"
+
+    # --- API model (optional; see llm/providers.py) ---------------------------
+    # "local" = the server above does all chat work. "api" = a hosted
+    # OpenAI-compatible model does it (triage, drafts, revisions, translation),
+    # with the local server as fallback when ``fallback_to_local`` is on.
+    # Embeddings always use the local server. The API key lives in the OS
+    # keyring (Settings → AI model); ``cloud_key_env`` may override it.
+    primary: Literal["local", "api"] = "local"
+    api_preset: str = ""
+    api_base_url: str = ""
+    api_model: str = ""
+    api_extra_body: dict[str, Any] = Field(default_factory=dict)
+    cloud_key_env: str = "MAILFORGE_CLOUD_API_KEY"
+    fallback_to_local: bool = True
 
 
 class SecuritySettings(BaseModel):
@@ -337,8 +351,9 @@ class OpenClawSettings(BaseModel):
 class TranslationSettings(BaseModel):
     """Automatic translation of incoming mail that is not in English.
 
-    Runs on the LOCAL model (``[llm]``), never the OpenClaw heavy-lift link, so
-    mail text does not leave the machines this app already trusts. The output
+    Runs on the AI model chosen under ``[llm]`` (local, or the API provider set
+    as primary; ``local_only`` pins it to the local server), never the OpenClaw
+    heavy-lift link. The output
     is display-only: it is stored apart from the message, shown to the person
     as plain text under the original, and never handed to drafting, triage,
     knowledge search or the agent bridge. Quarantined mail is never translated.
@@ -354,6 +369,9 @@ class TranslationSettings(BaseModel):
     backfill_days: int = Field(default=14, ge=0, le=365)
     # Longer bodies are translated up to this many characters (and say so).
     max_chars: int = Field(default=4000, ge=500, le=20000)
+    # With an API provider as the primary AI model, keep translation on the
+    # local server anyway (mail text is not sent to the provider for it).
+    local_only: bool = False
 
 
 class Settings(BaseSettings):

@@ -123,7 +123,7 @@ async def ingest_documents(
     from ..llm.bridge import LMStudioBridge
 
     bridge = LMStudioBridge.from_settings(settings)
-    if not bridge.is_up():
+    if not getattr(bridge, "local_up", bridge.is_up)():
         log.warning("ingest_documents: LM Studio is down; skipping (returning 0)")
         return 0
 
@@ -153,7 +153,7 @@ async def ingest_thread_history(
     retrieval can be scoped to the same thread and prevent cross-thread bleed
     (spec §4 / §5). Returns the number of chunks stored; 0 if the bridge is down.
     """
-    if not bridge.is_up():
+    if not getattr(bridge, "local_up", bridge.is_up)():
         log.warning("ingest_thread_history: LM Studio down; skipping thread %s", thread_id)
         return 0
 

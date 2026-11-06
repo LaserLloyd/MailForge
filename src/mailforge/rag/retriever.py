@@ -21,12 +21,13 @@ log = logging.getLogger(__name__)
 async def _is_up(bridge) -> bool:
     """Non-blocking LM Studio probe: the sync ``is_up()`` is a 5 s HTTP call
     and these run inside the UI's event loop."""
-    fn = getattr(bridge, "is_up_async", None)
+    # Embeddings always run on the local server, even with an API chat model.
+    fn = getattr(bridge, "local_up_async", None) or getattr(bridge, "is_up_async", None)
     if fn is not None:
         return bool(await fn())
     import asyncio
 
-    return bool(await asyncio.to_thread(bridge.is_up))
+    return bool(await asyncio.to_thread(getattr(bridge, "local_up", bridge.is_up)))
 
 
 async def retrieve(

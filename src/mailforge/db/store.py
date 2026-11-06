@@ -160,6 +160,11 @@ class Store:
         self._migrate_schema()
         self._migrate_agent_notes_request_kind()
         self._retire_orphan_drafts()
+        # Backstop: no translation outlives its message's body.
+        self.conn.execute(
+            "DELETE FROM message_translations WHERE message_id IN "
+            "(SELECT id FROM messages WHERE purged_at IS NOT NULL OR quarantined=1)"
+        )
         self._ensure_site_capacity()
         self._seed_response_templates()
         if self.vec_enabled:
@@ -627,9 +632,15 @@ class Store:
     ) -> None:
         if status not in {"done", "english", "failed"}:
             raise ValueError(f"unknown translation status: {status}")
+        # Conditional on the message still being live and not quarantined: a
+        # model call can take a while, and a purge (own connection, own thread)
+        # may have shredded the body meanwhile — its translation must not
+        # reappear after it.
         self.conn.execute(
             "INSERT INTO message_translations (message_id,status,source_language,subject,body,"
-            "truncated,model,attempts,error,updated_at) VALUES (?,?,?,?,?,?,?,1,?,?) "
+            "truncated,model,attempts,error,updated_at) "
+            "SELECT ?,?,?,?,?,?,?,1,?,? FROM messages "
+            "WHERE id=? AND purged_at IS NULL AND quarantined=0 "
             "ON CONFLICT(message_id) DO UPDATE SET status=excluded.status,"
             "source_language=excluded.source_language,subject=excluded.subject,"
             "body=excluded.body,truncated=excluded.truncated,model=excluded.model,"
@@ -637,7 +648,7 @@ class Store:
             "updated_at=excluded.updated_at",
             (
                 int(message_id), status, source_language, subject, body,
-                1 if truncated else 0, model, error, _now(),
+                1 if truncated else 0, model, error, _now(), int(message_id),
             ),
         )
         self.conn.commit()

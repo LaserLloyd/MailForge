@@ -3,9 +3,11 @@
 Security model — the translation is a convenience for the person reading, so
 it is kept on the far side of every wall the rest of the app builds:
 
-* **Local model only.** It runs on the ``[llm]`` server (the same local model
-  that already reads mail), never the OpenClaw heavy-lift link, so mail text
-  goes nowhere new.
+* **Your chosen model only.** It runs on the model the person picked under
+  Settings → AI model (the local server, or the API provider set as primary —
+  the same model that already reads mail for triage and drafts), never the
+  OpenClaw heavy-lift link. ``translation.local_only`` keeps it on the local
+  server even when an API provider is primary.
 * **No tools, no follow-on use.** The model gets one framed block of text and
   returns JSON. Its output is stored in ``message_translations`` and read by
   the local UI only — never by triage, drafting, knowledge search or the agent
@@ -83,7 +85,10 @@ _EN_WORDS = frozenset(
 _WORD = re.compile(r"[^\W\d_]+", re.UNICODE)
 _LANG_OK = re.compile(r"^[A-Za-z][A-Za-z ()\-/,.']{0,47}$")
 _MARKER = re.compile(r"(?i)<+\s*/?\s*(?:END_)?EMAIL_TO_TRANSLATE[^>\n]{0,40}>*")
-_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f​-‏‪-‮⁦-⁩]")
+_CONTROL = re.compile(
+    r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u061c\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]"
+)
+_LINK_TOKEN = re.compile(r"\[link_\d+\]")
 
 
 def _latin(ch: str) -> bool:
@@ -100,7 +105,7 @@ def looks_non_english(subject: str, body: str) -> bool:
     Cyrillic, Arabic...), or is Latin-script with almost no English function
     words (Spanish, German, French...). The model confirms either way.
     """
-    text = f"{subject or ''}\n{body or ''}"
+    text = _LINK_TOKEN.sub(" ", f"{subject or ''}\n{body or ''}")
     letters = [c for c in text if c.isalpha()]
     if len(letters) < 12:
         return False
@@ -137,7 +142,8 @@ def _language(value: Any) -> str:
 
 
 def _model_name(bridge: Any) -> str:
-    return str(getattr(bridge, "model_id", "") or "local model")[:120]
+    used = getattr(bridge, "last_model", "") or getattr(bridge, "active_model", "")
+    return str(used or getattr(bridge, "model_id", "") or "AI model")[:120]
 
 
 def allowed_statuses(settings: Any) -> frozenset[str]:
@@ -191,10 +197,14 @@ async def translate_message(
     if not on_request and not looks_non_english(subject, body):
         store.save_translation(message_id, status="english")
         return "english"
-    if bridge is None or not await asyncio.to_thread(bridge.is_up):
+    cfg = getattr(settings, "translation", None)
+    local_only = bool(getattr(cfg, "local_only", False))
+    if bridge is None:
+        return "unavailable"
+    probe = getattr(bridge, "local_up", bridge.is_up) if local_only else bridge.is_up
+    if not await asyncio.to_thread(probe):
         return "unavailable"  # nothing stored: retried once the model is back
 
-    cfg = getattr(settings, "translation", None)
     max_chars = int(getattr(cfg, "max_chars", 4000) or 4000)
     truncated = len(body) > max_chars
     framed_body = defang(_CONTROL.sub("", body[:max_chars]))
@@ -205,7 +215,8 @@ async def translate_message(
         SCHEMA,
         schema_name="translation",
         temperature=0.1,
-        heavy=False,  # local model only — see the module docstring
+        heavy=False,  # never the OpenClaw link — see the module docstring
+        local_only=local_only,
     )
     model = _model_name(bridge)
     _audit(store, message_id, model, len(body), bool(result))

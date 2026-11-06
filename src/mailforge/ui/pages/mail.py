@@ -509,6 +509,7 @@ def _message_reader(
     filters: dict[str, str] | None = None,
     neighbors: tuple[int | None, int | None] = (None, None),
     on_dismiss: Callable[[list[int], str], None] | None = None,
+    nav_buttons: dict[str, Any] | None = None,
 ) -> None:
     """The reading pane. ``filters`` is the list view the user came from, so
     archive/trash/mark-unread return there instead of to the unfiltered
@@ -632,7 +633,12 @@ def _message_reader(
                 )
             except Exception:  # noqa: BLE001
                 log.exception("audit append failed for screening feedback")
-            if label == "SPAM":
+            in_quarantine_view = "quarantined" in (filters.get("filter"), filters.get("tag"))
+            if label == "SPAM" and in_quarantine_view:
+                # The Quarantined view lists by quarantine, not spam status:
+                # the message stays there, so show its new status instead.
+                _notify_then_navigate("Marked as spam.", _message_url(message_id, **filters))
+            elif label == "SPAM":
                 # Like Delete: the message leaves the view and the person stays
                 # where they were (it is listed under Filtered spam).
                 _gone(
@@ -719,6 +725,8 @@ def _message_reader(
                 prev_btn.props("disable")
             if next_id is None:
                 next_btn.props("disable")
+            if nav_buttons is not None:
+                nav_buttons.update(prev=(prev_id, prev_btn), next=(next_id, next_btn))
         ui.button(icon="mark_email_unread", on_click=_mark_unread).props(
             "flat round dense"
         ).tooltip("Mark unread")
@@ -1108,17 +1116,25 @@ def render(
             visible_ids[i + 1] if i + 1 < len(visible_ids) else None,
         )
 
+    # The open message, and — once it was saved/deleted/marked spam in place —
+    # where it sat, so j/k carry on from there instead of the top of the list.
+    open_state: dict[str, Any] = {"id": message_id, "pos": None}
+
     def _open_relative(step: int) -> None:
         """j/k: open the next/previous message in this list."""
         if not visible_ids:
             return
-        if message_id is None or int(message_id) not in visible_ids:
-            target = visible_ids[0]
+        current = open_state["id"]
+        if current is not None and int(current) in visible_ids:
+            i = visible_ids.index(int(current)) + step
+        elif open_state["pos"] is not None:
+            # The row at the old position is the one after the dismissed message.
+            i = int(open_state["pos"]) + (0 if step > 0 else -1)
         else:
-            i = visible_ids.index(int(message_id)) + step
-            if i < 0 or i >= len(visible_ids):
-                return
-            target = visible_ids[i]
+            i = 0
+        if i < 0 or i >= len(visible_ids):
+            return
+        target = visible_ids[i]
         ui.navigate.to(_message_url(target, **filters))
 
     def _on_key(e: Any) -> None:
@@ -1396,6 +1412,7 @@ def render(
     if message_id is not None:
         workspace_classes += " has-selection"
     row_elements: dict[int, Any] = {}
+    nav_buttons: dict[str, Any] = {}
     with ui.element("div").classes(workspace_classes) as workspace:
         with ui.column().classes("bb-mail-list").style("gap: 7px; padding: 10px") as mail_list:
             if not rows:
@@ -1450,6 +1467,7 @@ def render(
                     filters=filters,
                     neighbors=neighbors,
                     on_dismiss=lambda ids, notice: _dismiss(ids, notice),
+                    nav_buttons=nav_buttons,
                 )
 
     def _dismiss(message_ids: list[int], notice: str) -> None:
@@ -1465,6 +1483,7 @@ def render(
 
     def _dismiss_now(gone: set[int], notice: str) -> None:
         ui.notify(notice, type="positive", timeout=7000)
+        old_positions = {mid: i for i, mid in enumerate(visible_ids)}
         for mid in gone:
             element = row_elements.pop(mid, None)
             if element is not None:
@@ -1476,12 +1495,24 @@ def render(
         if selection.anchor in gone:
             selection.anchor = None
         _sync_selection_controls()
+        # ⬆/⬇ in the reader must not lead to a message that just left.
+        for _key, (target, button) in list(nav_buttons.items()):
+            if target is not None and int(target) in gone:
+                button.props("disable")
         if not row_elements:
             with mail_list:
-                with ui.column().classes("items-center q-pa-xl"):
+                with ui.column().classes("items-center q-pa-xl") as empty:
                     ui.icon("inbox", size="38px").style("color: var(--text-tertiary)")
-                    ui.label("No matching messages.").style("color: var(--text-secondary)")
-        if message_id is not None and int(message_id) in gone:
+                    ui.label(
+                        "Nothing left on this page." if page or len(rows) >= page_size
+                        else "No matching messages."
+                    ).style("color: var(--text-secondary)")
+            empty.move(mail_list, target_index=0)  # above the pager, if any
+        current = open_state["id"]
+        if current is not None and int(current) in gone:
+            open_state["pos"] = old_positions.get(int(current))
+            open_state["id"] = None
+            nav_buttons.clear()
             # The open message left: empty the pane, show the list again on a
             # phone, and point the address bar at the list (a reload must not
             # reopen it).
@@ -1514,7 +1545,7 @@ def _translation_card(store: object, settings: object, bridge: object | None, ms
             return
         busy["on"] = True
         client = ui.context.client
-        note = ui.notification("Translating with the local model…", spinner=True, timeout=None)
+        note = ui.notification("Translating…", spinner=True, timeout=None)
         try:
             status = await translate_message(
                 store, bridge, settings, message_id, on_request=True
@@ -1529,7 +1560,7 @@ def _translation_card(store: object, settings: object, bridge: object | None, ms
             except Exception:  # noqa: BLE001
                 pass
         messages = {
-            "unavailable": ("The local model is not reachable right now — try again later.",
+            "unavailable": ("The AI model is not reachable right now — try again later.",
                             "warning"),
             "english": ("The model says this message is already in English.", "info"),
             "failed": ("Translation failed — the model gave no usable answer.", "negative"),
@@ -1578,10 +1609,18 @@ def _translation_card(store: object, settings: object, bridge: object | None, ms
                     ui.label(
                         "This is a long message: only its first part was translated."
                     ).style("font-size: 12px; color: var(--warning-text)")
+                held = not ai_may_read(_value(msg, "screening_status", ""))
+                if held:
+                    ui.label(
+                        "This message is held as suspicious. A clean translation does not "
+                        "make it trustworthy — do not open its links or attachments, reply "
+                        "with personal details, or pay anything it asks for."
+                    ).style("font-size: 12px; color: var(--danger-text); font-weight: 700")
                 ui.label(
-                    "Machine translation by your local model. It can be wrong, and a hostile "
-                    "message can make it say something the original does not — check the "
-                    "original before acting on anything it asks. Links stay disabled."
+                    f"Machine translation ({str(_value(tr, 'model', '') or 'AI model')}). It "
+                    "can be wrong, and a hostile message can make it say something the "
+                    "original does not — check the original before acting on anything it "
+                    "asks. Links stay disabled."
                 ).style("font-size: 11.5px; color: var(--text-tertiary)")
             return
         if status == "english" or not (status == "failed" or looks_non_english(subject, body)):

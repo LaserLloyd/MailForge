@@ -55,7 +55,7 @@ def _parse_csv(text: str) -> list[str]:
     return [p.strip() for p in (text or "").split(",") if p.strip()]
 
 
-def render(store: object, settings: object) -> None:
+def render(store: object, settings: object, bridge: object | None = None) -> None:
     """Render the settings page (spec §9). Edits write back via ``settings.save()``."""
     with ui.row().classes("items-center").style("gap: 8px"):
         ui.icon("key_off", size="18px").style("color: var(--text-secondary)")
@@ -403,6 +403,120 @@ def render(store: object, settings: object) -> None:
             value=_csv(getattr(sec, "link_allowlist_domains", set()) if sec else set()),
         ).classes("w-full")
 
+    # --- AI model (local server or an API provider) ----------------------------
+    from ...llm.providers import PRESETS, resolve_api_key
+
+    llm_cfg = getattr(settings, "llm", None)
+    ai_inputs: dict[str, Any] = {}
+    if llm_cfg is not None:
+        key_stored = bool(resolve_api_key(llm_cfg))
+        with ui.card().classes("bb-card w-full q-mt-md"):
+            with ui.row().classes("items-center").style("gap: 8px"):
+                ui.icon("smart_toy", size="20px").style("color: var(--text-link)")
+                ui.label("AI model").classes("text-subtitle1 text-weight-bold").style(
+                    "color: var(--text-link)"
+                )
+            ui.label(
+                "Choose what reads and drafts your mail: a model server on your own network "
+                "(private, no per-use cost) or a hosted API provider (no hardware needed). "
+                "With an API provider, the text of the messages it works on is sent to that "
+                "provider. Quarantined mail never is. Knowledge search stays on the local "
+                "server either way."
+            ).style("font-size: 12px; color: var(--text-secondary)")
+            ai_inputs["primary"] = ui.toggle(
+                {"local": "Local server", "api": "API provider"},
+                value=str(getattr(llm_cfg, "primary", "local") or "local"),
+            ).props("no-caps")
+            with ui.column().classes("w-full").style("gap: 6px") as api_box:
+                with ui.row().classes("w-full items-center").style("gap: 10px"):
+                    preset = ui.select(
+                        {k: v.label for k, v in PRESETS.items()},
+                        value=str(getattr(llm_cfg, "api_preset", "") or "custom")
+                        if str(getattr(llm_cfg, "api_preset", "") or "custom") in PRESETS
+                        else "custom",
+                        label="Provider",
+                    ).props("dense outlined").classes("w-56")
+                    base = ui.input(
+                        "API base URL", value=str(getattr(llm_cfg, "api_base_url", "") or ""),
+                        placeholder="https://api.example.com/v1",
+                    ).props("dense outlined").classes("bb-toolbar-grow").style("min-width: 260px")
+                    model = ui.input(
+                        "Model", value=str(getattr(llm_cfg, "api_model", "") or ""),
+                    ).props("dense outlined").classes("w-64")
+                key = ui.input(
+                    "API key",
+                    password=True,
+                    password_toggle_button=True,
+                    placeholder=(
+                        "A key is stored — leave empty to keep it" if key_stored
+                        else "Paste the provider's API key"
+                    ),
+                ).props("dense outlined autocomplete=off").classes("w-full")
+                ui.label(
+                    "The key is kept in your system's credential store (like your mailbox "
+                    "passwords), never in the settings file, and is never shown again."
+                    + (" A key is stored now." if key_stored else "")
+                ).style("font-size: 11.5px; color: var(--text-tertiary)")
+                ai_inputs["fallback"] = ui.switch(
+                    "If the provider fails (limit reached, offline), use the local server",
+                    value=bool(getattr(llm_cfg, "fallback_to_local", True)),
+                )
+                with ui.row().classes("items-center").style("gap: 8px"):
+                    test_btn = ui.button("Test connection", icon="network_check").props(
+                        "outline dense no-caps"
+                    )
+                    test_out = ui.label("").style("font-size: 12px")
+
+            def _preset_changed(e: Any) -> None:
+                chosen = PRESETS.get(str(e.value or ""))
+                if chosen is None or str(e.value) == "custom":
+                    return
+                base.set_value(chosen.base_url)
+                if chosen.model:
+                    model.set_value(chosen.model)
+
+            preset.on_value_change(_preset_changed)
+            api_box.bind_visibility_from(ai_inputs["primary"], "value", value="api")
+            ai_inputs.update(preset=preset, base=base, model=model, key=key)
+
+            async def _test() -> None:
+                from ...llm.bridge import LMStudioBridge
+                from ...llm.providers import validate_base_url
+
+                try:
+                    url = validate_base_url(str(base.value or ""))
+                except ValueError as e:
+                    test_out.set_text(f"✗ {e}")
+                    return
+                k = str(key.value or "").strip() or resolve_api_key(llm_cfg)
+                if not k:
+                    test_out.set_text("✗ Enter an API key first.")
+                    return
+                chosen = PRESETS.get(str(preset.value or ""))
+                probe = LMStudioBridge(
+                    host="127.0.0.1:9", model_id="-", embed_id="-", timeout=40.0,
+                    cloud_base_url=url, cloud_model=str(model.value or "").strip(),
+                    cloud_key=k, cloud_extra_body=dict(chosen.extra_body) if chosen else {},
+                    primary="api", fallback_to_local=False,
+                )
+                test_out.set_text("Testing…")
+                test_btn.disable()
+                try:
+                    answer = await probe.chat(
+                        [{"role": "user", "content": "Reply with the single word OK."}],
+                        temperature=0.0,
+                    )
+                finally:
+                    test_btn.enable()
+                if answer:
+                    test_out.set_text(f"✓ {probe.cloud_model} answered.")
+                else:
+                    test_out.set_text(
+                        "✗ No answer. Check the URL, model name and key (details in the log)."
+                    )
+
+            test_btn.on_click(_test)
+
     # --- Translation -----------------------------------------------------------
     tr_cfg = getattr(settings, "translation", None)
     translation_inputs: dict[str, Any] = {}
@@ -414,9 +528,9 @@ def render(store: object, settings: object) -> None:
                     "color: var(--text-link)"
                 )
             ui.label(
-                "Incoming mail that is not in English is translated by your LOCAL model "
-                "(the one under Models — never a cloud link) and the English text is shown "
-                "under the original. The translation is for you only: it is never given to "
+                "Incoming mail that is not in English is translated by your AI model (above) "
+                "and the English text is shown under the original. The translation is for "
+                "you only: it is never given to "
                 "triage, drafting, knowledge search or OpenClaw agents, it is shown as plain "
                 "text with links disabled, and it is deleted with the message. Quarantined "
                 "mail is never translated."
@@ -428,6 +542,11 @@ def render(store: object, settings: object) -> None:
             translation_inputs["include_held"] = ui.switch(
                 "Also translate mail held for review (potential spam / potential issue)",
                 value=bool(getattr(tr_cfg, "include_held", True)),
+            )
+            translation_inputs["local_only"] = ui.switch(
+                "Translate on the local server only (never send mail text to an API provider "
+                "for translation)",
+                value=bool(getattr(tr_cfg, "local_only", False)),
             )
             ui.label(
                 "Held mail stays withheld from every AI that can act. The translator cannot "
@@ -597,9 +716,50 @@ def render(store: object, settings: object) -> None:
                 sec.server_delete_mode = mode  # type: ignore[assignment]
                 sec.trash_retention_days = max(0, int(delete_inputs["days"].value or 0))
 
+            if llm_cfg is not None and ai_inputs:
+                from ...llm.providers import (
+                    PRESETS as _P,
+                    resolve_api_key as _key,
+                    store_api_key,
+                    validate_base_url,
+                )
+
+                primary = str(ai_inputs["primary"].value or "local")
+                chosen_id = str(ai_inputs["preset"].value or "custom")
+                url = str(ai_inputs["base"].value or "").strip()
+                name = str(ai_inputs["model"].value or "").strip()
+                new_key = str(ai_inputs["key"].value or "").strip()
+                if primary == "api" or url:
+                    url = validate_base_url(url)
+                if primary == "api" and not name:
+                    raise ValueError("enter the API model name")
+                if new_key:
+                    store_api_key(new_key)
+                    ai_inputs["key"].set_value("")
+                if primary == "api" and not (new_key or _key(llm_cfg)):
+                    raise ValueError("enter the provider's API key")
+                if chosen_id != str(getattr(llm_cfg, "api_preset", "") or ""):
+                    preset_obj = _P.get(chosen_id)
+                    llm_cfg.api_extra_body = dict(preset_obj.extra_body) if preset_obj else {}
+                llm_cfg.primary = primary  # type: ignore[assignment]
+                llm_cfg.api_preset = chosen_id
+                llm_cfg.api_base_url = url
+                llm_cfg.api_model = name
+                llm_cfg.fallback_to_local = bool(ai_inputs["fallback"].value)
+                configure = getattr(bridge, "configure_cloud", None)
+                if callable(configure):
+                    # Applied live: the next mail uses the new model, no restart.
+                    configure(
+                        base_url=url, model=name,
+                        key=_key(llm_cfg) if primary == "api" else "",
+                        extra_body=llm_cfg.api_extra_body, primary=primary,
+                        fallback_to_local=llm_cfg.fallback_to_local,
+                    )
+
             if tr_cfg is not None and translation_inputs:
                 tr_cfg.enabled = bool(translation_inputs["enabled"].value)
                 tr_cfg.include_held = bool(translation_inputs["include_held"].value)
+                tr_cfg.local_only = bool(translation_inputs["local_only"].value)
                 tr_cfg.backfill_days = min(
                     365, max(0, int(translation_inputs["backfill_days"].value or 0))
                 )

@@ -21,6 +21,7 @@ deferred, never lost).
 from __future__ import annotations
 
 import json
+import re
 import logging
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, AsyncIterator
@@ -187,6 +188,14 @@ def _failure_hint(exc: Exception, model: str, key_hint: str = LOCAL_KEY_HINT) ->
     return ""
 
 
+_THINK = re.compile(r"<think>.*?</think>\s*", re.S | re.I)
+
+
+def _strip_think(text: str) -> str:
+    """Drop ``<think>…</think>`` reasoning a hosted model left in its answer."""
+    return _THINK.sub("", text or "").strip()
+
+
 def _normalize_host(host: str) -> str:
     """Return a bare ``host:port`` (no scheme) for the SDK, tolerating URLs."""
     h = host.strip()
@@ -233,6 +242,12 @@ class LMStudioBridge:
         heavy_model: str = "",
         heavy_key: str = "",
         api_key: str = "",
+        cloud_base_url: str = "",
+        cloud_model: str = "",
+        cloud_key: str = "",
+        cloud_extra_body: dict[str, Any] | None = None,
+        primary: str = "local",
+        fallback_to_local: bool = True,
     ) -> None:
         self.host = _normalize_host(host)
         self._scheme = _scheme_of(host)
@@ -250,11 +265,61 @@ class LMStudioBridge:
         # non-loopback bind). Sent on every request to ``self.base_url``; the
         # heavy-lift endpoint has its own ``heavy_key``. Never logged.
         self._api_key = api_key or ""
+        # Optional hosted API model (llm/providers.py). Used first for chat when
+        # ``primary == "api"``; embeddings never go there.
+        self.cloud_base_url = ""
+        self.cloud_model = ""
+        self._cloud_key = ""
+        self.cloud_extra_body: dict[str, Any] = {}
+        self.primary = "local"
+        self.fallback_to_local = True
+        self.configure_cloud(
+            base_url=cloud_base_url, model=cloud_model, key=cloud_key,
+            extra_body=cloud_extra_body, primary=primary, fallback_to_local=fallback_to_local,
+        )
+        #: The model that produced the most recent chat answer (audit/display).
+        self.last_model = ""
+        self._cloud_warned: set[int] = set()
+
+    def configure_cloud(
+        self,
+        *,
+        base_url: str,
+        model: str,
+        key: str,
+        extra_body: dict[str, Any] | None,
+        primary: str,
+        fallback_to_local: bool,
+    ) -> None:
+        """(Re)configure the API model in place — Settings applies changes live."""
+        self.cloud_base_url = str(base_url or "").strip().rstrip("/")
+        self.cloud_model = str(model or "").strip()
+        self._cloud_key = str(key or "").strip()
+        self.cloud_extra_body = dict(extra_body or {})
+        self.primary = "api" if primary == "api" else "local"
+        self.fallback_to_local = bool(fallback_to_local)
+
+    @property
+    def use_cloud(self) -> bool:
+        """True when chat goes to the API model first (fully configured)."""
+        return bool(
+            self.primary == "api" and self.cloud_base_url and self.cloud_model and self._cloud_key
+        )
+
+    @property
+    def has_cloud_key(self) -> bool:
+        return bool(self._cloud_key)
+
+    @property
+    def active_model(self) -> str:
+        """The chat model new work goes to first (for display)."""
+        return self.cloud_model if self.use_cloud else self.model_id
 
     def __repr__(self) -> str:  # never leak the keys through a debug print
         return (
             f"LMStudioBridge(host={self.host!r}, model_id={self.model_id!r}, "
-            f"embed_id={self.embed_id!r}, auth={'key' if self._api_key else 'none'})"
+            f"embed_id={self.embed_id!r}, auth={'key' if self._api_key else 'none'}, "
+            f"primary={self.primary!r}, cloud_model={self.cloud_model!r})"
         )
 
     @property
@@ -278,6 +343,8 @@ class LMStudioBridge:
         plus the optional OpenClaw heavy-lift link."""
         import os
 
+        from .providers import resolve_api_key
+
         llm = settings.llm
         oc = getattr(settings, "openclaw", None)
         heavy_base = heavy_model = heavy_key = ""
@@ -296,6 +363,12 @@ class LMStudioBridge:
             heavy_model=heavy_model,
             heavy_key=heavy_key,
             api_key=resolve_llm_api_key(llm),
+            cloud_base_url=getattr(llm, "api_base_url", "") or "",
+            cloud_model=getattr(llm, "api_model", "") or "",
+            cloud_key=resolve_api_key(llm) if getattr(llm, "primary", "local") == "api" else "",
+            cloud_extra_body=getattr(llm, "api_extra_body", None) or {},
+            primary=getattr(llm, "primary", "local"),
+            fallback_to_local=getattr(llm, "fallback_to_local", True),
         )
 
     # ----- transport helpers -----
@@ -311,6 +384,12 @@ class LMStudioBridge:
         import asyncio
 
         return await asyncio.to_thread(self.is_up)
+
+    async def local_up_async(self) -> bool:
+        """:meth:`local_up` off the event loop (embeddings need the local server)."""
+        import asyncio
+
+        return await asyncio.to_thread(self.local_up)
 
     def probe(self) -> int | None:
         """HTTP status of ``GET /v1/models`` (with the key), or ``None`` when
@@ -334,6 +413,13 @@ class LMStudioBridge:
         return r.status_code
 
     def is_up(self) -> bool:
+        """True when chat work can be attempted: the API model is configured
+        as primary, or the local server answers. See :meth:`local_up`."""
+        if self.use_cloud:
+            return True
+        return self.local_up()
+
+    def local_up(self) -> bool:
         """Return True iff the LM Studio server answers (spec §6).
 
         Pings the OpenAI-compat ``/v1/models`` endpoint (the API actually used
@@ -415,15 +501,36 @@ class LMStudioBridge:
         response_format: dict[str, Any] | None = None,
         *,
         temperature: float = 0.2,
+        local_only: bool = False,
     ) -> str:
         """Plain chat completion via OpenAI-compat ``/v1/chat/completions``.
+
+        With an API model as primary (and ``local_only`` false) the API is
+        asked first; an empty/failed answer falls back to the local server
+        when ``fallback_to_local`` is on.
 
         ``response_format`` is passed through verbatim when given (e.g.
         ``{"type": "json_object"}`` for json_mode). Returns the assistant
         message content, or ``""`` when LM Studio is unreachable (sentinel for
         the DEFERRED_NO_LLM path).
         """
-        return await self._post_chat(
+        if self.use_cloud and not local_only:
+            out = await self._post_chat(
+                self.cloud_base_url,
+                self.cloud_model,
+                messages,
+                response_format=response_format,
+                temperature=temperature,
+                api_key=self._cloud_key,
+                key_hint="Settings → AI model (API key)",
+                local=False,
+            )
+            if out:
+                self.last_model = self.cloud_model
+                return out
+            if not self.fallback_to_local:
+                return ""
+        out = await self._post_chat(
             self.base_url,
             self.model_id,
             messages,
@@ -431,6 +538,9 @@ class LMStudioBridge:
             temperature=temperature,
             api_key=self._api_key,
         )
+        if out:
+            self.last_model = self.model_id
+        return out
 
     async def _post_chat(
         self,
@@ -442,6 +552,7 @@ class LMStudioBridge:
         temperature: float = 0.2,
         api_key: str = "",
         key_hint: str = LOCAL_KEY_HINT,
+        local: bool = True,
     ) -> str:
         """POST one OpenAI-compat chat completion to ``base_url``.
 
@@ -462,11 +573,18 @@ class LMStudioBridge:
             "model": model,
             "messages": messages,
             "temperature": temperature,
-            "priority": 2,
         }
+        headers: dict[str, str] = {}
+        if local:
+            payload["priority"] = 2
+            headers["X-SF-Client"] = "mailforge"
+        else:
+            # Hosted APIs reject unknown fields; send only the provider's own
+            # extras (e.g. MiniMax ``reasoning_split``), never overriding ours.
+            for k, v in self.cloud_extra_body.items():
+                payload.setdefault(str(k), v)
         if response_format is not None:
             payload["response_format"] = response_format
-        headers: dict[str, str] = {"X-SF-Client": "mailforge"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         try:
@@ -480,8 +598,21 @@ class LMStudioBridge:
             # Reasoning models may leave ``content`` empty and place the answer
             # (including structured JSON) in ``reasoning_content``; fall back to
             # it so downstream JSON extraction still works.
-            return msg.get("content") or msg.get("reasoning_content") or ""
+            text = msg.get("content") or msg.get("reasoning_content") or ""
+            return _strip_think(text) if not local else text
         except Exception as e:
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            if not local and status in (401, 402, 403, 429):
+                if status not in self._cloud_warned:
+                    self._cloud_warned.add(status)
+                    log.warning(
+                        "API model %s answered HTTP %s (%s)%s",
+                        model, status,
+                        {401: "key refused", 403: "key refused", 402: "plan/credit limit reached",
+                         429: "rate limited"}[status],
+                        "; using the local model meanwhile" if self.fallback_to_local else "",
+                    )
+                return ""
             log.warning(
                 "chat POST to %s failed: %s%s",
                 base_url,
@@ -516,6 +647,7 @@ class LMStudioBridge:
         schema_name: str = "structured_output",
         temperature: float = 0.1,
         heavy: bool = False,
+        local_only: bool = False,
     ) -> dict[str, Any]:
         """Strict-JSON chat via ``response_format`` JSON schema (spec §6).
 
@@ -567,7 +699,9 @@ class LMStudioBridge:
             log.info("heavy-lift endpoint gave nothing usable; falling back to local model")
 
         # Attempt 1: native json_schema response_format (local LM Studio).
-        raw = await self.chat(messages, response_format=rf, temperature=temperature)
+        raw = await self.chat(
+            messages, response_format=rf, temperature=temperature, local_only=local_only
+        )
         parsed = coerce_dict(raw)
         if parsed:
             return parsed
@@ -579,6 +713,7 @@ class LMStudioBridge:
             [schema_hint, *messages],
             response_format={"type": "json_object"},
             temperature=temperature,
+            local_only=local_only,
         )
         return coerce_dict(raw2)
 

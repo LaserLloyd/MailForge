@@ -243,3 +243,31 @@ def test_settings_round_trip_through_toml():
     s = _settings(enabled=False, include_held=False, backfill_days=3)
     assert "[translation]" in s.to_toml()
     assert "include_held = false" in s.to_toml()
+
+
+def test_purge_during_the_model_call_leaves_no_translation(store):
+    """A purge (own connection) may land while the model is answering."""
+    mid = _msg(store, 1)
+
+    class PurgingBridge(FakeBridge):
+        async def chat_structured(self, messages, schema, **kw):
+            store.purge_messages([mid])
+            return await super().chat_structured(messages, schema, **kw)
+
+    _run(translate.translate_message(store, PurgingBridge(), _settings(), mid))
+    assert store.get_translation(mid) is None
+
+
+def test_local_only_is_passed_to_the_model_call(store):
+    mid = _msg(store, 1)
+    bridge = FakeBridge()
+    bridge.local_up = lambda: True
+    _run(translate.translate_message(store, bridge, _settings(local_only=True), mid))
+    assert bridge.calls[0]["local_only"] is True
+
+
+def test_link_tokens_do_not_make_english_look_foreign():
+    links = " ".join(f"[link_{i}]" for i in range(40))
+    assert not translate.looks_non_english(
+        "Newsletter", "Hello, here are this week's updates for you and your team. " + links
+    )

@@ -62,8 +62,18 @@ def render(bridge: object | None) -> None:
         ui.label("Configured (loaded) models").classes("text-subtitle1 text-weight-bold").style(
             "color: var(--text-link)"
         )
-        ui.label(f"Chat: {chat_id or '?'}")
-        ui.label(f"Embedding: {embed_id or '?'}")
+        if getattr(bridge, "use_cloud", False):
+            ui.label(
+                f"Chat: {getattr(bridge, 'cloud_model', '?')} (API model, primary)"
+                + (f" → local {chat_id} as fallback" if getattr(bridge, "fallback_to_local", False)
+                   else "")
+            )
+        else:
+            ui.label(f"Chat: {chat_id or '?'}")
+        ui.label(f"Embedding: {embed_id or '?'} (local server)")
+        ui.label("Change the AI model in Settings → AI model.").style(
+            "font-size: 12px; color: var(--text-secondary)"
+        )
 
     inventory = ui.card().classes("bb-card w-full q-mt-md")
     with inventory:
@@ -76,7 +86,7 @@ def render(bridge: object | None) -> None:
 
     async def _load_inventory() -> None:
         try:
-            up = await asyncio.to_thread(lambda: bool(bridge.is_up()))  # type: ignore[attr-defined]
+            up = await asyncio.to_thread(lambda: bool(getattr(bridge, "local_up", bridge.is_up)()))  # type: ignore[attr-defined]
         except Exception as e:
             log.debug("bridge.is_up() failed: %s", e)
             up = False

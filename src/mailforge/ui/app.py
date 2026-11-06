@@ -596,7 +596,7 @@ def _register_pages(store: object, settings: object, bridge: object | None) -> N
             _denied()
             return
         with theme.shell("settings", "Settings", bridge, store):
-            settings_page.render(store, settings)
+            settings_page.render(store, settings, bridge)
 
     @ui.page("/models")
     def _models(token: str | None = None) -> None:
