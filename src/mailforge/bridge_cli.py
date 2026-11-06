@@ -135,6 +135,17 @@ def _message_json(row: Any, *, full: bool = False) -> dict[str, Any]:
         "screening_status": _row_screening_status(row),
         "screening_reason": row["screening_reason"] or "",
     }
+    if full:
+        # Parsed authentication facts (SPF/DKIM/DMARC; FACT_KEYS only), not
+        # attacker text: safe to hand over even when the body is withheld.
+        try:
+            raw_meta = row["header_meta"]
+        except (IndexError, KeyError):
+            raw_meta = None
+        from .mail import header_facts
+
+        facts = header_facts.loads(raw_meta)
+        result["header_meta"] = facts or None
     if _row_text(row, "purged_at"):
         result["purged"] = True
         result["body_withheld"] = "Message was permanently deleted (purged); nothing is left to read."

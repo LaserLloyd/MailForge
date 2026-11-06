@@ -93,3 +93,25 @@ def test_agent_search_cannot_probe_withheld_bodies(tmp_path):
     agent = {r["id"] for r in store.list_received(q="secret", include_spam=True, ai_caller=True)}
     assert human == {ok, held}
     assert agent == {ok}
+
+
+def test_bridge_get_returns_only_known_header_facts():
+    import json
+
+    from mailforge.mail.header_facts import FACT_KEYS
+
+    row = {
+        "id": 2, "site_id": "main", "account_name": "a", "from_addr": "x@y.z",
+        "from_name": "n", "to_addrs": "", "subject": "s", "received_at": "",
+        "has_attachments": 0, "seen": 0, "quarantined": 0, "screening_status": "CONTENT",
+        "screening_reason": "", "sanitized_text": "hi", "thread_id": "t", "link_count": 0,
+        "header_meta": json.dumps({"spf": "pass", "evil": "x"}),
+    }
+    out = bridge_cli._message_json(row, full=True)
+    assert out["header_meta"] and set(out["header_meta"]) <= FACT_KEYS
+    assert "evil" not in out["header_meta"]
+    row["header_meta"] = None
+    assert bridge_cli._message_json(row, full=True)["header_meta"] is None
+    del row["header_meta"]
+    assert bridge_cli._message_json(row, full=True)["header_meta"] is None
+    assert "header_meta" not in bridge_cli._message_json(row)
